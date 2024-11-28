@@ -627,7 +627,10 @@ impl AnalysisStorage {
             false
         }
     }
-
+    // TODO: Might need to separate responsibilities here among the 3 types of analysis
+    // we want to suppress the client waiting for the DeviceAnalyses
+    // https://github.com/intel-innersource/applications.simulators.simics.base.dml-lang-server/pull/195/files#diff-4372f99a827132ceb7a1e60370d638c6c86bf3f885255373c9d5c8060659c5ed
+    
     pub fn report_errors<O: Output>(&mut self, path: &CanonPath, output: &O) {
         debug!("Reporting all errors for {:?}", path);
         // By this being a hashset, we will not double-report any errors
