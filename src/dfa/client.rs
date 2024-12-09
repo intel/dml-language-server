@@ -28,7 +28,7 @@ use crate::server::{self, Notification};
 use crate::cmd;
 use crate::lsp_data::{parse_file_path, parse_uri};
 
-use log::{debug, trace};
+use log::{info, debug, trace};
 
 #[derive(Debug, PartialEq)]
 pub struct Diagnostic {
@@ -187,8 +187,10 @@ impl ClientInterface {
             _action: PhantomData,
         }.to_string())?;
         self.waiting_for_received_diag.insert(canon_path.clone());
+        debug!("[JVA]Inserted: {:?}", self.waiting_for_received_diag);
         if self.linting_enabled {
             self.waiting_for_received_lint.insert(canon_path);
+            debug!("[JVA]Inserted: {:?}", self.waiting_for_received_lint);
         }
         Ok(())
     }
@@ -221,17 +223,22 @@ impl ClientInterface {
             parse_file_path(&diagnostic_params.uri)
             .map_err(|e|RpcErrorKind::from(e.to_string()))
             .map(|u|u.into())?;
-        trace!("Received diagnotics from server: {:?}",
+        debug!("Received diagnotics from server: {:?}",
                diagnostic_params.diagnostics);
+        debug!("[JVA]Before remove: {:?}", self.waiting_for_received_diag);
+        debug!("[JVA]Before remove: {:?}", self.waiting_for_received_lint);
         // For-now good-enough heuristic for if we are receiving a lint or not
         if diagnostic_params.diagnostics.iter()
             .any(|d|d.severity.map(|s|s == DiagnosticSeverity::ERROR)
                  .unwrap_or(false)) {
+                debug!("[JVA]ERROR {:?}", self.waiting_for_received_diag);
                 self.waiting_for_received_diag.remove(&file);
             } else {
+                debug!("[JVA]WARNING {:?}", self.waiting_for_received_lint);
                 self.waiting_for_received_lint.remove(&file);
             }
-
+        debug!("[JVA]After remove: {:?}", self.waiting_for_received_diag);
+        debug!("[JVA]After remove: {:?}", self.waiting_for_received_lint);
         Ok(ServerMessage::Diagnostics(
             file, diagnostic_params.diagnostics
                 .iter().cloned().map(Diagnostic::from)
@@ -252,7 +259,7 @@ impl ClientInterface {
                         format!("progress {:?}",
                                 report)).into())
                 } else {
-                    trace!("Server signalled analysis start");
+                    debug!("Server signalled analysis start");
                     self.progress_token = Some(
                         progress_params.token);
                     Ok(ServerMessage::ProgressStart)
@@ -261,7 +268,7 @@ impl ClientInterface {
             WorkDoneProgress::End(_) => {
                 if Some(progress_params.token) ==
                     self.progress_token {
-                        trace!("Server signalled analysis end");
+                        debug!("Server signalled analysis end");
                         Ok(ServerMessage::ProgressEnd)
                     }
                 else {
@@ -280,7 +287,7 @@ impl ClientInterface {
             return Ok(ServerMessage::Error(errcode));
         }
         let msg = self.reader.recv()?;
-        trace!("Received {} from server", msg);
+        debug!("Received {} from server", msg);
         // Parse the message.
         let ls_command: serde_json::Value =
             serde_json::from_str(&msg).map_err(
@@ -341,14 +348,15 @@ impl ClientInterface {
         while {
             let received = self.receive();
             if let ServerMessage::Error(e) = received {
-                trace!("server unexpectedly closed while waiting for analysis");
+                info!("server unexpectedly closed while waiting for analysis");
                 return Err(e);
             }
             if received != ServerMessage::ProgressStart {
-                trace!("skipped {:?} while waiting for analysis", received);
+                info!("skipped {:#?} while waiting for analysis", received);
                 true
             } else if received == ServerMessage::ProgressEnd {
                 self.has_received_ended_progress = true;
+                info!("[JVA] received == ServerMessage::ProgressEnd, has_received_ended_progress = {:#?},", self.has_received_ended_progress);
                 false
             } else {
                 false
@@ -356,29 +364,23 @@ impl ClientInterface {
         }{}
         // Gather the results
         while 'condition: {
-            if self.waiting_for_received_diag.is_empty()
-                && self.waiting_for_received_lint.is_empty() {
-                    if self.has_received_ended_progress {
-                        break 'condition false;
-                    }
-                    debug!("Waiting for progress end");
-                } else {
-                    debug!("Waiting for outstanding analysises {:?} or lints {:?}",
-                           self.waiting_for_received_diag,
-                           self.waiting_for_received_lint.is_empty());
-                }
+            if self.has_received_ended_progress {
+                break 'condition false;
+            }
             match self.receive() {
                 ServerMessage::Error(e) => {
-                    trace!("server unexpectedly closed while waiting for analysis");
+                    info!("server unexpectedly closed while waiting for analysis");
                     return Err(e);
                 },
                 ServerMessage::Diagnostics(path, diags) => {
                     self.diagnostics.insert(path, diags);
+                    info!("[JVA]After diagnostics.insert: {:#?}, {:#?}", self.has_received_ended_progress, self.has_message());
                     !self.has_received_ended_progress || self.has_message()
                 },
                 ServerMessage::ProgressEnd => {
                     // this can happen when an analysis finishes before the server
                     // message reading thread started the next one
+                    info!("[JVA] @ServerMessage::ProgressEnd  self.has_message {:#?}", self.has_message());
                     self.has_received_ended_progress = true;
                     self.has_message()
                 },
