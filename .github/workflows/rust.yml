@@ -13,10 +13,14 @@ jobs:
       matrix:
         os:
           - ubuntu-latest
+          - ubuntu-20.04
           - windows-latest
         include:
           - os: ubuntu-latest
             binary: dls
+          - os: ubuntu-20.04
+            binary: dls
+            output_binary_name: dls-ubuntu-20.04
           - os: windows-latest
             binary: dls.exe
     uses: ./.github/workflows/binaries.yml
