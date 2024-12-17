@@ -23,6 +23,10 @@ on:
         description: "Machine to run on"
         required: true
         type: string
+      target:
+        description: "Target to build for"
+        required: true
+        type: string
 env:
     CARGO_TERM_COLOR: always
     rust_version: 1.83.0
@@ -37,16 +41,23 @@ jobs:
           rustup --version
           cargo --version
           rustc --version
+      - name: Add Rust Target
+        run: |
+          rustup target add ${{ inputs.target }}
+      - name: Log default machine target
+        # for comparison
+        run: |
+          rustc -vV | sed -n 's|host: ||p'
       - name: Prepare log dir
         run: mkdir -p ${{ inputs.log-dir }}
       - name: Build
         shell: bash
-        run: cargo build --release --verbose 2>&1 | tee -a ${{ inputs.log-dir }}/build.log
+        run: cargo build --target=${{ inputs.target }} --release --verbose 2>&1 | tee -a ${{ inputs.log-dir }}/build.log
       - name: Test
         shell: bash
         run: |
           set -o pipefail
-          cargo test --verbose  2>&1 | tee -a ${{ inputs.log-dir }}/test.log
+          cargo test --target=${{ inputs.target }} --verbose  2>&1 | tee -a ${{ inputs.log-dir }}/test.log
       - name: Clippy
         shell: bash
         if: ${{ success() || failure() }}
@@ -69,5 +80,5 @@ jobs:
         with:
           name: ${{ inputs.output_binary_name }}
           overwrite: true
-          path: target/release/${{ inputs.binary_name }}
+          path: target/${{ inputs.target }}/release/${{ inputs.binary_name }}
           if-no-files-found: error

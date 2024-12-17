@@ -14,18 +14,24 @@ jobs:
   build-package:
     strategy:
       matrix:
-        os:
-          - ubuntu-latest
-          - windows-latest
         include:
           - os: ubuntu-latest
             binary: dls
+            output_binary_name: dml-server-x86_64-gnu
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-latest
+            binary: dls
+            output_binary_name: dml-server-x86_64-musl
+            target: x86_64-unknown-linux-musl
           - os: windows-latest
             binary: dls.exe
+            output_binary_name: dml-server.exe
+            target: x86_64-pc-windows-msvc
     uses: ./.github/workflows/binaries.yml
     with:
       binary_name: ${{ matrix.binary }}
-      output_binary_name: dml-server-${{ matrix.os }}
+      output_binary_name: ${{ matrix.output_binary_name }}
+      target: ${{ matrix.target }}
       log-dir: ${{ matrix.binary }}-logs
       os: ${{ matrix.os }}
   check-package:
