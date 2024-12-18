@@ -35,7 +35,7 @@ jobs:
       log-dir: ${{ matrix.binary }}-logs
       os: ${{ matrix.os }}
   check-package:
-    uses: ./.github/workflows/scans.yml
+    uses: ./.github/workflows/audit.yml
     with:
       os: ubuntu-latest
       log-dir: checking-logs
