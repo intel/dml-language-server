@@ -231,7 +231,6 @@ impl ClientInterface {
             } else {
                 self.waiting_for_received_lint.remove(&file);
             }
-
         Ok(ServerMessage::Diagnostics(
             file, diagnostic_params.diagnostics
                 .iter().cloned().map(Diagnostic::from)
@@ -356,17 +355,9 @@ impl ClientInterface {
         }{}
         // Gather the results
         while 'condition: {
-            if self.waiting_for_received_diag.is_empty()
-                && self.waiting_for_received_lint.is_empty() {
-                    if self.has_received_ended_progress {
-                        break 'condition false;
-                    }
-                    debug!("Waiting for progress end");
-                } else {
-                    debug!("Waiting for outstanding analysises {:?} or lints {:?}",
-                           self.waiting_for_received_diag,
-                           self.waiting_for_received_lint.is_empty());
-                }
+            if self.has_received_ended_progress {
+                break 'condition false;
+            }
             match self.receive() {
                 ServerMessage::Error(e) => {
                     trace!("server unexpectedly closed while waiting for analysis");
