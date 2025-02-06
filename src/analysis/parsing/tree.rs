@@ -7,7 +7,7 @@ use crate::analysis::reference::{Reference, NodeRef, MaybeIsNodeRef,
 use crate::analysis::FileSpec;
 use crate::analysis::structure::expressions::DMLString;
 
-use crate::lint::rules::CurrentRules;
+use crate::lint::{rules::CurrentRules, AuxParams};
 use crate::span::{Range, Span, ZeroIndexed, Position, FilePosition};
 use crate::vfs::{Vfs as GenVfs, TextFile};
 
@@ -91,13 +91,13 @@ pub trait TreeElement {
         self.default_references(accumulator, file);
     }
 
-    fn style_check(&self, acc: &mut Vec<LocalDMLError>, rules: &CurrentRules) {
-        self.evaluate_rules(acc, rules);
+    fn style_check(&self, acc: &mut Vec<LocalDMLError>, rules: &CurrentRules, mut aux: AuxParams) {
+        self.evaluate_rules(acc, rules, &mut aux);
         for sub in self.subs() {
-            sub.style_check(acc, rules);
+            sub.style_check(acc, rules, aux);
         }
     }
-    fn evaluate_rules(&self, _acc: &mut Vec<LocalDMLError>, _rules: &CurrentRules) {} // default NOOP
+    fn evaluate_rules(&self, _acc: &mut Vec<LocalDMLError>, _rules: &CurrentRules, _aux: &mut AuxParams) {} // default NOOP
 }
 
 impl <T: ?Sized + TreeElement> ReferenceContainer for T {
