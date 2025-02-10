@@ -91,7 +91,7 @@ impl Parse<BaseTypeContent> for StructTypeContent {
             }
         }
         let rbrace = new_context.expect_next_kind(stream, TokenKind::RBrace);
-        BaseTypeContent::StructType(StructTypeContent {
+        BaseTypeContent::Struct(StructTypeContent {
             structtok,
             lbrace,
             members,
@@ -466,7 +466,7 @@ impl Parse<BaseTypeContent> for HookTypeContent {
             args.push((arg, comma));
         }
         let rparen = new_context.expect_next_kind(stream, TokenKind::RParen);
-        BaseTypeContent::HookType(HookTypeContent {
+        BaseTypeContent::Hook(HookTypeContent {
             hook, lparen, args, rparen
         }).into()
     }
@@ -475,12 +475,12 @@ impl Parse<BaseTypeContent> for HookTypeContent {
 #[derive(Debug, Clone, PartialEq)]
 pub enum BaseTypeContent {
     Ident(LeafToken),
-    StructType(StructTypeContent),
+    Struct(StructTypeContent),
     Layout(LayoutContent),
     Bitfields(BitfieldsContent),
     TypeOf(TypeOfContent),
     Sequence(SequenceContent),
-    HookType(HookTypeContent),
+    Hook(HookTypeContent),
 }
 
 impl TreeElement for BaseTypeContent {
@@ -499,23 +499,23 @@ impl TreeElement for BaseTypeContent {
     fn range(&self) -> ZeroRange {
         match self {
             Self::Ident(content) => content.range(),
-            Self::StructType(content) => content.range(),
+            Self::Struct(content) => content.range(),
             Self::Layout(content) => content.range(),
             Self::Bitfields(content) => content.range(),
             Self::TypeOf(content) => content.range(),
             Self::Sequence(content) => content.range(),
-            Self::HookType(content) => content.range(),
+            Self::Hook(content) => content.range(),
         }
     }
     fn subs(&self) -> TreeElements<'_> {
         match self {
             Self::Ident(content) => create_subs![content],
-            Self::StructType(content) => create_subs![content],
+            Self::Struct(content) => create_subs![content],
             Self::Layout(content) => create_subs![content],
             Self::Bitfields(content) => create_subs![content],
             Self::TypeOf(content) => create_subs![content],
             Self::Sequence(content) => create_subs![content],
-            Self::HookType(content) => create_subs![content],
+            Self::Hook(content) => create_subs![content],
         }
     }
 }
