@@ -517,11 +517,10 @@ impl AnalysisStorage {
                self.device_analysis.keys().collect::<Vec<&CanonPath>>());
     }
 
-    pub fn get_linter_analysis<'a>(&'a self, path: &Path)
+    pub fn get_linter_analysis<'a>(&'a self, path: &CanonPath)
                                      -> Option<&'a LinterAnalysis> {
         trace!("Looking for linter analysis of {:?}", path);
-        let analysis = self.lint_analysis.get(
-            &CanonPath::from_path_buf(path.to_path_buf())?).map(
+        let analysis = self.lint_analysis.get(path).map(
             |storage|&storage.stored);
         if analysis.is_none() {
             trace!("Failed to find linter analysis");
