@@ -78,6 +78,25 @@ pub struct FileSpec<'a> {
 pub const IMPLICIT_IMPORTS: [&str; 2] = ["dml-builtins.dml",
                                          "simics/device-api.dml"];
 
+#[allow(dead_code)]
+const EXAMPLE: DLSLimitation =
+    DLSLimitation {
+        issue_num: 42,
+        description: "Example of a DLS limitation",
+    };
+
+#[derive(Debug, Eq, PartialEq, Hash,)]
+pub struct DLSLimitation {
+    pub issue_num: u64,
+    pub description: &'static str,
+}
+
+impl fmt::Display for DLSLimitation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} (issue#{})", self.description, self.issue_num)
+    }
+}
+
 fn collapse_referencematches<T>(matches: T) -> ReferenceMatch
 where T : IntoIterator<Item = ReferenceMatch> {
     matches.into_iter().fold(
@@ -921,9 +940,11 @@ impl DeviceAnalysis {
         }
     }
 
-    pub fn lookup_symbols_by_contexted_symbol<'t>(&self,
-                                                  sym: &ContextedSymbol<'t>)
-                                                  -> Vec<SymbolRef> {
+    pub fn lookup_symbols_by_contexted_symbol<'t>(
+        &self,
+        sym: &ContextedSymbol<'t>,
+        _limitations: &mut HashSet<DLSLimitation>)
+        -> Vec<SymbolRef> {
         if matches!(sym.symbol.kind, DMLSymbolKind::Template |
                     DMLSymbolKind::Typedef | DMLSymbolKind::Extern)
         {
