@@ -517,7 +517,7 @@ impl AnalysisStorage {
                self.device_analysis.keys().collect::<Vec<&CanonPath>>());
     }
 
-    pub fn get_linter_analysis<'a>(&'a mut self, path: &Path)
+    pub fn get_linter_analysis<'a>(&'a self, path: &Path)
                                      -> Option<&'a LinterAnalysis> {
         trace!("Looking for linter analysis of {:?}", path);
         let analysis = self.lint_analysis.get(
@@ -692,8 +692,7 @@ impl AnalysisStorage {
         notifier.notify_end_diagnostics();
     }
 
-    pub fn gather_linter_errors(&mut self,
-                               path: &CanonPath) -> Vec<DMLError> {
+    pub fn gather_linter_errors(&self, path: &CanonPath) -> Vec<DMLError> {
         if let Some(linter_analysis) = self.get_linter_analysis(path) {
             linter_analysis.errors.clone()
         } else {
