@@ -22,7 +22,6 @@ use crate::lsp_data::*;
 use crate::analysis::parsing::tree::{ZeroSpan, ZeroFilePosition};
 use crate::analysis::reference::Reference;
 use crate::server::{Output, ServerToHandle};
-use crate::Span;
 
 use crate::lint::LinterAnalysis;
 
@@ -710,30 +709,5 @@ impl AnalysisStorage {
                                 -> HashMap<PathBuf, Vec<DMLError>> {
         self.get_device_analysis(path).map_or(HashMap::default(),
                                               |a|a.errors.clone())
-    }
-
-    pub fn errors(&mut self, span: &Span) -> Vec<DMLError> {
-        trace!("Reporting errors at {:?} for {:?}", span.range, span.file);
-        let real_file = if let Some(file) = CanonPath::from_path_buf(
-            span.path()) {
-            file
-        } else {
-            error!("Could not resolve {:?} to point to a real file", span);
-            return vec![];
-        };
-        if let Some(isolated_analysis) =
-            self.get_isolated_analysis(&real_file) {
-            // Obtain any error which at least partially overlaps our span
-            let mut errors = vec![];
-            for error in &isolated_analysis.errors {
-                if error.span.range.overlaps(span.range) {
-                    errors.push(error.clone())
-                }
-            }
-            errors
-        } else {
-            trace!("lacked analysis");
-            vec![]
-        }
     }
 }
