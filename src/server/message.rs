@@ -18,7 +18,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 use crate::actions::{ActionContext, InitActionContext};
-use crate::lsp_data::{LSPNotification, LSPRequest, MessageType, ShowMessageParams, WorkspaceEdit};
+use crate::lsp_data::{LSPNotification, LSPRequest, MessageType, ShowMessageParams};
 use crate::server::io::Output;
 
 
@@ -61,43 +61,44 @@ impl From<()> for ResponseError {
     }
 }
 
-/// Some actions can succeed in LSP terms, but can't succeed in user terms.
-/// This response allows an action to send a message to the user (currently
-/// only a warning) or a proper response.
+/// Some actions can succeed in LSP terms, but succeed only partially in
+/// user-space.
+/// This response allows an action to send a message to the user
+///  or a proper response.
 #[derive(Debug)]
-pub enum ResponseWithMessage<R: DefaultResponse> {
+pub enum ResponseWithMessage<R: Response> {
     Response(R),
-    Warn(String),
+    Warn(R, String),
+    Error(R, String),
 }
 
-/// A response that has a default value.
-pub trait DefaultResponse: Response + ::serde::Serialize + fmt::Debug {
-    fn default() -> Self;
-}
-
-impl<R: DefaultResponse> Response for ResponseWithMessage<R> {
+impl<R> Response for ResponseWithMessage<R>
+where R: Response + std::fmt::Debug + serde::Serialize {
     fn send<O: Output>(self, id: RequestId, out: &O) {
         match self {
             ResponseWithMessage::Response(r) => out.success(id, &r),
-            ResponseWithMessage::Warn(s) => {
+            ResponseWithMessage::Warn(r, s) => {
                 out.notify(Notification::<ShowMessage>::new(ShowMessageParams {
                     typ: MessageType::WARNING,
                     message: s,
                 }));
-
-                let default = R::default();
-                default.send(id, out);
+                r.send(id, out);
+            },
+            ResponseWithMessage::Error(r, s) => {
+                out.notify(Notification::<ShowMessage>::new(ShowMessageParams {
+                    typ: MessageType::ERROR,
+                    message: s,
+                }));
+                r.send(id, out);
             }
         }
     }
 }
 
-impl DefaultResponse for WorkspaceEdit {
-    fn default() -> WorkspaceEdit {
-        WorkspaceEdit { changes: None,
-                        document_changes: None,
-                        change_annotations: None,
-        }
+impl<R> From<R> for ResponseWithMessage<R>
+where R: Response + std::fmt::Debug + serde::Serialize {
+    fn from(value: R) -> ResponseWithMessage<R> {
+        ResponseWithMessage::Response(value)
     }
 }
 
