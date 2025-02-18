@@ -16,7 +16,7 @@ use std::time::{Duration, SystemTime};
 
 use crate::actions::progress::{DiagnosticsNotifier,
                                AnalysisDiagnosticsNotifier};
-use crate::analysis::scope::ContextedSymbol;
+use crate::analysis::scope::{ContextedSymbol, ContextKey};
 use crate::analysis::structure::objects::Import;
 use crate::analysis::{IsolatedAnalysis, DeviceAnalysis, DMLError};
 
@@ -212,7 +212,15 @@ impl AnalysisStorage {
                 .ok_or(AnalysisLookupError::NoFile)?;
             let analysis = self.get_isolated_analysis(&canon_path)?;
             Ok(analysis.lookup_reference(pos))
-    }
+        }
+
+    pub fn first_context_at_pos(&self, pos: &ZeroFilePosition) ->
+        Result<Option<ContextKey>, AnalysisLookupError> {
+            let canon_path = CanonPath::from_path_buf(pos.path())
+                .ok_or(AnalysisLookupError::NoFile)?;
+            let analysis = self.get_isolated_analysis(&canon_path)?;
+            Ok(analysis.lookup_first_context(pos))
+        }
 
     pub fn has_client_file(&self, path: &Path) -> bool {
         self.isolated_analysis.keys().any(
