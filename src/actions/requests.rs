@@ -12,6 +12,7 @@ use std::sync::Arc;
 use crate::actions::hover;
 use crate::actions::InitActionContext;
 use crate::analysis::{ZeroSpan, ZeroFilePosition, SymbolRef};
+use crate::analysis::reference::ReferenceKind;
 use crate::analysis::symbols::SimpleSymbol;
 
 pub use crate::lsp_data::request::{
@@ -35,7 +36,8 @@ pub use crate::lsp_data::request::{
 };
 
 pub use crate::lsp_data::{self as lsp_data, *};
-use crate::analysis::{Named, DeclarationSpan, LocationSpan, DLSLimitation};
+use crate::analysis::{Named, DeclarationSpan, LocationSpan,
+                      DLSLimitation, ISOLATED_TEMPLATE_LIMITATION};
 use crate::analysis::structure::objects::CompObjectKind;
 
 use crate::analysis::scope::{SymbolContext, SubSymbol, ContextKey, Scope};
@@ -89,6 +91,14 @@ fn format_limitations<I: IntoIterator<Item = DLSLimitation>>(limitations: I)
             .collect::<Vec<String>>().join("\n -"))
 }
 
+
+pub const TYPE_SEMANTIC_LIMITATION: DLSLimitation = DLSLimitation {
+    issue_num: 65,
+    description: "The DLS does not currently support semantic analysis of \
+                  types, including reference finding",
+};
+
+// TODO: This function is getting bloated, refactor into several smaller ones
 fn fp_to_symbol_refs(fp: &ZeroFilePosition,
                      ctx: &InitActionContext,
                      relevant_limitations: &mut HashSet<DLSLimitation>)
@@ -98,10 +108,10 @@ fn fp_to_symbol_refs(fp: &ZeroFilePosition,
     // but I keep it as separate here so that we could, perhaps,
     // returns different information for "no symbols found" and
     // "no info at pos"
-    debug!("Looking up symbols/references at {:?}", fp);
+    info!("Looking up symbols/references at {:?}", fp);
     let (context_sym, reference) = (analysis.context_symbol_at_pos(fp)?,
                                     analysis.reference_at_pos(fp)?);
-    debug!("Got {:?} and {:?}", context_sym, reference);
+    info!("Got {:?} and {:?}", context_sym, reference);
 
     let mut definitions = vec![];
     let analysises = analysis.all_device_analysises_containing_file(
@@ -129,16 +139,39 @@ fn fp_to_symbol_refs(fp: &ZeroFilePosition,
         },
         (None, Some(refr)) => {
             debug!("Mapping {:?} to symbols", refr.loc_span());
+            // Should be guaranteed by the context reference lookup above
+            // (isolated analysis does exist)
+            if refr.reference_kind() == ReferenceKind::Type {
+                relevant_limitations.insert(TYPE_SEMANTIC_LIMITATION);
+            }
+
+            let first_context = analysis.first_context_at_pos(fp).unwrap();
+            let mut any_template_used = false;
             for device in &analysises {
                 debug!("reference info is {:?}", device.reference_info.keys());
-                // TODO: Limitations related to reference-matching
-                //       (cases where a reference may not have been fully
-                //        matched to definitions only)
+                // NOTE: This ends up being the correct place to warn users
+                // about references inside uninstantiated templates,
+                // but we have to perform some extra work to find out we are
+                // in that case
+                if let Some(ContextKey::Template(ref sym)) = first_context {
+                    if device.templates.templates.get(sym.name_ref())
+                        .and_then(|t|t.location.as_ref())
+                        .and_then(
+                            |loc|device.template_object_implementation_map.get(loc))
+                        .map_or(false, |impls|!impls.is_empty()) {
+                            any_template_used = true;
+                        }
+                }
                 if let Some(defs) = device.reference_info.get(
                     refr.loc_span()) {
                     for def in defs {
                         definitions.push(Arc::clone(def));
                     }
+                }
+            }
+            if let Some(ContextKey::Template(_)) = first_context {
+                if !any_template_used {
+                    relevant_limitations.insert(ISOLATED_TEMPLATE_LIMITATION);
                 }
             }
         },
@@ -430,28 +463,23 @@ impl RequestAction for GotoImplementation {
         let mut limitations = HashSet::new();
         match fp_to_symbol_refs(&fp, &ctx, &mut limitations) {
             Ok(symbols) => {
-                if symbols.is_empty() {
-                    info!("No symbols found");
-                    Ok(None.into())
+                let mut unique_locations: HashSet<ZeroSpan>
+                    = HashSet::default();
+                for symbol in symbols {
+                    for implementation in &symbol.lock().unwrap().implementations {
+                        unique_locations.insert(*implementation);
+                    }
+                }
+                let lsp_locations: Vec<_> = unique_locations.into_iter()
+                    .map(|l|ls_util::dls_to_location(&l))
+                    .collect();
+                info!("Requested implementations are {:?}", lsp_locations);
+                if !limitations.is_empty() {
+                    Ok(ResponseWithMessage::Warn(
+                        Some(GotoImplementationResponse::Array(lsp_locations)),
+                        format_limitations(limitations)))
                 } else {
-                    let mut unique_locations: HashSet<ZeroSpan>
-                        = HashSet::default();
-                    for symbol in symbols {
-                        for implementation in &symbol.lock().unwrap().implementations {
-                            unique_locations.insert(*implementation);
-                        }
-                    }
-                    let lsp_locations: Vec<_> = unique_locations.into_iter()
-                        .map(|l|ls_util::dls_to_location(&l))
-                        .collect();
-                    info!("Requested implementations are {:?}", lsp_locations);
-                    if !limitations.is_empty() {
-                        Ok(ResponseWithMessage::Warn(
-                            Some(GotoImplementationResponse::Array(lsp_locations)),
-                            format_limitations(limitations)))
-                    } else {
-                        Ok(Some(GotoImplementationResponse::Array(lsp_locations)).into())
-                    }
+                    Ok(Some(GotoImplementationResponse::Array(lsp_locations)).into())
                 }
             },
             Err(lookuperror) => {

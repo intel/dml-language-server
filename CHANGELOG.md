@@ -6,6 +6,12 @@
 
 ## 0.9.9
 - Added "warning" as a valid log statement type.
+- Added warning feedback through LSP messages when analysis might be unavailable
+  or only partially complete
+-- When isolated/device (also known as syntactic/semantic) analysis is not available
+-- When requesting symbol information about types
+-- When requesting symbol or reference information about symbols or references from
+   inside an uninstantiated template
 
 ## 0.9.8
 - Correct behavior of DFA "-t" flag
