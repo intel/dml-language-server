@@ -11,7 +11,8 @@ use crate::analysis::parsing::tree::{AstObject, TreeElement, TreeElements,
                             LeafToken, ZeroRange};
 use crate::analysis::parsing::misc::{CDecl, ident_filter};
 use crate::analysis::parsing::expression::Expression;
-use crate::analysis::LocalDMLError;
+use crate::analysis::reference::{Reference, ReferenceKind};
+use crate::analysis::{FileSpec, LocalDMLError};
 use crate::vfs::TextFile;
 
 pub fn typeident_filter(token: TokenKind) -> bool {
@@ -467,6 +468,18 @@ pub enum BaseTypeContent {
 }
 
 impl TreeElement for BaseTypeContent {
+    fn references<'a>(&self,
+                      accumulator: &mut Vec<Reference>,
+                      file: FileSpec<'a>) {
+        self.default_references(accumulator, file);
+        if let BaseTypeContent::Ident(leaf) = self {
+            if let Some(refr) = Reference::global_from_token(
+                leaf, file, ReferenceKind::Type) {
+                accumulator.push(refr);
+            }
+        }
+    }
+
     fn range(&self) -> ZeroRange {
         match self {
             Self::Ident(content) => content.range(),
