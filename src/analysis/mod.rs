@@ -85,7 +85,7 @@ const EXAMPLE: DLSLimitation =
         description: "Example of a DLS limitation",
     };
 
-#[derive(Debug, Eq, PartialEq, Hash,)]
+#[derive(Clone, Debug, Eq, PartialEq, Hash,)]
 pub struct DLSLimitation {
     pub issue_num: u64,
     pub description: &'static str,

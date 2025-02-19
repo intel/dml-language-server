@@ -43,13 +43,18 @@ use crate::analysis::structure::objects::CompObjectKind;
 use crate::analysis::scope::{SymbolContext, SubSymbol, ContextKey, Scope};
 use crate::analysis::symbols::{DMLSymbolKind, StructureSymbol};
 use crate::actions::analysis_storage::AnalysisLookupError;
+use crate::config::WarningFrequency;
 use crate::file_management::CanonPath;
 use crate::server;
 use crate::server::{Ack, Output, Request, RequestAction,
-                    ResponseError, ResponseWithMessage};
+                    Response, ResponseError, ResponseWithMessage};
 
 // Gives a slightly-better error message than the short-form one specified by
 // the error.
+// NOTE: The reason these are NOT affected by the show_warnings setting
+// (despite being sent as warnings) are that these indicate something wrong to
+// the user they can actually do something about, rather than pointing out
+// an inherent (current) limitation
 fn error_to_description(error: AnalysisLookupError, file: Option<&str>)
                         -> String {
     match error {
@@ -82,13 +87,40 @@ fn error_to_description(error: AnalysisLookupError, file: Option<&str>)
     }
 }
 
-fn format_limitations<I: IntoIterator<Item = DLSLimitation>>(limitations: I)
-                                                             -> String {
+fn response_maybe_with_limitations<I, R>(
+    response: R,
+    limitations: I,
+    ctx: &InitActionContext)
+    -> ResponseWithMessage<R>
+where
+     I: IntoIterator<Item = DLSLimitation>,
+     R: Response + std::fmt::Debug + Serialize
+{
+    let filtered_limitations =
+        match ctx.config.lock().unwrap().show_warnings {
+            WarningFrequency::Never => vec![],
+            WarningFrequency::Once => {
+                let filtered = limitations.into_iter()
+                    .filter(|lim|!ctx.sent_warnings.lock().unwrap()
+                            .contains(lim))
+                    .collect::<Vec<_>>();
+                ctx.sent_warnings.lock().unwrap()
+                    .extend(filtered.iter().cloned());
+                filtered
+            },
+            _ => limitations.into_iter().collect(),
+        };
     let formatted = "The DML Language server could only obtain partial results \
                      due to internal limitations:";
-    format!("{}\n- {}", formatted,
-            limitations.into_iter().map(|lim|lim.to_string())
-            .collect::<Vec<String>>().join("\n -"))
+    let collect = filtered_limitations.into_iter().map(|lim|lim.to_string())
+        .collect::<Vec<String>>().join("\n -");
+    if collect.is_empty() {
+        response.into()
+    } else {
+        ResponseWithMessage::Warn(
+            response,
+            format!("{}\n- {}", formatted, collect))
+    }
 }
 
 
@@ -474,13 +506,10 @@ impl RequestAction for GotoImplementation {
                     .map(|l|ls_util::dls_to_location(&l))
                     .collect();
                 info!("Requested implementations are {:?}", lsp_locations);
-                if !limitations.is_empty() {
-                    Ok(ResponseWithMessage::Warn(
-                        Some(GotoImplementationResponse::Array(lsp_locations)),
-                        format_limitations(limitations)))
-                } else {
-                    Ok(Some(GotoImplementationResponse::Array(lsp_locations)).into())
-                }
+                Ok(response_maybe_with_limitations(
+                    Some(GotoImplementationResponse::Array(lsp_locations)),
+                    limitations,
+                    &ctx))
             },
             Err(lookuperror) => {
                 let main_file_name = fp.path();
@@ -524,13 +553,10 @@ impl RequestAction for GotoDeclaration {
                     .map(|l|ls_util::dls_to_location(&l))
                     .collect();
                 info!("Requested declarations are {:?}", lsp_locations);
-                if !limitations.is_empty() {
-                    Ok(ResponseWithMessage::Warn(
-                        Some(GotoDefinitionResponse::Array(lsp_locations)),
-                        format_limitations(limitations)))
-                } else {
-                    Ok(Some(GotoDefinitionResponse::Array(lsp_locations)).into())
-                }
+                Ok(response_maybe_with_limitations(
+                    Some(GotoDefinitionResponse::Array(lsp_locations)),
+                    limitations,
+                    &ctx))
             },
             Err(lookuperror) => {
                 let main_file_name = fp.path();
@@ -576,13 +602,10 @@ impl RequestAction for GotoDefinition {
                     .map(|l|ls_util::dls_to_location(&l))
                     .collect();
                 info!("Requested definitions are {:?}", lsp_locations);
-                if !limitations.is_empty() {
-                    Ok(ResponseWithMessage::Warn(
-                        Some(GotoDefinitionResponse::Array(lsp_locations)),
-                        format_limitations(limitations)))
-                } else {
-                    Ok(Some(GotoDefinitionResponse::Array(lsp_locations)).into())
-                }
+                Ok(response_maybe_with_limitations(
+                    Some(GotoDefinitionResponse::Array(lsp_locations)),
+                    limitations,
+                    &ctx))
             },
             Err(lookuperror) => {
                 let main_file_name = fp.path();
@@ -627,13 +650,10 @@ impl RequestAction for References {
                     .map(|l|ls_util::dls_to_location(&l))
                     .collect();
                 info!("Requested references are {:?}", lsp_locations);
-                if !limitations.is_empty() {
-                    Ok(ResponseWithMessage::Warn(
-                        lsp_locations,
-                        format_limitations(limitations)))
-                } else {
-                    Ok(lsp_locations.into())
-                }
+                Ok(response_maybe_with_limitations(
+                    lsp_locations,
+                    limitations,
+                    &ctx))
             },
             Err(lookuperror) => {
                 let main_file_name = fp.path();

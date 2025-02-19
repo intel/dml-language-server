@@ -97,8 +97,7 @@ impl<T> AsRef<T> for Inferrable<T> {
 #[allow(missing_docs)]
 #[serde(default)]
 pub struct Config {
-    // Currently no effect
-    pub show_warnings: bool,
+    pub show_warnings: WarningFrequency,
     /// `true` to analyzes only on save, not on change
     /// Default: `false`.
     pub analyse_on_save: bool,
@@ -113,10 +112,51 @@ pub struct Config {
     pub analysis_retain_duration: Option<f64>,
 }
 
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum WarningFrequency {
+    Never,
+    Always,
+    Once,
+}
+
+impl serde::Serialize for WarningFrequency {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer
+    {
+        serializer.serialize_str(match self {
+            WarningFrequency::Never => "never",
+            WarningFrequency::Always => "always",
+            WarningFrequency::Once => "once",
+        })
+    }
+}
+
+impl<'de> Deserialize<'de> for WarningFrequency
+{
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>
+    {
+        // NOTE: Keep compat with the old true/false value,
+        // with reasonable conversions
+        let str_val = <String>::deserialize(deserializer)?;
+        match str_val.to_lowercase().as_str() {
+            "never" | "false" => Ok(WarningFrequency::Never),
+            "once" => Ok(WarningFrequency::Once),
+            "always" | "true" => Ok(WarningFrequency::Always),
+            _ => Err(serde::de::Error::invalid_value(
+                serde::de::Unexpected::Str(&str_val),
+                &"Invalid value for WarningFrequency \
+                 (valid: never|once|always)"))
+        }
+    }
+}
+
 impl Default for Config {
     fn default() -> Config {
         Config {
-            show_warnings: true,
+            show_warnings: WarningFrequency::Always,
             analyse_on_save: false,
             features: vec![],
             all_features: false,
