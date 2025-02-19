@@ -12,6 +12,8 @@
 -- When requesting symbol information about types
 -- When requesting symbol or reference information about symbols or references from
    inside an uninstantiated template
+- Fine-grained the 'showWarnings' setting, can now be set to 'once', 'always',
+  or 'never'
 
 ## 0.9.8
 - Correct behavior of DFA "-t" flag

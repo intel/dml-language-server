@@ -18,6 +18,7 @@ use std::sync::{Arc, Mutex};
 use crate::actions::analysis_storage::AnalysisStorage;
 use crate::actions::analysis_queue::AnalysisQueue;
 use crate::actions::progress::{AnalysisProgressNotifier, ProgressNotifier};
+use crate::analysis::DLSLimitation;
 use crate::analysis::structure::expressions::Expression;
 use crate::concurrency::{Jobs, ConcurrentJob};
 use crate::config::Config;
@@ -183,6 +184,7 @@ pub struct InitActionContext {
 
     pub config: Arc<Mutex<Config>>,
     pub lint_config: Arc<Mutex<LintCfg>>,
+    pub sent_warnings: Arc<Mutex<HashSet<DLSLimitation>>>,
     jobs: Arc<Mutex<Jobs>>,
     pub client_capabilities: Arc<lsp_data::ClientCapabilities>,
     pub has_notified_missing_builtins: bool,
@@ -242,6 +244,7 @@ impl InitActionContext {
             pid,
             workspace_roots: Arc::default(),
             compilation_info: Arc::default(),
+            sent_warnings: Arc::default(),
         }
     }
 
