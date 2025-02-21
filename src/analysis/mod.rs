@@ -78,6 +78,25 @@ pub struct FileSpec<'a> {
 pub const IMPLICIT_IMPORTS: [&str; 2] = ["dml-builtins.dml",
                                          "simics/device-api.dml"];
 
+#[allow(dead_code)]
+const EXAMPLE: DLSLimitation =
+    DLSLimitation {
+        issue_num: 42,
+        description: "Example of a DLS limitation",
+    };
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash,)]
+pub struct DLSLimitation {
+    pub issue_num: u64,
+    pub description: &'static str,
+}
+
+impl fmt::Display for DLSLimitation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} (issue#{})", self.description, self.issue_num)
+    }
+}
+
 fn collapse_referencematches<T>(matches: T) -> ReferenceMatch
 where T : IntoIterator<Item = ReferenceMatch> {
     matches.into_iter().fold(
@@ -438,6 +457,12 @@ fn gather_scopes<'c>(next_scopes: Vec<&'c dyn Scope>,
     }
 }
 
+pub const ISOLATED_TEMPLATE_LIMITATION: DLSLimitation = DLSLimitation {
+    issue_num: 31,
+    description: "References from, and definitions inside, templates cannot \
+                  be evaluated without an instantiating object",
+};
+
 impl DeviceAnalysis {
     pub fn get_device_obj(&self) -> &DMLObject {
         &self.device_obj
@@ -520,7 +545,8 @@ impl DeviceAnalysis {
     // them from structurekeys obtained through
     fn contexts_to_objs(&self,
                         curr_objs: Vec<DMLObject>,
-                        context_chain: &[ContextKey])
+                        context_chain: &[ContextKey],
+                        limitations: &mut HashSet<DLSLimitation>)
                         -> Option<Vec<DMLObject>> {
         if context_chain.is_empty() {
             Some(curr_objs)
@@ -537,16 +563,18 @@ impl DeviceAnalysis {
                             None
                         }
                     }).collect(),
-                context_chain)
+                context_chain,
+                limitations)
         }
     }
 
     fn contexts_to_objs_aux(&self,
                             curr_objs: Vec<&DMLCompositeObject>,
-                            context_chain: &[ContextKey])
+                            context_chain: &[ContextKey],
+                            limitations: &mut HashSet<DLSLimitation>)
                             -> Option<Vec<DMLObject>> {
         let result: Vec<DMLObject> = curr_objs.into_iter()
-            .filter_map(|o|self.context_to_objs(o, context_chain))
+            .filter_map(|o|self.context_to_objs(o, context_chain, limitations))
             .flatten().collect();
         if result.is_empty() {
             None
@@ -557,12 +585,13 @@ impl DeviceAnalysis {
 
     fn context_to_objs(&self,
                        curr_obj: &DMLCompositeObject,
-                       context_chain: &[ContextKey])
+                       context_chain: &[ContextKey],
+                       limitations: &mut HashSet<DLSLimitation>)
                        -> Option<Vec<DMLObject>> {
         // Should be guaranteed by caller responsibility
         if context_chain.is_empty() {
             error!("Internal Error: context chain invariant broken at {:?}",
-                   curr_obj.identity())
+                   curr_obj.identity());
         }
 
         let (first, rest) = context_chain.split_first().unwrap();
@@ -601,12 +630,16 @@ impl DeviceAnalysis {
                                 .template_object_implementation_map
                                 .get(loc))
                     {
+                        if templ_impls.is_empty() {
+                            limitations.insert(ISOLATED_TEMPLATE_LIMITATION);
+                        }
                         return self.contexts_to_objs(
                             templ_impls
                                 .iter()
                                 .map(|key|DMLObject::CompObject(*key))
                                 .collect(),
-                            rest);
+                            rest,
+                            limitations);
                     }
                     else {
                         error!("Internal Error: No template->objects map for\
@@ -627,9 +660,10 @@ impl DeviceAnalysis {
                             .map(|s|s.as_str())
                             .collect::<Vec<&str>>()
                             .as_slice()),
-                    rest),
+                    rest,
+                    limitations),
         };
-        self.contexts_to_objs(next_objs, rest)
+        self.contexts_to_objs(next_objs, rest, limitations)
     }
 
     // Part of constant folding, try to resolve an expression that
@@ -921,9 +955,11 @@ impl DeviceAnalysis {
         }
     }
 
-    pub fn lookup_symbols_by_contexted_symbol<'t>(&self,
-                                                  sym: &ContextedSymbol<'t>)
-                                                  -> Vec<SymbolRef> {
+    pub fn lookup_symbols_by_contexted_symbol<'t>(
+        &self,
+        sym: &ContextedSymbol<'t>,
+        limitations: &mut HashSet<DLSLimitation>)
+        -> Vec<SymbolRef> {
         if matches!(sym.symbol.kind, DMLSymbolKind::Template |
                     DMLSymbolKind::Typedef | DMLSymbolKind::Extern)
         {
@@ -939,7 +975,8 @@ impl DeviceAnalysis {
                                  sym.contexts.iter()
                                  .cloned().cloned()
                                  .collect::<Vec<ContextKey>>()
-                                 .as_slice())
+                                 .as_slice(),
+                                 limitations)
         };
 
         if let Some(objs) = mb_objs {
@@ -1055,9 +1092,13 @@ impl DeviceAnalysis {
         reference: &VariableReference) -> ReferenceMatch {
         debug!("Looking up {:?} : {:?} in device tree", context_chain,
                reference);
+        // NOTE: This is actually unused, but contexts_to_objs is used
+        // both from user- and server- context and thus needs this argument
+        let mut limitations = HashSet::new();
         if let Some(objs) = self.contexts_to_objs(
             vec![self.get_device_obj().clone()],
-            context_chain) {
+            context_chain,
+            &mut limitations) {
             let mut syms = vec![];
             let mut suggestions = vec![];
             for result in objs.into_iter().map(
@@ -1402,6 +1443,13 @@ impl IsolatedAnalysis {
     pub fn lookup_reference(&self, pos: &ZeroFilePosition)
                             -> Option<&Reference> {
         self.toplevel.reference_at_pos(pos)
+    }
+
+    pub fn lookup_first_context(&self, pos: &ZeroFilePosition)
+                                -> Option<ContextKey> {
+        self.toplevel.defined_scopes().iter()
+            .find(|scope|scope.span().contains_pos(pos))
+            .map(|scope|scope.create_context())
     }
 }
 
