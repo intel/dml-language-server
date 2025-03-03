@@ -48,6 +48,7 @@ store-interval-tree = "0.4"
 strum = { version = "0.27", features = ["derive"] }
 subprocess = "0.2"
 thiserror = "2.0"
+urlencoding = "2.1"
 utf8-read = "0.4"
 walkdir = "2"
 heck = "0.5"
