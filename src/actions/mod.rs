@@ -333,6 +333,11 @@ impl InitActionContext {
         }
     }
 
+    pub fn report_errors<O: Output>(&mut self, path: &CanonPath, output: &O) {
+        self.update_analysis();
+        self.analysis.try_lock().unwrap().report_errors(path, output);
+    }
+
     pub fn compilation_info_from_file(&self, path: &PathBuf) ->
         Result<CompilationInfoStorage, String> {
             debug!("Reading compilation info from {:?}",
