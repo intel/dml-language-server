@@ -713,14 +713,21 @@ mod test {
 
     fn make_platform_path(path: &'static str) -> PathBuf {
         if cfg!(windows) {
-            PathBuf::from(format!("/C:/{}", path))
+            PathBuf::from(format!("C:/{}", path))
         } else {
             PathBuf::from(format!("/{}", path))
         }
     }
 
     fn make_uri(path: PathBuf) -> Uri {
-        Uri::from_str(&format!(r"file://{}", path.display())).unwrap()
+        let extra_slash = if cfg!(windows) {
+            "/"
+        } else {
+            ""
+        };
+        Uri::from_str(&format!(r"file://{}{}",
+                               extra_slash,
+                               path.display())).unwrap()
     }
 
     #[test]
