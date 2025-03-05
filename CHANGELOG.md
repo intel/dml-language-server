@@ -7,6 +7,7 @@
 ## 0.9.9
 - Added "warning" as a valid log statement type.
 - Fixed error where server did not correctly handle unicode-encoded paths received from client
+- Server will no longer message on start.
 
 ## 0.9.8
 - Correct behavior of DFA "-t" flag

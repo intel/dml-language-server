@@ -25,7 +25,7 @@ pub use crate::server::message::{
 };
 use crate::version;
 use jsonrpc::error::StandardError;
-use log::{debug, error, trace, warn};
+use log::{debug, error, info, trace, warn};
 pub use lsp_types::notification::{Exit as ExitNotification, ShowMessage};
 pub use lsp_types::request::Initialize as InitializeRequest;
 pub use lsp_types::request::Shutdown as ShutdownRequest;
@@ -118,6 +118,7 @@ pub(crate) fn maybe_notify_unknown_configs<O: Output>(out: &O, unknowns: &[Strin
     }));
 }
 
+#[allow(dead_code)]
 pub(crate) fn info_message<O: Output>(out: &O, message: String) {
     out.notify(Notification::<ShowMessage>::new(ShowMessageParams {
         typ: MessageType::INFO,
@@ -340,8 +341,7 @@ impl<O: Output> LsService<O> {
             }
         });
 
-        debug!("Language server entered active loop");
-        info_message(&self.output, "DML Language Server started".to_string());
+        info!("Language server entered active loop");
         loop {
             if self.server_receive.is_empty() {
                 if let ActionContext::Init(ctx) = &mut self.ctx {
