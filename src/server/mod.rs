@@ -367,9 +367,7 @@ impl<O: Output> LsService<O> {
                     debug!("Received isolated analysis of {:?}", path);
                     if let ActionContext::Init(ctx) = &mut self.ctx {
                         let config = ctx.config.lock().unwrap().to_owned();
-                        ctx.update_analysis();
-                        ctx.analysis.lock().unwrap().report_errors(
-                            &path, &self.output);
+                        ctx.report_errors(&path, &self.output);
                         for file in requests {
                             // A little bit of redundancy here, we need to
                             // pre-resolve this import into an absolute path
@@ -398,17 +396,13 @@ impl<O: Output> LsService<O> {
                 ServerToHandle::DeviceAnalysisDone(path) => {
                     debug!("Received device analysis of {:?}", path);
                     if let ActionContext::Init(ctx) = &mut self.ctx {
-                        ctx.update_analysis();
-                        ctx.analysis.try_lock().unwrap().report_errors(
-                            &path, &self.output);
+                        ctx.report_errors(&path, &self.output);
                     }
                 },
                 ServerToHandle::LinterDone(path) => {
                     debug!("Received linter analysis of {:?}", path);
                     if let ActionContext::Init(ctx) = &mut self.ctx {
-                        ctx.update_analysis();
-                        ctx.analysis.try_lock().unwrap().report_errors(
-                            &path, &self.output);
+                        ctx.report_errors(&path, &self.output);
                     }
                 },
                 ServerToHandle::AnalysisRequest(importpath, context) => {
