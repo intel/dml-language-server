@@ -14,6 +14,8 @@
    inside an uninstantiated template
 - Fine-grained the 'showWarnings' setting, can now be set to 'once', 'always',
   or 'never'
+- Fixed error where server did not correctly handle unicode-encoded paths received from client
+- Server will no longer message on start.
 
 ## 0.9.8
 - Correct behavior of DFA "-t" flag

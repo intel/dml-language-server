@@ -11,11 +11,11 @@ use log::{trace};
 pub use lsp_types::notification::Notification as LSPNotification;
 pub use lsp_types::request::Request as LSPRequest;
 pub use lsp_types::WorkspaceFolder as Workspace;
-
 pub use lsp_types::*;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use urlencoding;
 
 use crate::config;
 use crate::span;
@@ -50,7 +50,15 @@ pub fn parse_file_path(uri: &Uri) -> Result<PathBuf, UriFileParseError> {
     // NOTE: We do not need to mirror the windows->unix style file separators
     // here, as windows also accepts backslashes
     if uri.scheme().map_or(false,|s|s.as_str() == "file") {
-        Ok(Path::new(uri.path().as_str()).to_path_buf())
+        let decoded_path = urlencoding::decode(uri.path().as_str())
+            .map_err(|_|UriFileParseError::InvalidFilePath)?;
+        Ok(Path::new(
+            // Remove leading slash on windows, if any
+            if decoded_path.starts_with('/') && cfg!(windows) {
+                &decoded_path[1..]
+            } else {
+                &*decoded_path
+            }).to_path_buf())
     } else {
         Err(UriFileParseError::InvalidScheme)
     }
@@ -336,16 +344,24 @@ mod test {
 
     fn make_platform_path(path: &'static str) -> PathBuf {
         if cfg!(windows) {
-            PathBuf::from(format!("/C:/{}", path))
+            PathBuf::from(format!("C:/{}", path))
         } else {
             PathBuf::from(format!("/{}", path))
         }
     }
 
     fn make_uri(path: PathBuf) -> Uri {
-        Uri::from_str(&format!(r"file://{}", path.display())).unwrap()
+        let extra_slash = if cfg!(windows) {
+            "/"
+        } else {
+            ""
+        };
+        Uri::from_str(&format!(r"file://{}{}",
+                               extra_slash,
+                               path.display())).unwrap()
     }
 
+    // Checks that round-trip path->uri->path holds
     #[test]
     fn parse_uri_as_path() {
         let some_path = make_platform_path("path/a");
@@ -353,12 +369,34 @@ mod test {
         let path_from_uri = parse_file_path(&uri).unwrap();
         assert_eq!(some_path, path_from_uri);
     }
+
+    // Checks that round-truo uri->path->uri holds
     #[test]
     fn parse_path_as_uri() {
         let current_dir = ::std::env::current_dir().unwrap();
         let parsed_uri = parse_uri(current_dir.to_str().unwrap())
             .unwrap();
+        let expected_str = if cfg!(windows) {
+            &parsed_uri.path().as_str()[1..]
+        } else {
+            parsed_uri.path().as_str()
+        };
         assert_eq!(parse_file_path(&parsed_uri).unwrap().to_str().unwrap(),
-                   parsed_uri.path().as_str())
+                   expected_str);
+    }
+
+    // Checks that an URI with unicode-escaped characters gets correctly decoded
+    #[test]
+    fn parse_unicode_path() {
+        let (unicode_uri_path, expected_path) =
+            if cfg!(windows) {
+                (make_uri(PathBuf::from("c%3a/foo/".to_string())),
+                 PathBuf::from("c:/foo/".to_string()))
+            } else {
+                (make_uri(PathBuf::from("/c%3a/foo/".to_string())),
+                 PathBuf::from("/c:/foo/".to_string()))
+            };
+        assert_eq!(parse_file_path(&unicode_uri_path).unwrap(),
+                   expected_path);
     }
 }
