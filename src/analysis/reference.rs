@@ -93,7 +93,7 @@ impl DeclarationSpan for GlobalReference {
     }
 }
 
-#[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Copy, Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ReferenceKind {
     Template,
     Type,
@@ -173,6 +173,12 @@ impl Reference {
                 ZeroSpan::from_range(token.range(),
                                      file.path),
                 kind))
+    }
+    pub fn reference_kind(&self) -> ReferenceKind {
+        match self {
+            Reference::Variable(r) => r.kind,
+            Reference::Global(r) => r.kind,
+        }
     }
 }
 
