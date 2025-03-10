@@ -5,6 +5,8 @@
 # Change Log
 
 ## 0.9.9
+
+## 0.9.8
 - Added "warning" as a valid log statement type.
 - Added warning feedback through LSP messages when analysis might be unavailable
   or only partially complete
@@ -16,8 +18,6 @@
   or 'never'
 - Fixed error where server did not correctly handle unicode-encoded paths received from client
 - Server will no longer message on start.
-
-## 0.9.8
 - Correct behavior of DFA "-t" flag
 
 ## 0.9.7
