@@ -167,8 +167,7 @@ imported file is missing) but for simplicity that is not described here.
 
 ### Communicating with IDEs
 
-The DLS communicates with IDEs via
-the [Language Server protocol](https://github.com/Microsoft/language-server-protocol/blob/master/protocol.md).
+The DLS communicates with IDEs via the [Language Server protocol](https://github.com/Microsoft/language-server-protocol/blob/master/protocol.md).
 
 The LS protocol uses JSON sent over stdin/stdout. The JSON is rather dynamic -
 we can't make structs to easily map to many of the protocol objects. The client
@@ -180,16 +179,6 @@ request, then send a message later with the result of the task.
 
 Associating requests with replies is done using an id which must be handled by
 the DLS.
-
-### Extensions to the Language Server Protocol
-
-The DLS uses some custom extensions to the Language Server Protocol.
-These are all sent from the DLS to an LSP client and are only used to
-improve the user experience by showing progress indicators.
-
-* `window/progress`: notification, `title: "Analysing", value: WorkDoneProgressBegin`. Sent when the first analysis starts
-* ... standard LSP `publishDiagnostics`
-* `window/progress`: notification, `title: "Analysing", value: WorkDoneProgressEnd`. Sent when the last analysis finishes
 
 ### <a id="include-paths"></a>Include Paths
 In order to support fairly generic and complicating import configurations, the
@@ -204,3 +193,32 @@ particular order:
 - The root folder of the workspace
 - All other workspace roots
 - Every include path specified by the [DML Compile commands](README.md#dml-compile-commands) under the related module
+
+### <a id="device contexts"></a>Device Contexts
+Semantic analysis in the DLS is based around 'device contexts', essentially
+each device context contributes an analysis of files through the lens of a
+particular device file. Thus, a 'device context' is actually just the path
+to a particular device file. A device context is considered 'active' if
+the results of it are being used when querying the DLS for diagnostics or
+other information(note that the analysis is performed regardless).
+
+Whether a new device context is activated when a new file containing a
+device declaration is opened is decided by the 'device context mode'
+specified in the server configuration. The available modes are:
+- *Always*: New device contexts are always activated.
+- *Never*: New device contexts are never activated (by the DLS, they can stil be
+  activated by the client, see below).
+- *AnyNew*: New device contexts that import, directly or indirectly, a file which
+  is not imported, directly or indirectly, by an active device context are
+  activated.
+- *SameModule*: New device contexts that are in a subfolder of the folder of an
+  already active device context, or where an active device context is in a
+  subfolder of the new device context, are activated.
+- *First*: New device contexts where no directly or indirectly imported file
+  is imported, directly or indirectly, by an active device context are
+  activated.
+
+In addition, the client can control the active device context by sending a
+notification to change it (see [extensions to the language server protocol](clients.md#extensions-to-the-language-server-protocol)).
+If clients allow users to set the device context mode to anything except 'always',
+it is strongly recommended to also implement the direct control of device contexts.

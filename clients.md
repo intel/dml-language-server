@@ -27,13 +27,15 @@ re-started after a crash - the LSP client may or may not do this automatically
 
 Once you have this basic support in place, the hard work begins:
 
-* Implement [extensions to the protocol]contributing.md#extensions-to-the-language-server-protocol)
+* Implement [extensions to the protocol](clients.md#extensions-to-the-language-server-protocol)
 * Client-side configuration.
   - You'll need to send the `workspace/didChangeConfiguration` notification when
     configuration changes.
-  - For the config options, see [config.rs](../dls/src/config.rs#L99-L111)
+  - For the config options, see [config.rs](./src/config.rs#L99-L111)
 * Check for and install the DLS
-  - Download the latest [released binary](https://github.com/intel/dml-language-server.git/releases), you should regularly check for newly released binaries and update accordingly.
+  - Download the latest [binary](https://github.com/intel/dml-language-server/actions/workflows/rust.yml).
+    Currently, official releases are not being made from a public-facing repository. So you should on occassion
+    update to the latest binary from a green nightly build.
 * Client-side features
   - e.g., code snippets, build tasks, syntax highlighting
 * Testing
@@ -89,12 +91,37 @@ From Server to client:
 * `client/unregisterCapability`
 * `textDocument/publishDiagnostics`
 
-The DLS also uses some [custom messages](contributing.md#extensions-to-the-language-server-protocol).
+### Extensions to the Language Server Protocol
+
+The DLS also uses some custom messages to provide additional info to clients or
+to allow them to exert special control over the language server.
+
+Notifications:
+* '$changeActiveContexts'
+  The client sends this notification to the server to control for which paths
+  semantic errors and information is used. Usually you would precede this with
+  a '\$getKnownContexts' request to find which paths are available, and for which
+  contexts are already active. Details on semantic analysis is provided
+  [here](CONTRIBUTING.md#analysis) and the exact parameters of the notifications
+  are provided [in source](./src/actions/notifications.rs#L253-L257).
+
+Requests:
+* '$getKnownContexts'
+  The client sends this request to the server together with a list of
+  paths, to obtain the paths with device declarations that import any file on
+  the original list, directly or indirectly, together with information
+  about which of those paths are used for semantic errors or information.
+  Details on parameter format is available [in source](./src/actions/requests.rs#L714-L717).
+
+From Server to Client:
+
+* `window/progress`: notification, `title: "Analysing", value: WorkDoneProgressBegin`. Sent when the first analysis starts
+* `window/progress`: notification, `title: "Analysing", value: WorkDoneProgressEnd`. Sent when the last analysis finishes
 
 ## Resources
 
 * [LSP spec](https://microsoft.github.io/language-server-protocol/specification)
-* [contributing.md](contributing.md) - overview of the DLS and how to build, test, etc.
+* [CONTRIBUTING.md](CONTRIBUTING.md) - overview of the DLS and how to build, test, etc.
 
 ## Getting help
 
