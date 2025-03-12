@@ -246,21 +246,55 @@ impl Rule for IN3Rule {
 
 pub struct IN4Rule {
     pub enabled: bool,
+    pub indentation_spaces: u32,
 }
 
 impl IN4Rule {
+    fn signal_error(&self, acc: &mut Vec<LocalDMLError>, range: ZeroRange) {
+        let dmlerror = LocalDMLError {
+            range: range,
+            description: Self::description().to_string(),
+        };
+        acc.push(dmlerror);
+    }
+
+    pub fn from_options(options: &Option<IN4Options>) -> IN4Rule {
+        match options {
+            Some(options) => IN4Rule {
+                enabled: true,
+                indentation_spaces: options.indentation_spaces,
+            },
+            None => IN4Rule {
+                enabled: false,
+                indentation_spaces: 0,
+            },
+        }
+    }
+
     pub fn check(&self, acc: &mut Vec<LocalDMLError>, args: Option<IN4Args>) {
         if !self.enabled { return; }
         let Some(args) = args else { return; };
 
-        if args.lbrace.row_start == args.rbrace.row_start { return; }
+        let lbrace_on_same_row_than_rbrace:bool = args.lbrace.row_start
+            == args.rbrace.row_start;
+        if lbrace_on_same_row_than_rbrace { return; }
 
-        if args.last_member.row_end == args.rbrace.row_start {
-            let dmlerror = LocalDMLError {
-                range: args.rbrace,
-                description: Self::description().to_string(),
-            };
-            acc.push(dmlerror);
+        let last_member_on_same_row_than_rbrace:bool = args.last_member.row_start
+            == args.rbrace.row_start;
+        if last_member_on_same_row_than_rbrace {
+            return self.signal_error(acc, args.rbrace);
+        }
+
+        let rbrace_indented_more_than_last_member:bool= args.rbrace.col_start.0
+            > args.last_member.col_start.0;
+        if rbrace_indented_more_than_last_member {
+            return self.signal_error(acc, args.rbrace);
+        }
+
+        let rbrace_unindented_exactly_one_level:bool = args.last_member.col_start.0
+            - args.rbrace.col_start.0 == self.indentation_spaces;
+        if !rbrace_unindented_exactly_one_level {
+            return self.signal_error(acc, args.rbrace);
         }
     }
 }
@@ -293,7 +327,9 @@ impl IN4Args {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct IN4Options {}
+pub struct IN4Options {
+    pub indentation_spaces: u32,
+}
 
 // IN6: Continuation Line
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
