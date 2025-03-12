@@ -1,9 +1,11 @@
 use std::convert::TryInto;
 
 use crate::analysis::parsing::{statement::{self, CompoundContent, ForContent,
-                               SwitchCase, WhileContent},
+                               SwitchCase, WhileContent, SwitchContent,
+                               SwitchHashIf},
                                structure::ObjectStatementsContent,
-                               types::{LayoutContent, StructTypeContent}};
+                               types::{LayoutContent, StructTypeContent,
+                                       BitfieldsContent}};
 use crate::span::{Range, ZeroIndexed, Row, Column};
 use crate::analysis::LocalDMLError;
 use crate::analysis::parsing::tree::{ZeroRange, Content, TreeElement};
@@ -324,6 +326,47 @@ impl IN4Args {
             rbrace: node.rbrace.range()
         })
     }
+
+    pub fn from_switch_content(node: &SwitchContent) -> Option<IN4Args> {
+        Some(IN4Args {
+            lbrace: node.lbrace.range(),
+            last_member: node.cases.last()?.range(),
+            rbrace: node.rbrace.range()
+        })
+    }
+
+    pub fn from_switch_hash_if(node: &SwitchHashIf) -> Option<IN4Args> {
+        Some(IN4Args {
+            lbrace: node.lbrace.range(),
+            last_member: node.truecases.last()?.range(),
+            rbrace: node.rbrace.range()
+        })
+    }
+
+    pub fn from_struct_type_content(node: &StructTypeContent) -> Option<IN4Args> {
+        Some(IN4Args {
+            lbrace: node.lbrace.range(),
+            last_member: node.members.last()?.range(),
+            rbrace: node.rbrace.range()
+        })
+    }
+
+    pub fn from_layout_content(node: &LayoutContent) -> Option<IN4Args> {
+        Some(IN4Args {
+            lbrace: node.lbrace.range(),
+            last_member: node.fields.last()?.range(),
+            rbrace: node.rbrace.range()
+        })
+    }
+
+    pub fn from_bitfields_content(node: &BitfieldsContent) -> Option<IN4Args> {
+        Some(IN4Args {
+            lbrace: node.lbrace.range(),
+            last_member: node.fields.last()?.range(),
+            rbrace: node.rbrace.range()
+        })
+    }
+
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]

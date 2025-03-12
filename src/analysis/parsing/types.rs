@@ -1,6 +1,6 @@
 //  © 2024 Intel Corporation
 //  SPDX-License-Identifier: Apache-2.0 and MIT
-use crate::lint::{rules::{indentation::IN3Args,
+use crate::lint::{rules::{indentation::{IN3Args, IN4Args},
                             spacing::SpBracesArgs,
                             CurrentRules},
                             AuxParams,
@@ -55,6 +55,7 @@ impl TreeElement for StructTypeContent {
     }
     fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, aux: &mut AuxParams) {
         rules.in3.check(acc, IN3Args::from_struct_type_content(self, &mut aux.depth));
+        rules.in4.check(acc, IN4Args::from_struct_type_content(self));
         rules.sp_brace.check(acc, SpBracesArgs::from_struct_type_content(self));
     }
 }
@@ -134,6 +135,7 @@ impl TreeElement for LayoutContent {
     }
     fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, aux: &mut AuxParams) {
         rules.in3.check(acc, IN3Args::from_layout_content(self, &mut aux.depth));
+        rules.in4.check(acc, IN4Args::from_layout_content(self));
         rules.sp_brace.check(acc, SpBracesArgs::from_layout_content(self));
     }
 }
@@ -307,6 +309,7 @@ impl TreeElement for BitfieldsContent {
     }
     fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, _aux: &mut AuxParams) {
         rules.sp_brace.check(acc, SpBracesArgs::from_bitfields_content(self));
+        rules.in4.check(acc, IN4Args::from_bitfields_content(self));
     }
 }
 
