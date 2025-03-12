@@ -32,11 +32,11 @@ bank pcie_config {register command {field mem {
 fn style_check_sp_braces() {
     let mut cfg = LintCfg::default();
     let mut rules = instantiate_rules(&cfg);
-    assert_snippet(SP_BRACES, 8, &rules);
+    assert_snippet(SP_BRACES, 9, &rules);
     // Test rule disable
     cfg.sp_brace = None;
     rules = instantiate_rules(&cfg);
-    assert_snippet(SP_BRACES, 0, &rules);
+    assert_snippet(SP_BRACES, 1, &rules);
 
 }
 

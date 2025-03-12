@@ -244,6 +244,57 @@ impl Rule for IN3Rule {
     }
 }
 
+pub struct IN4Rule {
+    pub enabled: bool,
+}
+
+impl IN4Rule {
+    pub fn check(&self, acc: &mut Vec<LocalDMLError>, args: Option<IN4Args>) {
+        if !self.enabled { return; }
+        let Some(args) = args else { return; };
+
+        if args.lbrace.row_start == args.rbrace.row_start { return; }
+
+        if args.last_member.row_end == args.rbrace.row_start {
+            let dmlerror = LocalDMLError {
+                range: args.rbrace,
+                description: Self::description().to_string(),
+            };
+            acc.push(dmlerror);
+        }
+    }
+}
+
+impl Rule for IN4Rule {
+    fn name() -> &'static str {
+        "IN4"
+    }
+    fn description() -> &'static str {
+        "An closing brace at the beginning of a line is indented one level \
+         less than the previous line. A closing brace should only ever appear\
+         on the same line as the opening brace or first on a line."
+    }
+}
+
+pub struct IN4Args {
+    lbrace: ZeroRange,
+    last_member: ZeroRange,
+    rbrace: ZeroRange
+}
+
+impl IN4Args {
+    pub fn from_compound_content(node: &CompoundContent) -> Option<IN4Args> {
+        Some(IN4Args {
+            lbrace: node.lbrace.range(),
+            last_member: node.statements.last()?.range(),
+            rbrace: node.rbrace.range()
+        })
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct IN4Options {}
+
 // IN6: Continuation Line
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct IN6Options {
