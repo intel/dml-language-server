@@ -21,7 +21,7 @@ use crate::lint::rules::spacing::{SpBracesArgs,
                                   NspFunparArgs,
                                   SpPunctArgs};
 use crate::lint::rules::indentation::{IN3Args};
-use crate::lint::{rules::CurrentRules, AuxParams};
+use crate::lint::{rules::CurrentRules, AuxParams, DMLStyleError};
 use crate::analysis::reference::{Reference, ReferenceKind};
 use crate::analysis::FileSpec;
 use crate::span::Range;
@@ -235,7 +235,7 @@ impl TreeElement for MethodContent {
         }
         errors
     }
-    fn evaluate_rules(&self, acc: &mut Vec<LocalDMLError>, rules: &CurrentRules, _aux: &mut AuxParams) {
+    fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, _aux: &mut AuxParams) {
         rules.nsp_funpar.check(acc, NspFunparArgs::from_method(self));
         rules.nsp_inparen.check(acc, NspInparenArgs::from_method(self));
         rules.sp_punct.check(acc, SpPunctArgs::from_method(self));
@@ -704,7 +704,7 @@ impl TreeElement for ObjectStatementsContent {
                 create_subs!(left, vect, right)
         }
     }
-    fn evaluate_rules(&self, acc: &mut Vec<LocalDMLError>, rules: &CurrentRules, aux: &mut AuxParams) {
+    fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, aux: &mut AuxParams) {
         rules.sp_brace.check(acc, SpBracesArgs::from_obj_stmts(self));
         rules.in3.check(acc, IN3Args::from_obj_stmts_content(self, &mut aux.depth));
     }

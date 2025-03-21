@@ -3,11 +3,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use log::{debug, error, trace};
 use serde::{Deserialize, Serialize};
-use rules::{instantiate_rules, CurrentRules};
+use rules::{instantiate_rules, CurrentRules, RuleType};
 use rules::{spacing::{SpBraceOptions, SpPunctOptions, NspFunparOptions,
                       NspInparenOptions, NspUnaryOptions, NspTrailingOptions},
                       indentation::{LongLineOptions, IN1Options, IN3Options,
-                                    IN9Options, IN6Options},
+                                    IN2Options, IN9Options, IN6Options},
                     };
 use crate::analysis::{DMLError, IsolatedAnalysis, LocalDMLError};
 use crate::analysis::parsing::tree::TreeElement;
@@ -62,6 +62,8 @@ pub struct LintCfg {
     #[serde(default)]
     pub in1: Option<IN1Options>,
     #[serde(default)]
+    pub in2: Option<IN2Options>,
+    #[serde(default)]
     pub in3: Option<IN3Options>,
     #[serde(default)]
     pub in6: Option<IN6Options>,
@@ -80,11 +82,17 @@ impl Default for LintCfg {
             nsp_trailing: Some(NspTrailingOptions{}),
             long_lines: Some(LongLineOptions{max_length: MAX_LENGTH_DEFAULT}),
             in1: Some(IN1Options{indentation_spaces: INDENTATION_LEVEL_DEFAULT}),
+            in2: Some(IN2Options{}),
             in3: Some(IN3Options{indentation_spaces: INDENTATION_LEVEL_DEFAULT}),
             in6: Some(IN6Options{indentation_spaces: INDENTATION_LEVEL_DEFAULT}),
             in9: Some(IN9Options{indentation_spaces: INDENTATION_LEVEL_DEFAULT}),
         }
     }
+}
+
+pub struct DMLStyleError {
+    pub error: LocalDMLError,
+    pub rule_type: RuleType,
 }
 
 #[derive(Debug, Clone)]
@@ -124,12 +132,13 @@ impl LinterAnalysis {
 }
 
 pub fn begin_style_check(ast: TopAst, file: String, rules: &CurrentRules) -> Result<Vec<LocalDMLError>, Error> {
-    let mut linting_errors: Vec<LocalDMLError> = vec![];
+    let mut linting_errors: Vec<DMLStyleError> = vec![];
     ast.style_check(&mut linting_errors, rules, AuxParams { depth: 0 });      
 
     // Per line checks
     let lines: Vec<&str> = file.lines().collect();
     for (row, line) in lines.iter().enumerate() {
+        rules.in2.check(&mut linting_errors, row, line);
         rules.long_lines.check(&mut linting_errors, row, line);
         rules.nsp_trailing.check(&mut linting_errors, row, line);
     }
@@ -137,7 +146,24 @@ pub fn begin_style_check(ast: TopAst, file: String, rules: &CurrentRules) -> Res
     // Continuation line check
     rules.in6.check(&mut linting_errors, &lines);
 
-    Ok(linting_errors)
+    post_process_linting_errors(&mut linting_errors);
+
+    Ok(linting_errors.into_iter().map(|e| e.error).collect())
+}
+
+fn post_process_linting_errors(errors: &mut Vec<DMLStyleError>) {
+    // Collect in2 ranges
+    let in2_ranges: Vec<_> = errors.iter()
+        .filter(|style_err| style_err.rule_type == RuleType::IN2)
+        .map(|style_err| style_err.error.range)
+        .collect();
+
+    // Remove linting errors that are in in2 rows
+    errors.retain(|style_err| {
+        !in2_ranges.iter().any(|range|
+            (range.row_start == style_err.error.range.row_start || range.row_end == style_err.error.range.row_end)
+            && style_err.rule_type != RuleType::IN2)
+    });
 }
 
 #[derive(Copy, Clone)]

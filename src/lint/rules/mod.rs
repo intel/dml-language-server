@@ -7,7 +7,7 @@ pub mod tests;
 use spacing::{SpBracesRule,
     SpPunctRule, NspFunparRule, NspInparenRule,
     NspUnaryRule, NspTrailingRule};
-use indentation::{LongLinesRule, IN3Rule, IN9Rule, IN6Rule};
+use indentation::{LongLinesRule, IN2Rule, IN3Rule, IN6Rule, IN9Rule};
 use crate::lint::LintCfg;
 
 pub struct CurrentRules {
@@ -18,6 +18,7 @@ pub struct CurrentRules {
     pub nsp_unary: NspUnaryRule,
     pub nsp_trailing: NspTrailingRule,
     pub long_lines: LongLinesRule,
+    pub in2: IN2Rule,
     pub in3: IN3Rule,
     pub in6: IN6Rule,
     pub in9: IN9Rule
@@ -32,6 +33,7 @@ pub fn  instantiate_rules(cfg: &LintCfg) -> CurrentRules {
         nsp_unary: NspUnaryRule { enabled: cfg.nsp_unary.is_some() },
         nsp_trailing: NspTrailingRule { enabled: cfg.nsp_trailing.is_some() },
         long_lines: LongLinesRule::from_options(&cfg.long_lines),
+        in2: IN2Rule { enabled: cfg.in2.is_some() },
         in3: IN3Rule::from_options(&cfg.in3),
         in6: IN6Rule::from_options(&cfg.in6),
         in9: IN9Rule::from_options(&cfg.in9),
@@ -42,4 +44,20 @@ pub fn  instantiate_rules(cfg: &LintCfg) -> CurrentRules {
 pub trait Rule {
     fn name() -> &'static str;
     fn description() -> &'static str;
+    fn get_rule_type() -> RuleType;
+}
+
+#[derive(PartialEq)]
+pub enum RuleType {
+    SpBraces,
+    SpPunct,
+    NspFunpar,
+    NspInparen,
+    NspUnary,
+    NspTrailing,
+    LongLines,
+    IN2,
+    IN3,
+    IN6,
+    IN9
 }

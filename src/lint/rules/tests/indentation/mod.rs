@@ -1,3 +1,4 @@
+pub mod in2;
 pub mod in3;
 pub mod in6;
 pub mod in9;

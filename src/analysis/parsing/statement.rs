@@ -21,7 +21,8 @@ use crate::analysis::parsing::misc::{Initializer, InitializerContent, CDecl,
                                      ident_filter, objident_filter};
 use crate::analysis::parsing::structure::{parse_vardecl, VarDecl};
 use crate::analysis::LocalDMLError;
-use crate::lint::{rules::{CurrentRules,
+use crate::lint::{DMLStyleError,
+                  rules::{CurrentRules,
                          indentation::{IN3Args, IN9Args},
                          spacing::{NspInparenArgs,
                                    SpBracesArgs,
@@ -141,7 +142,7 @@ impl TreeElement for CompoundContent {
     fn subs(&self) -> TreeElements<'_> {
         create_subs!(&self.lbrace, &self.statements, &self.rbrace)
     }
-    fn evaluate_rules(&self, acc: &mut Vec<LocalDMLError>, rules: &CurrentRules, aux: &mut AuxParams) {
+    fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, aux: &mut AuxParams) {
         rules.sp_brace.check(acc, SpBracesArgs::from_compound(self));
         rules.in3.check(acc, IN3Args::from_compound_content(self, &mut aux.depth));
     }
@@ -195,7 +196,7 @@ impl TreeElement for VariableDeclContent {
     fn post_parse_sanity(&self, _file: &TextFile) -> Vec<LocalDMLError> {
         self.decls.ensure_named()
     }
-    fn evaluate_rules(&self, acc: &mut Vec<LocalDMLError>, rules: &CurrentRules, _aux: &mut AuxParams) {
+    fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, _aux: &mut AuxParams) {
         rules.sp_punct.check(acc, SpPunctArgs::from_variable_decl(self));
     }
 }
@@ -427,7 +428,7 @@ impl TreeElement for IfContent {
                      &self.truebranch,
                      &self.elsebranch)
     }
-    fn evaluate_rules(&self, acc: &mut Vec<LocalDMLError>, rules: &CurrentRules, _aux: &mut AuxParams) {
+    fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, _aux: &mut AuxParams) {
         rules.nsp_inparen.check(acc, NspInparenArgs::from_if(self));
     }
 }
@@ -1003,7 +1004,7 @@ impl TreeElement for SwitchCase {
             Self::Default(default, colon) => create_subs!(default, colon),
         }
     }
-    fn evaluate_rules(&self, acc: &mut Vec<LocalDMLError>, rules: &CurrentRules, aux: &mut AuxParams) {
+    fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, aux: &mut AuxParams) {
         rules.in9.check(acc, IN9Args::from_switch_case(self, &mut aux.depth));
     }
 }
@@ -1715,7 +1716,7 @@ impl TreeElement for ExpressionStmtContent {
     fn subs(&self) -> TreeElements<'_> {
         create_subs!(&self.expression, &self.semi)
     }
-    fn evaluate_rules(&self, acc: &mut Vec<LocalDMLError>, rules: &CurrentRules, _aux: &mut AuxParams) {
+    fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, _aux: &mut AuxParams) {
         rules.sp_punct.check(acc, SpPunctArgs::from_expression_stmt(self));
     }
 }
