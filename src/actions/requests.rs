@@ -3,7 +3,7 @@
 //! Requests that the DLS can respond to.
 
 use jsonrpc::error::{StandardError, standard_error};
-use log::{info, debug, error, trace, warn};
+use log::{debug, error, trace, warn};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashSet;
@@ -432,7 +432,7 @@ impl RequestAction for DocumentSymbolRequest {
         ctx: InitActionContext,
         params: Self::Params,
     ) -> Result<Self::Response, ResponseError> {
-        info!("Handing doc symbol request {:?}", params);
+        debug!("Handing doc symbol request {:?}", params);
         let parse_canon_path = parse_file_path!(
             &params.text_document.uri, "document symbols")
             .map(CanonPath::from_path_buf);
@@ -466,7 +466,7 @@ impl RequestAction for HoverRequest {
     fn handle(mut ctx: InitActionContext,
               params: Self::Params,
     ) -> Result<Self::Response, ResponseError> {
-        trace!("handling hover ({:?})", params);
+        debug!("handling hover ({:?})", params);
         let tooltip = hover::tooltip(&mut ctx,
                                      &params.text_document_position_params)?;
 
@@ -492,7 +492,7 @@ impl RequestAction for GotoImplementation {
         ctx: InitActionContext,
         params: Self::Params,
     ) -> Result<Self::Response, ResponseError> {
-        info!("Requesting implementations with params {:?}", params);
+        debug!("Requesting implementations with params {:?}", params);
         let fp = {
             let maybe_fp = ctx.text_doc_pos_to_pos(
                 &params.text_document_position_params,
@@ -522,7 +522,7 @@ impl RequestAction for GotoImplementation {
                 let lsp_locations: Vec<_> = unique_locations.into_iter()
                     .map(|l|ls_util::dls_to_location(&l))
                     .collect();
-                info!("Requested implementations are {:?}", lsp_locations);
+                trace!("Requested implementations are {:?}", lsp_locations);
                 Ok(response_maybe_with_limitations(
                     // NOTE: this ends up being the client-path, which is
                     // actually what we want
@@ -556,7 +556,7 @@ impl RequestAction for GotoDeclaration {
         ctx: InitActionContext,
         params: Self::Params,
     ) -> Result<Self::Response, ResponseError> {
-        info!("Requesting declarations with params {:?}", params);
+        debug!("Requesting declarations with params {:?}", params);
         let fp = {
             let maybe_fp = ctx.text_doc_pos_to_pos(
                 &params.text_document_position_params,
@@ -582,7 +582,7 @@ impl RequestAction for GotoDeclaration {
                 let lsp_locations = unique_locations.into_iter()
                     .map(|l|ls_util::dls_to_location(&l))
                     .collect();
-                info!("Requested declarations are {:?}", lsp_locations);
+                trace!("Requested declarations are {:?}", lsp_locations);
                 Ok(response_maybe_with_limitations(
                     &fp.path(),
                     Some(GotoDefinitionResponse::Array(lsp_locations)),
@@ -614,7 +614,7 @@ impl RequestAction for GotoDefinition {
         ctx: InitActionContext,
         params: Self::Params,
     ) -> Result<Self::Response, ResponseError> {
-        info!("Requesting definitions with params {:?}", params);
+        debug!("Requesting definitions with params {:?}", params);
         let fp = {
             let maybe_fp = ctx.text_doc_pos_to_pos(
                 &params.text_document_position_params,
@@ -640,7 +640,7 @@ impl RequestAction for GotoDefinition {
                 let lsp_locations: Vec<_> = unique_locations.into_iter()
                     .map(|l|ls_util::dls_to_location(&l))
                     .collect();
-                info!("Requested definitions are {:?}", lsp_locations);
+                trace!("Requested definitions are {:?}", lsp_locations);
                 Ok(response_maybe_with_limitations(
                     &fp.path(),
                     Some(GotoDefinitionResponse::Array(lsp_locations)),
@@ -672,7 +672,7 @@ impl RequestAction for References {
         ctx: InitActionContext,
         params: Self::Params,
     ) -> Result<Self::Response, ResponseError> {
-        info!("Requesting references with params {:?}", params);
+        debug!("Requesting references with params {:?}", params);
         let fp = {
             let maybe_fp = ctx.text_doc_pos_to_pos(
                 &params.text_document_position,
@@ -697,7 +697,7 @@ impl RequestAction for References {
                 let lsp_locations: Vec<_> = unique_locations.into_iter()
                     .map(|l|ls_util::dls_to_location(&l))
                     .collect();
-                info!("Requested references are {:?}", lsp_locations);
+                trace!("Requested references are {:?}", lsp_locations);
                 Ok(response_maybe_with_limitations(
                     &fp.path(),
                     lsp_locations,

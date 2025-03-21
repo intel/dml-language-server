@@ -10,7 +10,7 @@ use crate::span::{Span};
 use crate::vfs::{Change, VfsSpan};
 use crate::lsp_data::*;
 
-use log::{debug, error, trace, warn};
+use log::{debug, error, warn};
 use serde::{Serialize, Deserialize};
 
 use lsp_types::notification::ShowMessage;
@@ -97,7 +97,7 @@ impl BlockingNotificationAction for DidChangeTextDocument {
         ctx: &mut InitActionContext,
         out: O,
     ) -> Result<(), ResponseError> {
-        trace!("on_change: {:?}, thread: {:?}", params, thread::current().id());
+        debug!("on_change: {:?}, thread: {:?}", params, thread::current().id());
         if params.content_changes.is_empty() {
             return Ok(());
         }
@@ -166,7 +166,7 @@ impl BlockingNotificationAction for DidChangeConfiguration {
         ctx: &mut InitActionContext,
         out: O,
     ) -> Result<(), ResponseError> {
-        trace!("config change: {:?}", params.settings);
+        debug!("config change: {:?}", params.settings);
         use std::collections::HashMap;
         let mut dups = HashMap::new();
         let mut unknowns = vec![];
