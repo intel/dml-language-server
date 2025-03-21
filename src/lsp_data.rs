@@ -6,8 +6,6 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
-use log::{trace};
-
 pub use lsp_types::notification::Notification as LSPNotification;
 pub use lsp_types::request::Request as LSPRequest;
 pub use lsp_types::WorkspaceFolder as Workspace;
