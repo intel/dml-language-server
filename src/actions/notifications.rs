@@ -10,7 +10,7 @@ use crate::span::{Span};
 use crate::vfs::{Change, VfsSpan};
 use crate::lsp_data::*;
 
-use log::{trace, warn, error, debug};
+use log::{debug, error, trace, warn};
 use serde::{Serialize, Deserialize};
 
 use lsp_types::notification::ShowMessage;
@@ -64,7 +64,7 @@ impl BlockingNotificationAction for DidOpenTextDocument {
         ctx: &mut InitActionContext,
         out: O,
     ) -> Result<(), ResponseError> {
-        trace!("on_open: {:?}", params.text_document.uri);
+        debug!("on_open: {:?}", params.text_document.uri);
         let file_path = parse_file_path!(&params.text_document.uri, "on_open")?;
         ctx.reset_change_version(&file_path);
         ctx.vfs.set_file(&file_path, &params.text_document.text);
@@ -72,6 +72,7 @@ impl BlockingNotificationAction for DidOpenTextDocument {
         if !ctx.config.lock().unwrap().analyse_on_save {
             ctx.isolated_analyze(&file_path, None, &out);
         }
+        ctx.report_errors(&out);
         Ok(())
     }
 }
@@ -80,11 +81,12 @@ impl BlockingNotificationAction for DidCloseTextDocument {
     fn handle<O: Output>(
         params: Self::Params,
         ctx: &mut InitActionContext,
-        _out: O,
+        out: O,
     ) -> Result<(), ResponseError> {
-        trace!("on_close: {:?}", params.text_document.uri);
+        debug!("on_close: {:?}", params.text_document.uri);
         let file_path = parse_file_path!(&params.text_document.uri, "on_close")?;
         ctx.remove_direct_open(file_path.to_path_buf());
+        ctx.report_errors(&out);
         Ok(())
     }
 }
