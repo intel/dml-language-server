@@ -434,11 +434,19 @@ impl InitActionContext {
             .chain(device.keys())
             .chain(lint.keys())
             .collect();
+        let config = self.config.lock().unwrap();
+        let direct_opens = self.direct_opens.lock().unwrap();
         for file in files {
             let mut sorted_errors: Vec<DMLError> =
                 isolated.get(file).into_iter().flatten()
                 .chain(device.get(file).into_iter().flatten())
-                .chain(lint.get(file).into_iter().flatten())
+                .chain(
+                    lint.get(file).into_iter().flatten()
+                        .filter(
+                            |_|!config.lint_direct_only
+                                || direct_opens.contains(
+                                    &file.clone().into())
+                        ))
                 .cloned()
                 .collect();
             debug!("Reporting errors for {:?}", file);
