@@ -693,11 +693,8 @@ impl AnalysisStorage {
         }
     }
 
-    pub fn gather_errors(&mut self,
-                         path: &CanonPath,
-                         filter: Option<&HashSet<ContextDefinition>>)
+    pub fn gather_errors(&mut self, filter: Option<&HashSet<ContextDefinition>>)
                          -> FilteredErrors {
-        debug!("Reporting all errors for {:?}", path);
         // By this being a hashset, we will not double-report any errors
         let mut isolated_errors: HashMap<PathBuf, HashSet<DMLError>>
             = HashMap::default();
@@ -705,37 +702,39 @@ impl AnalysisStorage {
             = HashMap::default();
         let mut lint_errors: HashMap<PathBuf, HashSet<DMLError>>
             = HashMap::default();
-        let all_files: HashSet<CanonPath> =
-            self.get_file_contexts(path).iter().flat_map(
-                |c|self.all_dependencies(path, c.as_ref())
-                    .into_iter()).collect();
+        let all_files: HashSet<&CanonPath> =
+            self.device_analysis.keys()
+            .chain(self.isolated_analysis.keys())
+            .chain(self.lint_analysis.keys())
+            .collect();
         for file in all_files {
-            if let Some((file, errors))
-                = self.gather_local_errors(&file) {
-                    isolated_errors.entry(file)
-                        .or_default()
-                        .extend(errors.into_iter());
-                }
-            lint_errors.entry(file.to_path_buf())
+            if let Some((ifile, ierrors)) = self.gather_local_errors(file) {
+                isolated_errors.entry(ifile)
+                    .or_default()
+                    .extend(ierrors.into_iter());
+            }
+
+            lint_errors.entry(file.clone().into())
                 .or_default()
-                .extend(self
-                    .gather_linter_errors(&file).into_iter());
-        }
-        // Only report device errors if this analysis context is active
-        if filter.map_or(true, |f|f.contains(&path.clone().into())) {
-            for (file, errors) in self.gather_device_errors(path) {
-                device_errors.entry(file.clone())
+                .extend(self.gather_linter_errors(file).into_iter());
+
+            // Only report device errors if this analysis context is active
+            if filter.map_or(true, |f|f.contains(&file.clone().into())) {
+                for (dfile, errors) in self.gather_device_errors(file) {
+                    device_errors.entry(file.clone().into())
                     .or_default()
                     .extend(errors.into_iter());
-                if !self.has_client_file(&PathBuf::from("dml-builtins.dml")) {
-                    device_errors.get_mut(&file).unwrap().insert(
-                        DMLError {
-                            span: ZeroSpan::invalid(&file),
-                            description: "Could not find required builtin \
-                                          file 'dml-builtins.dml'".to_string(),
-                            related: vec![],
-                            severity: Some(DiagnosticSeverity::ERROR),
-                        });
+                    if !self.has_client_file(&PathBuf::from("dml-builtins.dml")) {
+                        device_errors.entry(dfile.clone())
+                            .or_default().insert(
+                                DMLError {
+                                    span: ZeroSpan::invalid(dfile.clone()),
+                                    description: "Could not find required builtin \
+                                                  file 'dml-builtins.dml'".to_string(),
+                                    related: vec![],
+                                    severity: Some(DiagnosticSeverity::ERROR),
+                                });
+                    }
                 }
             }
         }
@@ -766,7 +765,7 @@ impl AnalysisStorage {
         // This is not a user-initiated request, so it's ok to drop
         // the error here
         self.get_device_analysis(path)
-            .ok().
-            map_or(HashMap::default(),|a|a.errors.clone())
+            .ok()
+            .map_or(HashMap::default(),|a|a.errors.clone())
     }
 }

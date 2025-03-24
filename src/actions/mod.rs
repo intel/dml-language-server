@@ -422,10 +422,10 @@ impl InitActionContext {
         }
     }
 
-    pub fn report_errors<O: Output>(&mut self, path: &CanonPath, output: &O) {
+    pub fn report_errors<O: Output>(&mut self, output: &O) {
         self.update_analysis();
         let (isolated, device, lint) =
-            self.analysis.try_lock().unwrap().gather_errors(path, None);
+            self.analysis.try_lock().unwrap().gather_errors(None);
         let notifier = AnalysisDiagnosticsNotifier::new("indexing".to_string(),
                                                         output.clone());
         notifier.notify_begin_diagnostics();
