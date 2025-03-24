@@ -2,6 +2,7 @@ pub mod in2;
 pub mod in3;
 pub mod in6;
 pub mod in9;
+pub mod in10;
 
 use crate::lint::rules::tests::common::{assert_snippet, run_linter};
 use crate::lint::LintCfg;

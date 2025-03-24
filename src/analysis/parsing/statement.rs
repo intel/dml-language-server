@@ -2,6 +2,7 @@
 //  SPDX-License-Identifier: Apache-2.0 and MIT
 use log::error;
 
+use crate::lint::rules::indentation::IN10Args;
 use crate::span::Range;
 use crate::analysis::parsing::lexer::TokenKind;
 use crate::analysis::parsing::parser::{Token, doesnt_understand_tokens,
@@ -540,6 +541,9 @@ impl TreeElement for WhileContent {
                      &self.rparen,
                      &self.statement)
     }
+    fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, aux: &mut AuxParams) {
+        rules.in10.check(acc, IN10Args::from_while_content(self, &mut aux.depth));
+    }
 }
 
 impl Parse<StatementContent> for WhileContent {
@@ -847,6 +851,9 @@ impl TreeElement for ForContent {
                      &self.post,
                      &self.rparen,
                      &self.statement)
+    }
+    fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, aux: &mut AuxParams) {
+        rules.in10.check(acc, IN10Args::from_for_content(self, &mut aux.depth));
     }
 }
 

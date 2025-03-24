@@ -7,7 +7,8 @@ use rules::{instantiate_rules, CurrentRules, RuleType};
 use rules::{spacing::{SpBraceOptions, SpPunctOptions, NspFunparOptions,
                       NspInparenOptions, NspUnaryOptions, NspTrailingOptions},
                       indentation::{LongLineOptions, IN1Options, IN3Options,
-                                    IN2Options, IN9Options, IN6Options},
+                                    IN2Options, IN9Options, IN6Options,
+                                    IN10Options},
                     };
 use crate::analysis::{DMLError, IsolatedAnalysis, LocalDMLError};
 use crate::analysis::parsing::tree::TreeElement;
@@ -69,6 +70,8 @@ pub struct LintCfg {
     pub in6: Option<IN6Options>,
     #[serde(default)]
     pub in9: Option<IN9Options>,
+    #[serde(default)]
+    pub in10: Option<IN10Options>,
 }
 
 impl Default for LintCfg {
@@ -86,6 +89,7 @@ impl Default for LintCfg {
             in3: Some(IN3Options{indentation_spaces: INDENTATION_LEVEL_DEFAULT}),
             in6: Some(IN6Options{indentation_spaces: INDENTATION_LEVEL_DEFAULT}),
             in9: Some(IN9Options{indentation_spaces: INDENTATION_LEVEL_DEFAULT}),
+            in10: Some(IN10Options{indentation_spaces: INDENTATION_LEVEL_DEFAULT}),
         }
     }
 }

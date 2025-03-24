@@ -1,11 +1,13 @@
 use std::convert::TryInto;
 
-use crate::analysis::parsing::{statement::{self, CompoundContent, SwitchCase},
+use crate::analysis::parsing::{statement::{self, CompoundContent, ForContent,
+                               SwitchCase, WhileContent, StatementContent},
                                structure::ObjectStatementsContent,
                                types::{LayoutContent, StructTypeContent}};
 use crate::span::{Range, ZeroIndexed, Row, Column};
 use crate::analysis::LocalDMLError;
 use crate::analysis::parsing::tree::{ZeroRange, Content, TreeElement};
+use clap::builder::NonEmptyStringValueParser;
 use serde::{Deserialize, Serialize};
 use super::Rule;
 use crate::lint::{LintCfg, DMLStyleError, RuleType};
@@ -31,6 +33,9 @@ pub fn setup_indentation_size(cfg: &mut LintCfg) {
     }
     if let Some(in9) = &mut cfg.in9 {
         in9.indentation_spaces = indentation_spaces;
+    }
+    if let Some(in10) = &mut cfg.in10 {
+        in10.indentation_spaces = indentation_spaces;
     }
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -415,5 +420,100 @@ impl Rule for IN9Rule {
     }
     fn get_rule_type() -> RuleType {
         RuleType::IN9
+    }
+}
+
+// IN10: Indentation in empty loop
+pub struct IN10Rule {
+    pub enabled: bool,
+    indentation_spaces: u32
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct IN10Options {
+    #[serde(default = "default_indentation_spaces")]
+    pub indentation_spaces: u32,
+}
+
+pub struct IN10Args<'a> {
+    loop_keyword_range: ZeroRange,
+    semicolon_range: ZeroRange,
+    expected_depth: &'a mut u32,
+}
+
+impl IN10Args<'_> {
+    pub fn from_for_content<'a>(node: &ForContent, depth: &'a mut u32) -> Option<IN10Args<'a>> {
+        if let Content::Some(statement::StatementContent::Empty(semicolon)) = node.statement.content.as_ref() {
+            *depth += 1;
+            return Some(IN10Args {
+                loop_keyword_range: node.fortok.range(),
+                semicolon_range: semicolon.range(),
+                expected_depth: depth
+            });
+            
+        }
+        return None;
+    }
+
+    pub fn from_while_content<'a>(node: &WhileContent, depth: &'a mut u32) -> Option<IN10Args<'a>> {
+        if let Content::Some(statement::StatementContent::Empty(semicolon)) = node.statement.content.as_ref() {
+            *depth += 1;
+            return Some(IN10Args {
+                loop_keyword_range: node.whiletok.range(),
+                semicolon_range: semicolon.range(),
+                expected_depth: depth
+            });
+            
+        }
+        return None;
+    }
+}
+
+impl IN10Rule {
+    pub fn from_options(options: &Option<IN10Options>) -> IN10Rule {
+        match options {
+            Some(options) => IN10Rule {
+                enabled: true,
+                indentation_spaces: options.indentation_spaces
+            },
+            None => IN10Rule {
+                enabled: false,
+                indentation_spaces: 0
+            }
+        }
+    }
+    pub fn check<'a>(&self, acc: &mut Vec<DMLStyleError>,
+        args: Option<IN10Args<'a>>)
+    {
+        if !self.enabled { return; }
+        let Some(args) = args else { return; };
+        if self.indentation_is_not_aligned(args.semicolon_range, *args.expected_depth) ||
+            args.loop_keyword_range.row_start == args.semicolon_range.row_start {
+            let dmlerror = DMLStyleError {
+                error: LocalDMLError {
+                    range: Range::combine(args.loop_keyword_range, args.semicolon_range),
+                    description: Self::description().to_string(),
+                },
+                rule_type: Self::get_rule_type(),
+            };
+            acc.push(dmlerror);
+        }
+    }
+    fn indentation_is_not_aligned(&self, member_range: ZeroRange, depth: u32) -> bool {
+        let expected_column = self.indentation_spaces * depth;
+        member_range.col_start.0 != expected_column
+    }
+}
+
+impl Rule for IN10Rule {
+    fn name() -> &'static str {
+        "IN10_INDENTATION_EMPTY_LOOP"
+    }
+    fn description() -> &'static str {
+        "When the body of a while or for loop is left empty, \
+        indent the semicolon to the appropriate statement level"
+    }
+    fn get_rule_type() -> RuleType {
+        RuleType::IN10
     }
 }
