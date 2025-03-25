@@ -925,7 +925,7 @@ impl TreeElement for SwitchHashIf {
                      &self.rbrace,
                      &self.hashelse)
     }
-    fn evaluate_rules(&self, acc: &mut Vec<LocalDMLError>,
+    fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>,
                       rules: &CurrentRules, _aux: &mut AuxParams)
     {
         rules.in4.check(acc, IN4Args::from_switch_hash_if(self));
@@ -1100,7 +1100,7 @@ impl TreeElement for SwitchContent {
                      &self.cases,
                      &self.rbrace)
     }
-    fn evaluate_rules(&self, acc: &mut Vec<LocalDMLError>,
+    fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>,
                       rules: &CurrentRules, _aux: &mut AuxParams)
     {
         rules.in4.check(acc, IN4Args::from_switch_content(self));

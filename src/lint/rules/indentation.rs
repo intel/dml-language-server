@@ -266,7 +266,7 @@ impl IN4Rule {
     }
 
     fn check_default(
-        &self, acc: &mut Vec<LocalDMLError>, args: IN4DefaultArgs
+        &self, acc: &mut Vec<DMLStyleError>, args: IN4DefaultArgs
     ) {
         let lbrace_on_same_row_than_rbrace:bool = args.lbrace.row_start
             == args.rbrace.row_start;
@@ -297,7 +297,7 @@ impl IN4Rule {
     }
 
     fn check_switch_content(
-        &self, acc: &mut Vec<LocalDMLError>, args: IN4SwitchContentArgs
+        &self, acc: &mut Vec<DMLStyleError>, args: IN4SwitchContentArgs
     ) {
         let lbrace_on_same_row_than_rbrace:bool = args.lbrace.row_start
             == args.rbrace.row_start;
@@ -311,7 +311,7 @@ impl IN4Rule {
 
     }
 
-    pub fn check(&self, acc: &mut Vec<LocalDMLError>, args: Option<IN4Args>) {
+    pub fn check(&self, acc: &mut Vec<DMLStyleError>, args: Option<IN4Args>) {
         if !self.enabled { return; }
 
         match args {
@@ -331,6 +331,9 @@ impl Rule for IN4Rule {
         "An closing brace at the beginning of a line is indented one level \
          less than the previous line. A closing brace should only ever appear\
          on the same line as the opening brace or first on a line."
+    }
+    fn get_rule_type() -> RuleType {
+        RuleType::IN4
     }
 }
 
@@ -404,6 +407,7 @@ impl IN4Args {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct IN4Options {
+    #[serde(default = "default_indentation_spaces")]
     pub indentation_spaces: u32,
 }
 
