@@ -1,13 +1,12 @@
 use std::convert::TryInto;
 
 use crate::analysis::parsing::{statement::{self, CompoundContent, ForContent,
-                               SwitchCase, WhileContent, StatementContent},
+                               SwitchCase, WhileContent},
                                structure::ObjectStatementsContent,
                                types::{LayoutContent, StructTypeContent}};
 use crate::span::{Range, ZeroIndexed, Row, Column};
 use crate::analysis::LocalDMLError;
 use crate::analysis::parsing::tree::{ZeroRange, Content, TreeElement};
-use clap::builder::NonEmptyStringValueParser;
 use serde::{Deserialize, Serialize};
 use super::Rule;
 use crate::lint::{LintCfg, DMLStyleError, RuleType};
