@@ -107,7 +107,7 @@ typedef struct {
 } hqm_cq_list_release_ctx_t;
 
 typedef layout \"little-endian\" {
-     bitfields 8 {
+    bitfields 8 {
         uint2 rsvd             @ [7:6];
         uint1 error_f          @ [5:5];
         uint1 int_arm          @ [4:4];
@@ -128,7 +128,7 @@ pub static IN3_COND_STRUCTURE_BAD_INDENT: &str = "
 method control_device() {
     if (control.start == 1) {
     log info, 2: 'Starting the device';
-            status.enabled = 1;
+        status.enabled = 1;
     } else if (control.stop == 1) {
                 log info, 2: 'Stopping the device';
         status.enabled = 0;

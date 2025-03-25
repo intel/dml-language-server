@@ -4,9 +4,9 @@ pub static IN9_CORRECT_CASE_INDENT: &str = "
 method some_switch(int arg) {
     switch(arg) {
     case ZERO:
-#if (asdd == 0) {
+    #if (asdd == 0) {
         some_call();
-}
+    }
         if (a) {
             return;
         }
@@ -21,9 +21,9 @@ pub static IN9_INCORRECT_CASE_INDENT: &str = "
 method some_switch(int arg) {
     switch(arg) {
       case ZERO:
-#if (asdd == 0) {
-          some_call();
-}
+        #if (asdd == 0) {
+        some_call();
+        }
           if (a) {
             return;
         }
@@ -42,5 +42,5 @@ method some_switch(int arg) {
 fn in9_correct_case_indent() {
     let rules = set_up();
     assert_snippet(IN9_CORRECT_CASE_INDENT, 0, &rules);
-    assert_snippet(IN9_INCORRECT_CASE_INDENT, 4, &rules);
+    assert_snippet(IN9_INCORRECT_CASE_INDENT, 5, &rules);
 }

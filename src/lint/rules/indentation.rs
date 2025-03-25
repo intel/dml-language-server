@@ -252,14 +252,6 @@ pub struct IN4Rule {
 }
 
 impl IN4Rule {
-    fn signal_error(&self, acc: &mut Vec<LocalDMLError>, range: ZeroRange) {
-        let dmlerror = LocalDMLError {
-            range: range,
-            description: Self::description().to_string(),
-        };
-        acc.push(dmlerror);
-    }
-
     pub fn from_options(options: &Option<IN4Options>) -> IN4Rule {
         match options {
             Some(options) => IN4Rule {
@@ -273,10 +265,9 @@ impl IN4Rule {
         }
     }
 
-    pub fn check(&self, acc: &mut Vec<LocalDMLError>, args: Option<IN4Args>) {
-        if !self.enabled { return; }
-        let Some(args) = args else { return; };
-
+    fn check_default(
+        &self, acc: &mut Vec<LocalDMLError>, args: IN4DefaultArgs
+    ) {
         let lbrace_on_same_row_than_rbrace:bool = args.lbrace.row_start
             == args.rbrace.row_start;
         if lbrace_on_same_row_than_rbrace { return; }
@@ -284,19 +275,50 @@ impl IN4Rule {
         let last_member_on_same_row_than_rbrace:bool = args.last_member.row_start
             == args.rbrace.row_start;
         if last_member_on_same_row_than_rbrace {
-            return self.signal_error(acc, args.rbrace);
+            return self.push_err(acc, args.rbrace);
         }
 
         let rbrace_indented_more_than_last_member:bool= args.rbrace.col_start.0
             > args.last_member.col_start.0;
         if rbrace_indented_more_than_last_member {
-            return self.signal_error(acc, args.rbrace);
+            return self.push_err(acc, args.rbrace);
+        }
+
+        let depth_is_zero:bool = args.last_member.col_start.0 == 0;
+        if depth_is_zero {
+            return;
         }
 
         let rbrace_unindented_exactly_one_level:bool = args.last_member.col_start.0
             - args.rbrace.col_start.0 == self.indentation_spaces;
         if !rbrace_unindented_exactly_one_level {
-            return self.signal_error(acc, args.rbrace);
+            return self.push_err(acc, args.rbrace);
+        }
+    }
+
+    fn check_switch_content(
+        &self, acc: &mut Vec<LocalDMLError>, args: IN4SwitchContentArgs
+    ) {
+        let lbrace_on_same_row_than_rbrace:bool = args.lbrace.row_start
+            == args.rbrace.row_start;
+        if lbrace_on_same_row_than_rbrace { return; }
+
+        let rbrace_on_same_ind_level_than_switchtok:bool = args.rbrace.col_start
+            == args.switch_statement.col_start;
+        if !rbrace_on_same_ind_level_than_switchtok {
+            return self.push_err(acc, args.rbrace);
+        }
+
+    }
+
+    pub fn check(&self, acc: &mut Vec<LocalDMLError>, args: Option<IN4Args>) {
+        if !self.enabled { return; }
+
+        match args {
+            Some(IN4Args::Default(args)) => self.check_default(acc, args),
+            Some(IN4Args::SwitchContent(args)) => self.check_switch_content(acc,
+                                                                            args),
+            None => {}
         }
     }
 }
@@ -312,59 +334,70 @@ impl Rule for IN4Rule {
     }
 }
 
-pub struct IN4Args {
+pub struct IN4DefaultArgs {
     lbrace: ZeroRange,
     last_member: ZeroRange,
     rbrace: ZeroRange
 }
 
+pub struct IN4SwitchContentArgs {
+    lbrace: ZeroRange,
+    switch_statement: ZeroRange,
+    rbrace: ZeroRange
+}
+
+pub enum IN4Args {
+    Default(IN4DefaultArgs),
+    SwitchContent(IN4SwitchContentArgs)
+}
+
 impl IN4Args {
     pub fn from_compound_content(node: &CompoundContent) -> Option<IN4Args> {
-        Some(IN4Args {
+        Some(IN4Args::Default(IN4DefaultArgs {
             lbrace: node.lbrace.range(),
             last_member: node.statements.last()?.range(),
             rbrace: node.rbrace.range()
-        })
+        }))
     }
 
     pub fn from_switch_content(node: &SwitchContent) -> Option<IN4Args> {
-        Some(IN4Args {
+        Some(IN4Args::SwitchContent(IN4SwitchContentArgs {
             lbrace: node.lbrace.range(),
-            last_member: node.cases.last()?.range(),
+            switch_statement: node.switchtok.range(),
             rbrace: node.rbrace.range()
-        })
+        }))
     }
 
     pub fn from_switch_hash_if(node: &SwitchHashIf) -> Option<IN4Args> {
-        Some(IN4Args {
+        Some(IN4Args::Default(IN4DefaultArgs {
             lbrace: node.lbrace.range(),
             last_member: node.truecases.last()?.range(),
             rbrace: node.rbrace.range()
-        })
+        }))
     }
 
     pub fn from_struct_type_content(node: &StructTypeContent) -> Option<IN4Args> {
-        Some(IN4Args {
+        Some(IN4Args::Default(IN4DefaultArgs {
             lbrace: node.lbrace.range(),
             last_member: node.members.last()?.range(),
             rbrace: node.rbrace.range()
-        })
+        }))
     }
 
     pub fn from_layout_content(node: &LayoutContent) -> Option<IN4Args> {
-        Some(IN4Args {
+        Some(IN4Args::Default(IN4DefaultArgs {
             lbrace: node.lbrace.range(),
             last_member: node.fields.last()?.range(),
             rbrace: node.rbrace.range()
-        })
+        }))
     }
 
     pub fn from_bitfields_content(node: &BitfieldsContent) -> Option<IN4Args> {
-        Some(IN4Args {
+        Some(IN4Args::Default(IN4DefaultArgs {
             lbrace: node.lbrace.range(),
             last_member: node.fields.last()?.range(),
             rbrace: node.rbrace.range()
-        })
+        }))
     }
 
 }

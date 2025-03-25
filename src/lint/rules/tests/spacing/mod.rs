@@ -22,8 +22,7 @@ method this_is_empty_method() { }
 
 bank pcie_config {register command {field mem {
     method pcie_write(uint64 value) {
-        if (value != 0) {value = value + 1;
-        }
+        if (value != 0) {value = value + 1; }
         default(value);
         map_memory_alt();}
 }}}
@@ -55,9 +54,10 @@ typedef layout \"little-endian\" {bitfields 8 {uint2 rsvd @ [7:6];
 fn style_check_sp_braces_02() {
     let mut cfg = LintCfg::default();
     let mut rules = instantiate_rules(&cfg);
-    assert_snippet(SP_BRACES_02, 6, &rules);
+    assert_snippet(SP_BRACES_02, 8, &rules);
     // Test rule disable
     cfg.sp_brace = None;
+    cfg.in4 = None;
     rules = instantiate_rules(&cfg);
     assert_snippet(SP_BRACES_02, 0, &rules);
 

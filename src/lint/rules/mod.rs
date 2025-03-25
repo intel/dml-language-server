@@ -10,6 +10,7 @@ use spacing::{SpBracesRule,
 use indentation::{LongLinesRule, IN2Rule, IN3Rule, IN4Rule, IN6Rule, IN9Rule,
                   IN10Rule};
 use crate::lint::LintCfg;
+use crate::analysis::{LocalDMLError, parsing::tree::ZeroRange};
 
 pub struct CurrentRules {
     pub sp_brace: SpBracesRule,
@@ -50,6 +51,13 @@ pub trait Rule {
     fn name() -> &'static str;
     fn description() -> &'static str;
     fn get_rule_type() -> RuleType;
+    pub fn push_err(&self, acc: &mut Vec<LocalDMLError>, range: ZeroRange) {
+        let dmlerror = LocalDMLError {
+            range: range,
+            description: Self::description().to_string(),
+        };
+        acc.push(dmlerror);
+    }
 }
 
 #[derive(PartialEq)]
@@ -67,3 +75,4 @@ pub enum RuleType {
     IN9,
     IN10
 }
+
