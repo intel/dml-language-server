@@ -449,7 +449,7 @@ impl IN10Args {
             return Some(IN10Args {
                 loop_keyword_range: node.fortok.range(),
                 semicolon_range: semicolon.range(),
-                expected_depth: depth
+                expected_depth: depth + 1
             });
             
         }
@@ -461,7 +461,7 @@ impl IN10Args {
             return Some(IN10Args {
                 loop_keyword_range: node.whiletok.range(),
                 semicolon_range: semicolon.range(),
-                expected_depth: depth
+                expected_depth: depth + 1
             });
             
         }
