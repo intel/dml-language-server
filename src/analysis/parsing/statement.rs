@@ -5,6 +5,7 @@ use log::error;
 use crate::lint::rules::indentation::IN10Args;
 use crate::span::Range;
 use crate::analysis::parsing::lexer::TokenKind;
+use crate::analysis::parsing::statement;
 use crate::analysis::parsing::parser::{Token, doesnt_understand_tokens,
                                        FileParser, Parse, ParseContext,
                                        FileInfo};
@@ -1016,6 +1017,21 @@ impl TreeElement for SwitchCase {
     }
     fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, aux: AuxParams) {
         rules.in9.check(acc, IN9Args::from_switch_case(self, aux.depth));
+    }
+    fn should_increment_depth(&self) -> bool {
+        if let SwitchCase::Statement(statement) = self {
+            if let Content::Some(ref content) = *statement.content {
+                if let statement::StatementContent::Compound(_) = content {
+                    return false;
+                } else {
+                    return true;
+                }
+            } else {
+                return false;
+            }
+        } else {
+            return false;
+        }
     }
 }
 
