@@ -38,7 +38,7 @@ impl TreeElement for UnaryExpressionContent {
     fn subs(&self) -> TreeElements<'_> {
         create_subs!(&self.operation, &self.expr)
     }
-    fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, _aux: &mut AuxParams) {
+    fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, _aux: AuxParams) {
         rules.nsp_unary.check(acc, NspUnaryArgs::from_unary_expr(self));
     }
 }
@@ -72,7 +72,7 @@ impl TreeElement for PostUnaryExpressionContent {
     fn subs(&self) -> TreeElements<'_> {
         create_subs!(&self.expr, &self.operation)
     }
-    fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, _aux: &mut AuxParams) {
+    fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, _aux: AuxParams) {
         rules.nsp_unary.check(acc, NspUnaryArgs::from_postunary_expr(self));
     }
 }
@@ -210,7 +210,7 @@ impl TreeElement for FunctionCallContent {
                 noderef, ReferenceKind::Callable));
         }
     }
-    fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, _aux: &mut AuxParams) {
+    fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, _aux: AuxParams) {
         rules.nsp_funpar.check(acc, NspFunparArgs::from_function_call(self));
         rules.nsp_inparen.check(acc, NspInparenArgs::from_function_call(self));
         rules.sp_punct.check(acc, SpPunctArgs::from_function_call(self));
@@ -421,7 +421,7 @@ impl TreeElement for IndexContent {
     fn subs(&self) -> TreeElements<'_> {
         create_subs!(&self.array, &self.lbracket, &self.index, &self.rbracket)
     }
-    fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, _aux: &mut AuxParams) {
+    fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, _aux: AuxParams) {
         rules.nsp_inparen.check(acc, NspInparenArgs::from_index(self));
     }
 }

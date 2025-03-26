@@ -144,15 +144,15 @@ pub struct IN3Options {
     pub indentation_spaces: u32,
 }
 
-pub struct IN3Args<'a> {
+pub struct IN3Args {
     members_ranges: Vec<ZeroRange>,
     lbrace: ZeroRange,
     rbrace: ZeroRange,
-    expected_depth: &'a mut u32,
+    expected_depth: u32,
 }
 
-impl IN3Args<'_> {
-    pub fn from_obj_stmts_content<'a>(node: &ObjectStatementsContent, depth: &'a mut u32) -> Option<IN3Args<'a>> {
+impl IN3Args {
+    pub fn from_obj_stmts_content(node: &ObjectStatementsContent, depth: u32) -> Option<IN3Args> {
         if let ObjectStatementsContent::List(lbrace, stmnts, rbrace) = node {
             Some(IN3Args {
                 members_ranges: stmnts.iter().map(|s| s.range()).collect(),
@@ -164,7 +164,7 @@ impl IN3Args<'_> {
             None
         }
     }
-    pub fn from_struct_type_content<'a>(node: &StructTypeContent, depth: &'a mut u32) -> Option<IN3Args<'a>> {
+    pub fn from_struct_type_content(node: &StructTypeContent, depth: u32) -> Option<IN3Args> {
         Some(IN3Args {
             members_ranges: node.members.iter().map(|m| m.range()).collect(),
             lbrace: node.lbrace.range(),
@@ -172,7 +172,7 @@ impl IN3Args<'_> {
             expected_depth: depth,
         })
     }
-    pub fn from_compound_content<'a>(node: &CompoundContent, depth: &'a mut u32) -> Option<IN3Args<'a>> {
+    pub fn from_compound_content(node: &CompoundContent, depth: u32) -> Option<IN3Args> {
         Some(IN3Args {
             members_ranges: node.statements.iter().map(|s| s.range()).collect(),
             lbrace: node.lbrace.range(),
@@ -180,7 +180,7 @@ impl IN3Args<'_> {
             expected_depth: depth,
         })
     }
-    pub fn from_layout_content<'a>(node: &LayoutContent, depth: &'a mut u32) -> Option<IN3Args<'a>> {
+    pub fn from_layout_content(node: &LayoutContent, depth: u32) -> Option<IN3Args> {
         Some(IN3Args {
             members_ranges: node.fields.iter().map(|m| m.range()).collect(),
             lbrace: node.lbrace.range(),
@@ -203,16 +203,15 @@ impl IN3Rule {
             }
         }
     }
-    pub fn check<'a>(&self, acc: &mut Vec<DMLStyleError>,
-        args: Option<IN3Args<'a>>)
+    pub fn check(&self, acc: &mut Vec<DMLStyleError>,
+        args: Option<IN3Args>)
     {
         if !self.enabled { return; }
         let Some(args) = args else { return; };
         if args.lbrace.row_start == args.rbrace.row_start ||
             args.lbrace.row_start == args.members_ranges[0].row_start { return; }
-        *args.expected_depth += 1;
         for member_range in args.members_ranges {
-            if self.indentation_is_not_aligned(member_range, *args.expected_depth) {
+            if self.indentation_is_not_aligned(member_range, args.expected_depth) {
                 let dmlerror = DMLStyleError {
                     error: LocalDMLError {
                         range: member_range,
@@ -227,7 +226,12 @@ impl IN3Rule {
     fn indentation_is_not_aligned(&self, member_range: ZeroRange, depth: u32) -> bool {
         // Implicit IN1
         let expected_column = self.indentation_spaces * depth;
-        member_range.col_start.0 != expected_column
+        let res = member_range.col_start.0 != expected_column;
+        if res {
+            print!("\nFailed at row {}! {} vs {}",member_range.row_start.0, member_range.col_start.0, expected_column);
+        }
+        res
+
     }
 }
 
@@ -341,13 +345,13 @@ pub struct IN9Options {
     pub indentation_spaces: u32,
 }
 
-pub struct IN9Args<'a> {
+pub struct IN9Args {
     case_range: ZeroRange,
-    expected_depth: &'a mut u32,
+    expected_depth: u32,
 }
 
-impl IN9Args<'_> {
-    pub fn from_switch_case<'a>(node: &SwitchCase, depth: &'a mut u32) -> Option<IN9Args<'a>> {
+impl IN9Args {
+    pub fn from_switch_case(node: &SwitchCase, depth: u32) -> Option<IN9Args> {
         match node {
             SwitchCase::Case(_, _, _) |
             SwitchCase::Default(_, _) => {},
@@ -356,7 +360,6 @@ impl IN9Args<'_> {
                     if let statement::StatementContent::Compound(_) = content {
                         return None;
                     }
-                    *depth += 1;
                 }
             },
             SwitchCase::HashIf(_) => {
@@ -385,12 +388,12 @@ impl IN9Rule {
             }
         }
     }
-    pub fn check<'a>(&self, acc: &mut Vec<DMLStyleError>,
-        args: Option<IN9Args<'a>>)
+    pub fn check(&self, acc: &mut Vec<DMLStyleError>,
+        args: Option<IN9Args>)
     {
         if !self.enabled { return; }
         let Some(args) = args else { return; };
-        if self.indentation_is_not_aligned(args.case_range, *args.expected_depth) {
+        if self.indentation_is_not_aligned(args.case_range, args.expected_depth) {
             let dmlerror = DMLStyleError {
                 error: LocalDMLError {
                     range: args.case_range,
@@ -434,16 +437,15 @@ pub struct IN10Options {
     pub indentation_spaces: u32,
 }
 
-pub struct IN10Args<'a> {
+pub struct IN10Args {
     loop_keyword_range: ZeroRange,
     semicolon_range: ZeroRange,
-    expected_depth: &'a mut u32,
+    expected_depth: u32,
 }
 
-impl IN10Args<'_> {
-    pub fn from_for_content<'a>(node: &ForContent, depth: &'a mut u32) -> Option<IN10Args<'a>> {
+impl IN10Args {
+    pub fn from_for_content(node: &ForContent, depth: u32) -> Option<IN10Args> {
         if let Content::Some(statement::StatementContent::Empty(semicolon)) = node.statement.content.as_ref() {
-            *depth += 1;
             return Some(IN10Args {
                 loop_keyword_range: node.fortok.range(),
                 semicolon_range: semicolon.range(),
@@ -454,9 +456,8 @@ impl IN10Args<'_> {
         return None;
     }
 
-    pub fn from_while_content<'a>(node: &WhileContent, depth: &'a mut u32) -> Option<IN10Args<'a>> {
+    pub fn from_while_content(node: &WhileContent, depth: u32) -> Option<IN10Args> {
         if let Content::Some(statement::StatementContent::Empty(semicolon)) = node.statement.content.as_ref() {
-            *depth += 1;
             return Some(IN10Args {
                 loop_keyword_range: node.whiletok.range(),
                 semicolon_range: semicolon.range(),
@@ -481,12 +482,12 @@ impl IN10Rule {
             }
         }
     }
-    pub fn check<'a>(&self, acc: &mut Vec<DMLStyleError>,
-        args: Option<IN10Args<'a>>)
+    pub fn check(&self, acc: &mut Vec<DMLStyleError>,
+        args: Option<IN10Args>)
     {
         if !self.enabled { return; }
         let Some(args) = args else { return; };
-        if self.indentation_is_not_aligned(args.semicolon_range, *args.expected_depth) ||
+        if self.indentation_is_not_aligned(args.semicolon_range, args.expected_depth) ||
             args.loop_keyword_range.row_start == args.semicolon_range.row_start {
             let dmlerror = DMLStyleError {
                 error: LocalDMLError {

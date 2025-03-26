@@ -9,7 +9,7 @@ pub fn run_linter(source_code: &str, rules: &CurrentRules)
 {
     print!("\nSnippet to test on:\n{}\n", source_code);
     let ast = create_ast_from_snippet(source_code);
-    print!("Resulting AST:\n{:#?}\n", ast);
+    // print!("Resulting AST:\n{:#?}\n", ast);
     begin_style_check(ast, source_code.to_string(), rules)
 }
 

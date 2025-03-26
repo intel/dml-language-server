@@ -8,7 +8,7 @@ use crate::analysis::FileSpec;
 use crate::analysis::structure::expressions::DMLString;
 
 use crate::lint::{rules::CurrentRules, AuxParams, DMLStyleError};
-use crate::span::{Range, Span, ZeroIndexed, Position, FilePosition};
+use crate::span::{FilePosition, Position, Range, Span, ZeroIndexed};
 use crate::vfs::{Vfs as GenVfs, TextFile};
 
 pub type ZeroRange = Range::<ZeroIndexed>;
@@ -92,12 +92,24 @@ pub trait TreeElement {
     }
 
     fn style_check(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, mut aux: AuxParams) {
-        self.evaluate_rules(acc, rules, &mut aux);
+        /* 
+        method my_method(int a, int b) {
+            if (1) { // Depth ++
+                return true; // Depth ++
+            }
+        } */
+        if self.should_increment_depth() {
+            aux.depth += 1;
+            print!("\nIncrementing depth! {} For\n {},{}", aux.depth,
+                   self.range().row_start.0, self.range().col_start.0);
+        }
+        self.evaluate_rules(acc, rules, aux);
         for sub in self.subs() {
             sub.style_check(acc, rules, aux);
         }
     }
-    fn evaluate_rules(&self, _acc: &mut Vec<DMLStyleError>, _rules: &CurrentRules, _aux: &mut AuxParams) {} // default NOOP
+    fn should_increment_depth(&self) -> bool {false}  // default don't increment
+    fn evaluate_rules(&self, _acc: &mut Vec<DMLStyleError>, _rules: &CurrentRules, _aux: AuxParams) {} // default NOOP
 }
 
 impl <T: ?Sized + TreeElement> ReferenceContainer for T {
