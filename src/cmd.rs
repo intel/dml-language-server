@@ -70,22 +70,22 @@ pub fn run(compile_info_path: Option<PathBuf>,
                 let file_name = bits.next().expect("Expected file name");
                 let row = bits.next().expect("Expected line number");
                 let col = bits.next().expect("Expected column number");
-                (def(file_name, row, col).to_string(), 100)
+                (Some(def(file_name, row, col).to_string()), 100)
             }
             "symbol" => {
                 let query = bits.next().expect("Expected a query");
-                (workspace_symbol(query).to_string(), 100)
+                (Some(workspace_symbol(query).to_string()), 100)
             }
             "document" => {
                 let query = bits.next().expect("Expected file name");
-                (document_symbol(query).to_string(), 100)
+                (Some(document_symbol(query).to_string()), 100)
             }
             "open" => {
                 let file = bits.next().expect("Expected file name");
                 // NOTE: Opening a DML file can cause the server to chain-open
                 // several other files, there's no real good heuristic for how
                 // long until it is done, so we wait for quite a bit here
-                (open(file).to_string(), 10000)
+                (Some(open(file).to_string()), 10000)
             }
             "workspace" => {
                 let dirs: Vec<String> = bits.map(str::to_string).collect();
@@ -93,19 +93,24 @@ pub fn run(compile_info_path: Option<PathBuf>,
                 if dirs.is_empty() {
                     panic!("Expected directory name");
                 }
-                (add_workspaces(dirs).to_string(), 100)
+                (Some(add_workspaces(dirs).to_string()), 100)
             }
             "context-mode" => {
                 let mode = bits.next().expect("expected context mode");
-                (set_context_mode(mode.to_string()).to_string(), 100)
+                (Some(set_context_mode(mode.to_string()).to_string()), 100)
             }
             "contexts" => {
                 let dirs: Vec<String> = bits.map(str::to_string).collect();
-                (get_contexts(dirs).to_string(), 100)
+                (Some(get_contexts(dirs).to_string()), 100)
             }
             "set-contexts" => {
                 let dirs: Vec<String> = bits.map(str::to_string).collect();
-                (set_contexts(dirs).to_string(), 100)
+                (Some(set_contexts(dirs).to_string()), 100)
+            }
+            "wait" => {
+                let time = bits.next().unwrap();
+                let time_u64 = u64::from_str(time).unwrap();
+                (None, time_u64)
             }
             "h" | "help" => {
                 help();
@@ -124,9 +129,11 @@ pub fn run(compile_info_path: Option<PathBuf>,
             }
         };
 
-        // Send the message to the server.
-        debug!("message: {:?}", msg);
-        sender.send(msg).expect("Error sending on channel");
+        if let Some(msg) = msg {
+            // Send the message to the server
+            debug!("message: {:?}", msg);
+            sender.send(msg).expect("Error sending on channel");
+        }
         // Give the result time to print before printing the prompt again.
         thread::sleep(Duration::from_millis(wait));
     }
@@ -406,6 +413,10 @@ Supported commands:
     help          display this message
     quit          exit
 
+    wait          milliseconds
+                  makes the cmd thread sleep for milliseconds, useful
+                  to wait for the server to finish work
+
     open          file_name
                   opens a file to perform initial analysis
     workspace     [directory_name ...]
@@ -422,7 +433,7 @@ Supported commands:
                   textDocument/documentSymbol
     context-mode  mode
                   Set the device context mode
-    contexts
+    contexts      [paths ...]
                   Obtain active device contexts
                   for paths
     set-contexts  [paths ...]
