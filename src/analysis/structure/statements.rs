@@ -553,6 +553,7 @@ pub enum LogKind {
     Critical,
     Unimpl,
     Error,
+    Warning,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -576,6 +577,7 @@ impl Log {
                       kindtok.read_token(file.file))).and_then(
             |(range, id)|match id.as_str() {
                 "error" => Some(LogKind::Error),
+		"warning" => Some(LogKind::Warning),
                 "info" => Some(LogKind::Info),
                 "unimpl" => Some(LogKind::Unimpl),
                 "critical" => Some(LogKind::Critical),
@@ -584,7 +586,7 @@ impl Log {
                     report.push(LocalDMLError {
                         range,
                         description: "Invalid log kind, valid log kinds are \
-                                      \"error\", \"info\", \"unimpl\", \
+                                      \"error\", \"warning\", \"info\", \"unimpl\", \
                                       \"critical\", and \"spec_viol\"."
                             .to_string(),
                     });

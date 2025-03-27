@@ -97,8 +97,7 @@ impl<T> AsRef<T> for Inferrable<T> {
 #[allow(missing_docs)]
 #[serde(default)]
 pub struct Config {
-    // Currently no effect
-    pub show_warnings: bool,
+    pub show_warnings: WarningFrequency,
     /// `true` to analyzes only on save, not on change
     /// Default: `false`.
     pub analyse_on_save: bool,
@@ -113,10 +112,77 @@ pub struct Config {
     pub analysis_retain_duration: Option<f64>,
 }
 
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum WarningFrequency {
+    Never,
+    Always,
+    Once,
+}
+
+impl serde::Serialize for WarningFrequency {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer
+    {
+        serializer.serialize_str(match self {
+            WarningFrequency::Never => "never",
+            WarningFrequency::Always => "always",
+            WarningFrequency::Once => "once",
+        })
+    }
+}
+
+struct WarningFrequencyVisitor;
+
+impl <'de> serde::de::Visitor<'de> for WarningFrequencyVisitor {
+    type Value = WarningFrequency;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>)
+                 -> std::fmt::Result {
+        formatter.write_str("a valid WarningFrequency string \
+                             ('always', 'once', 'never')")
+    }
+
+    fn visit_str<E>(self, value: &str) -> Result<WarningFrequency, E>
+    where
+        E: serde::de::Error,
+    {
+        match value.to_lowercase().as_str() {
+            "never" | "false" => Ok(WarningFrequency::Never),
+            "once" => Ok(WarningFrequency::Once),
+            "always" | "true" => Ok(WarningFrequency::Always),
+            _ => Err(serde::de::Error::invalid_value(
+                serde::de::Unexpected::Str(value),
+                &"Invalid value for WarningFrequency \
+                  (valid: never|once|always)"))
+        }
+    }
+
+    fn visit_bool<E>(self, value: bool) -> Result<WarningFrequency, E>
+    where
+        E: serde::de::Error,
+    {
+        if value {
+            Ok(WarningFrequency::Always)
+        } else {
+            Ok(WarningFrequency::Never)
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for WarningFrequency {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>
+    {
+        deserializer.deserialize_any(WarningFrequencyVisitor)
+    }
+}
+
 impl Default for Config {
     fn default() -> Config {
         Config {
-            show_warnings: true,
+            show_warnings: WarningFrequency::Always,
             analyse_on_save: false,
             features: vec![],
             all_features: false,

@@ -32,7 +32,7 @@ jobs:
         shell: bash
         if: ${{ success() || failure() }}
         run: |
-          cargo install cargo-deny
+          cargo install cargo-deny@^0.17
           cargo deny --version
           set -o pipefail
           cargo deny check  2>&1 | tee -a ${{ inputs.log-dir }}/deny-log

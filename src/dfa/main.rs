@@ -53,39 +53,39 @@ fn parse_args() -> Args {
              .value_parser(clap::value_parser!(PathBuf)))
         .arg_required_else_help(true)
         .arg(Arg::new("workspace").short('w').long("workspace")
-             .action(ArgAction::Append)
              .help("Emulate a specific path as a workspace root")
+             .action(ArgAction::Append)
              .value_parser(clap::value_parser!(PathBuf))
              .required(false))
-        .arg(Arg::new("test")
-             .short('t')
+        .arg(Arg::new("test").short('t')
              .help("If any diagnostic errors are reported, \
                     exit with errorcode")
-             .required(false))
-        .arg(Arg::new("quiet")
-             .short('q')
+             .action(ArgAction::Set)
+             .value_parser(clap::value_parser!(bool))
+            .required(false))
+        .arg(Arg::new("quiet").short('q')
              .help("Do not output information about which errors \
                     were reported")
              .required(false))
         .arg(Arg::new("compile-info").short('c').long("compile-info")
-             .action(ArgAction::Set)
              .help("Use the specified file to determine compilation flags and \
                     include paths")
+             .action(ArgAction::Set)
              .value_parser(clap::value_parser!(PathBuf))
              .required(false))
         .arg(Arg::new("suppress-imports").short('s').long("suppress-imports")
-            .action(ArgAction::Set)
             .help("Analyses specified files only, without also analyzing files they import")
+            .action(ArgAction::Set)
             .value_parser(clap::value_parser!(bool))
             .required(false))
         .arg(Arg::new("linting-enabled").short('l').long("linting-enabled")
-             .action(ArgAction::Set)
              .help("Turns linting on/off (defaults to true)")
+             .action(ArgAction::Set)
              .value_parser(clap::value_parser!(bool))
              .required(false))
         .arg(Arg::new("lint-cfg-path").short('p').long("lint-cfg-path")
-             .action(ArgAction::Set)
              .help("Parse the specified file as a linting configuration file")
+             .action(ArgAction::Set)
              .value_parser(clap::value_parser!(PathBuf))
              .required(false))
         .arg(arg!(<PATH> ... "DML files to analyze")
@@ -101,7 +101,7 @@ fn parse_args() -> Args {
         workspaces: args.get_many::<PathBuf>("workspace")
             .map_or(vec![], |vr|vr.cloned().collect()),
         quiet: args.contains_id("quiet"),
-        test: args.contains_id("test"),
+        test: args.get_one::<bool>("test").cloned().unwrap_or(false),
         compile_info: args.get_one::<PathBuf>("compile-info")
             .cloned(),
         suppress_imports: args.get_one::<bool>("suppress-imports")
@@ -151,7 +151,7 @@ fn main_inner() -> Result<(), i32> {
     for file in &arg.files {
         dlsclient.open_file(file).or(Err(1))?;
     }
-
+    let mut exit_code = Ok(());
     if !arg.files.is_empty() {
 
         if linting_enabled {
@@ -169,9 +169,8 @@ fn main_inner() -> Result<(), i32> {
         if !arg.quiet {
             dlsclient.output_errors();
         }
-
-        if arg.test {
-            dlsclient.no_errors().or(Err(1))?;
+        if arg.test && !dlsclient.no_errors() {
+            exit_code = Err(1);
         }
     }
 
@@ -179,5 +178,5 @@ fn main_inner() -> Result<(), i32> {
     // the server here
     dlsclient.shutdown().ok();
 
-    Ok(())
+    exit_code
 }

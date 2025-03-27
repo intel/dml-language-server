@@ -389,8 +389,9 @@ impl DeviceAnalysisJob {
 
         trace!("Bases are {:?}", bases.iter().collect::<Vec<&CanonPath>>());
         let root_analysis = analysis.get_isolated_analysis(root)
-            .ok_or_else(
-                ||"Failed to get root isolated analysis".to_string())?.clone();
+            .map_err(
+                // NOTE/TODO: Could sanity that we fail in an expected way here
+                |_|"Failed to get root isolated analysis".to_string())?.clone();
         let (bases, missing) : (Vec<TimestampedStorage<IsolatedAnalysis>>,
                                 HashSet<CanonPath>) =
             bases.iter().map(|p|(p, analysis.isolated_analysis.get(p).cloned()))
@@ -474,7 +475,7 @@ impl LinterJob {
         let mut hasher = DefaultHasher::new();
         Hash::hash(&device, &mut hasher);
         let hash = hasher.finish();
-        if let Some(isolated_analysis) = analysis.get_isolated_analysis(&device) {
+        if let Ok(isolated_analysis) = analysis.get_isolated_analysis(&device) {
             Ok(LinterJob {
                 file: device.to_owned(),
                 timestamp,

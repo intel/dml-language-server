@@ -396,8 +396,8 @@ impl ClientInterface {
         }
     }
 
-    pub fn no_errors(&mut self) -> anyhow::Result<()> {
-        Ok(())
+    pub fn no_errors(&self) -> bool {
+        self.diagnostics.is_empty()
     }
 
     pub fn shutdown(&mut self) -> anyhow::Result<()> {
