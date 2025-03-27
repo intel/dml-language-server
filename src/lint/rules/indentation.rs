@@ -1,7 +1,7 @@
 use std::convert::TryInto;
 
 use crate::analysis::parsing::{statement::{self, CompoundContent, ForContent,
-                               SwitchCase, WhileContent},
+                               SwitchCase, WhileContent, SwitchContent},
                                structure::ObjectStatementsContent,
                                types::{BitfieldsContent, LayoutContent, StructTypeContent}};
 use crate::span::{Range, ZeroIndexed};
@@ -245,6 +245,137 @@ impl Rule for IN3Rule {
     }
     fn get_rule_type() -> RuleType {
         RuleType::IN3
+    }
+}
+
+pub struct IN4Rule {
+    pub enabled: bool,
+    pub indentation_spaces: u32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct IN4Options {
+    #[serde(default = "default_indentation_spaces")]
+    pub indentation_spaces: u32,
+}
+
+impl Rule for IN4Rule {
+    fn name() -> &'static str {
+        "IN4"
+    }
+    fn description() -> &'static str {
+        "Closing braces at the beginning of a line should be aligned to the corresponding \
+        indentation level of the statement that started the code block. A closing brace should \
+        only ever appear on the same line as the opening brace, or first on a line."
+    }
+    fn get_rule_type() -> RuleType {
+        RuleType::IN4
+    }
+}
+
+pub struct IN4Args {
+    expected_depth: u32,
+    lbrace: ZeroRange,
+    last_member: ZeroRange,
+    rbrace: ZeroRange,
+}
+
+impl IN4Args {
+    pub fn from_compound_content(node: &CompoundContent, depth: u32) -> Option<IN4Args> {
+        Some(IN4Args {
+            expected_depth: depth.saturating_sub(1),
+            lbrace: node.lbrace.range(),
+            last_member: node.statements.last()?.range(),
+            rbrace: node.rbrace.range(),
+        })
+    }
+
+    pub fn from_obj_stmts_content(node: &ObjectStatementsContent, depth: u32) -> Option<IN4Args> {
+        if let ObjectStatementsContent::List(lbrace, stmnts, rbrace) = node {
+            Some(IN4Args {
+                expected_depth: depth.saturating_sub(1),
+                lbrace: lbrace.range(),
+                last_member: stmnts.last()?.range(),
+                rbrace: rbrace.range(),
+            })
+        } else {
+            None
+        }
+    }
+
+    pub fn from_switch_content(node: &SwitchContent, depth: u32) -> Option<IN4Args> {
+        Some(IN4Args {
+            // Switch content does not increase indentation level before this call
+            // so there is no need to reduce it
+            expected_depth: depth,
+            lbrace: node.lbrace.range(),
+            last_member: node.cases.last()?.range(),
+            rbrace: node.rbrace.range(),
+        })
+    }
+
+    pub fn from_struct_type_content(node: &StructTypeContent, depth: u32) -> Option<IN4Args> {
+        Some(IN4Args {
+            expected_depth: depth.saturating_sub(1),
+            lbrace: node.lbrace.range(),
+            last_member: node.members.last()?.range(),
+            rbrace: node.rbrace.range(),
+        })
+    }
+
+    pub fn from_layout_content(node: &LayoutContent, depth: u32) -> Option<IN4Args> {
+        Some(IN4Args {
+            expected_depth: depth.saturating_sub(1),
+            lbrace: node.lbrace.range(),
+            last_member: node.fields.last()?.range(),
+            rbrace: node.rbrace.range(),
+        })
+    }
+
+    pub fn from_bitfields_content(node: &BitfieldsContent, depth: u32) -> Option<IN4Args> {
+        Some(IN4Args {
+            expected_depth: depth.saturating_sub(1),
+            lbrace: node.lbrace.range(),
+            last_member: node.fields.last()?.range(),
+            rbrace: node.rbrace.range(),
+        })
+    }
+
+}
+
+impl IN4Rule {
+    pub fn from_options(options: &Option<IN4Options>) -> IN4Rule {
+        match options {
+            Some(options) => IN4Rule {
+                enabled: true,
+                indentation_spaces: options.indentation_spaces,
+            },
+            None => IN4Rule {
+                enabled: false,
+                indentation_spaces: 0,
+            },
+        }
+    }
+
+    pub fn check(&self, acc: &mut Vec<DMLStyleError>, args: Option<IN4Args>) {
+        if !self.enabled { return; }
+        let Some(args) = args else { return; };
+
+        let lbrace_on_same_row_than_rbrace:bool = args.lbrace.row_start
+            == args.rbrace.row_start;
+        if lbrace_on_same_row_than_rbrace { return; }
+
+        let last_member_on_same_row_than_rbrace:bool = args.last_member.row_end
+            == args.rbrace.row_start;
+        if last_member_on_same_row_than_rbrace {
+            return self.push_err(acc, args.rbrace);
+        }
+
+        let rbrace_on_same_ind_level_than_switchtok:bool = args.rbrace.col_start.0
+            == args.expected_depth * self.indentation_spaces;
+        if !rbrace_on_same_ind_level_than_switchtok {
+            return self.push_err(acc, args.rbrace);
+        }
     }
 }
 

@@ -25,11 +25,11 @@ use crate::analysis::parsing::structure::{parse_vardecl, VarDecl};
 use crate::analysis::LocalDMLError;
 use crate::lint::{DMLStyleError,
                   rules::{CurrentRules,
-                         indentation::{IN3Args, IN9Args},
-                         spacing::{NspInparenArgs,
-                                   SpBracesArgs,
-                                   SpPunctArgs}},
-                                   AuxParams};
+                          indentation::{IN3Args, IN4Args, IN9Args},
+                          spacing::{NspInparenArgs,
+                                    SpBracesArgs,
+                                    SpPunctArgs}},
+                                    AuxParams};
 use crate::vfs::TextFile;
 
 fn statement_contexts(context: &ParseContext)
@@ -147,6 +147,7 @@ impl TreeElement for CompoundContent {
     fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, aux: AuxParams) {
         rules.sp_brace.check(acc, SpBracesArgs::from_compound(self));
         rules.in3.check(acc, IN3Args::from_compound_content(self, aux.depth));
+        rules.in4.check(acc, IN4Args::from_compound_content(self, aux.depth));
     }
     fn should_increment_depth(&self) -> bool {
         true
@@ -1102,6 +1103,11 @@ impl TreeElement for SwitchContent {
                      &self.lbrace,
                      &self.cases,
                      &self.rbrace)
+    }
+    fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>,
+                      rules: &CurrentRules, aux: AuxParams)
+    {
+        rules.in4.check(acc, IN4Args::from_switch_content(self, aux.depth));
     }
 }
 
