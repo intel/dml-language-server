@@ -283,11 +283,24 @@ pub struct IN4Args {
 impl IN4Args {
     pub fn from_compound_content(node: &CompoundContent, depth: u32) -> Option<IN4Args> {
         Some(IN4Args {
-            expected_depth: depth - 1,
+            expected_depth: depth.saturating_sub(1),
             lbrace: node.lbrace.range(),
             last_member: node.statements.last()?.range(),
             rbrace: node.rbrace.range(),
         })
+    }
+
+    pub fn from_obj_stmts_content(node: &ObjectStatementsContent, depth: u32) -> Option<IN4Args> {
+        if let ObjectStatementsContent::List(lbrace, stmnts, rbrace) = node {
+            Some(IN4Args {
+                expected_depth: depth.saturating_sub(1),
+                lbrace: lbrace.range(),
+                last_member: stmnts.last()?.range(),
+                rbrace: rbrace.range(),
+            })
+        } else {
+            None
+        }
     }
 
     pub fn from_switch_content(node: &SwitchContent, depth: u32) -> Option<IN4Args> {
@@ -303,7 +316,7 @@ impl IN4Args {
 
     pub fn from_struct_type_content(node: &StructTypeContent, depth: u32) -> Option<IN4Args> {
         Some(IN4Args {
-            expected_depth: depth - 1,
+            expected_depth: depth.saturating_sub(1),
             lbrace: node.lbrace.range(),
             last_member: node.members.last()?.range(),
             rbrace: node.rbrace.range(),
@@ -312,7 +325,7 @@ impl IN4Args {
 
     pub fn from_layout_content(node: &LayoutContent, depth: u32) -> Option<IN4Args> {
         Some(IN4Args {
-            expected_depth: depth - 1,
+            expected_depth: depth.saturating_sub(1),
             lbrace: node.lbrace.range(),
             last_member: node.fields.last()?.range(),
             rbrace: node.rbrace.range(),
@@ -321,7 +334,7 @@ impl IN4Args {
 
     pub fn from_bitfields_content(node: &BitfieldsContent, depth: u32) -> Option<IN4Args> {
         Some(IN4Args {
-            expected_depth: depth - 1,
+            expected_depth: depth.saturating_sub(1),
             lbrace: node.lbrace.range(),
             last_member: node.fields.last()?.range(),
             rbrace: node.rbrace.range(),
@@ -352,7 +365,7 @@ impl IN4Rule {
             == args.rbrace.row_start;
         if lbrace_on_same_row_than_rbrace { return; }
 
-        let last_member_on_same_row_than_rbrace:bool = args.last_member.row_start
+        let last_member_on_same_row_than_rbrace:bool = args.last_member.row_end
             == args.rbrace.row_start;
         if last_member_on_same_row_than_rbrace {
             return self.push_err(acc, args.rbrace);

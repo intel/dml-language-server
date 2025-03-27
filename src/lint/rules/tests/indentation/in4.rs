@@ -134,4 +134,44 @@ pub fn test_switch_case_same_line() {
     assert_snippet(SWITCH_CASE_SAME_LINE, 0, &rules);
 }
 
+pub static IN4_COMPOSITE_CORRECT_INDENT: &str = "
+bank pcie_config {
+    register command {
+        field mem {
+            method pcie_write(uint64 value) {
+                if (value != 0) {
+                    value = value + 1;
+                    callback();
+                }
+                default(value);
+                map_memory_alt();
+            }
+        }
+    }
+}
+";
+#[test]
+fn in4_composite_correct_indent() {
+    let rules = set_up();
+    assert_snippet(IN4_COMPOSITE_CORRECT_INDENT, 0, &rules);
+}
 
+pub static IN4_COMPOSITE_INCORRECT_INDENT: &str = "
+bank pcie_config {
+    register command {
+        field mem {
+            method pcie_write(uint64 value) {
+                if (value != 0) {
+                    value = value + 1;
+                    callback();
+                }
+                default(value);
+                map_memory_alt();
+                }
+} } }
+";
+#[test]
+fn in4_composite_incorrect_indent() {
+    let rules = set_up();
+    assert_snippet(IN4_COMPOSITE_INCORRECT_INDENT, 4, &rules);
+}

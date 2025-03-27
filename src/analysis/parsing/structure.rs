@@ -20,7 +20,7 @@ use crate::lint::rules::spacing::{SpBracesArgs,
                                   NspInparenArgs,
                                   NspFunparArgs,
                                   SpPunctArgs};
-use crate::lint::rules::indentation::{IN3Args};
+use crate::lint::rules::indentation::{IN3Args, IN4Args};
 use crate::lint::{rules::CurrentRules, AuxParams, DMLStyleError};
 use crate::analysis::reference::{Reference, ReferenceKind};
 use crate::analysis::FileSpec;
@@ -707,6 +707,7 @@ impl TreeElement for ObjectStatementsContent {
     fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, aux: AuxParams) {
         rules.sp_brace.check(acc, SpBracesArgs::from_obj_stmts(self));
         rules.in3.check(acc, IN3Args::from_obj_stmts_content(self, aux.depth));
+        rules.in4.check(acc, IN4Args::from_obj_stmts_content(self, aux.depth));
     }
 }
 
