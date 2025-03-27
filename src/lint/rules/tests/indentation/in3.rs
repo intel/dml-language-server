@@ -100,14 +100,15 @@ fn in3_full_bank_correct_indent() {
     assert_indentation(IN3_FULL_BANK_CORRECT_INDENT, 0, rules);
 }
 
-pub static IN3_STRUCTS_BAD_INDENT: &str = "
+pub static IN3_STRUCTS_CORRECT_INDENT: &str = "
 typedef struct {
-     uint16 idx;
-       uint16 qid_co;
-} hqm_cq_list_release_ctx_t;
+    uint16 idx;
+    uint8 qid_co;
+    uint8 pid;
+} cq_list_release_ctx_t;
 
 typedef layout \"little-endian\" {
-     bitfields 8 {
+    bitfields 8 {
         uint2 rsvd             @ [7:6];
         uint1 error_f          @ [5:5];
         uint1 int_arm          @ [4:4];
@@ -119,9 +120,34 @@ typedef layout \"little-endian\" {
 } prod_qe_cmd_t;
 ";
 #[test]
+fn in3_structs_correct_indent() {
+    let rules = set_up();
+    assert_indentation(IN3_STRUCTS_CORRECT_INDENT, 0, rules);
+}
+
+pub static IN3_STRUCTS_BAD_INDENT: &str = "
+typedef struct {
+     uint16 idx;
+       uint8 qid_co;
+    uint8 pid;
+} cq_list_release_ctx_t;
+
+typedef layout \"little-endian\" {
+     bitfields 8 {
+        uint2 rsvd             @ [7:6];
+        uint1 error_f          @ [5:5];
+          uint1 int_arm        @ [4:4];
+          uint1 qe_valid       @ [3:3];
+        uint1 qe_frag          @ [2:2];
+        uint1 qe_comp          @ [1:1];
+        uint1 cq_token         @ [0:0];
+    } byte;
+} prod_qe_cmd_t;
+";
+#[test]
 fn in3_structs_bad_indent() {
     let rules = set_up();
-    assert_indentation(IN3_STRUCTS_BAD_INDENT, 3, rules);
+    assert_indentation(IN3_STRUCTS_BAD_INDENT, 5, rules);
 }
 
 pub static IN3_COND_STRUCTURE_BAD_INDENT: &str = "
@@ -142,4 +168,48 @@ method control_device() {
 fn in3_cond_structure_bad_indent() {
     let rules = set_up();
     assert_indentation(IN3_COND_STRUCTURE_BAD_INDENT, 4, rules);
+}
+
+pub static IN3_EMBEDDED_CORRECT_INDENT: &str = "
+bank pcie_config {
+    register command {
+        field mem {
+            method pcie_write(uint64 value) {
+                if (value != 0) {
+                    value = value + 1;
+                    callback();
+                }
+                default(value);
+                map_memory_alt();
+            }
+        }
+    }
+}
+";
+#[test]
+fn in3_embedded_correct_indent() {
+    let rules = set_up();
+    assert_indentation(IN3_EMBEDDED_CORRECT_INDENT, 0, rules);
+}
+
+pub static IN3_EMBEDDED_INCORRECT_INDENT: &str = "
+bank pcie_config {
+    register command {
+          field mem {
+            method pcie_write(uint64 value) {
+                if (value != 0) {
+                value = value + 1;
+                    callback();
+                }
+              default(value);
+                map_memory_alt();
+            }
+        }
+    }
+}
+";
+#[test]
+fn in3_embedded_incorrect_indent() {
+    let rules = set_up();
+    assert_indentation(IN3_EMBEDDED_INCORRECT_INDENT, 3, rules);
 }

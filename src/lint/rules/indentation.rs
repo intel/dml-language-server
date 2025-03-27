@@ -3,7 +3,7 @@ use std::convert::TryInto;
 use crate::analysis::parsing::{statement::{self, CompoundContent, ForContent,
                                SwitchCase, WhileContent},
                                structure::ObjectStatementsContent,
-                               types::{LayoutContent, StructTypeContent}};
+                               types::{BitfieldsContent, LayoutContent, StructTypeContent}};
 use crate::span::{Range, ZeroIndexed, Row, Column};
 use crate::analysis::LocalDMLError;
 use crate::analysis::parsing::tree::{ZeroRange, Content, TreeElement};
@@ -181,6 +181,14 @@ impl IN3Args {
         })
     }
     pub fn from_layout_content(node: &LayoutContent, depth: u32) -> Option<IN3Args> {
+        Some(IN3Args {
+            members_ranges: node.fields.iter().map(|m| m.range()).collect(),
+            lbrace: node.lbrace.range(),
+            rbrace: node.rbrace.range(),
+            expected_depth: depth,
+        })
+    }
+    pub fn from_bitfields_content(node: &BitfieldsContent, depth: u32) -> Option<IN3Args> {
         Some(IN3Args {
             members_ranges: node.fields.iter().map(|m| m.range()).collect(),
             lbrace: node.lbrace.range(),

@@ -57,6 +57,9 @@ impl TreeElement for StructTypeContent {
         rules.in3.check(acc, IN3Args::from_struct_type_content(self, aux.depth));
         rules.sp_brace.check(acc, SpBracesArgs::from_struct_type_content(self));
     }
+    fn should_increment_depth(&self) -> bool {
+        true
+    }
 }
 
 impl Parse<BaseTypeContent> for StructTypeContent {
@@ -135,6 +138,9 @@ impl TreeElement for LayoutContent {
     fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, aux: AuxParams) {
         rules.in3.check(acc, IN3Args::from_layout_content(self, aux.depth));
         rules.sp_brace.check(acc, SpBracesArgs::from_layout_content(self));
+    }
+    fn should_increment_depth(&self) -> bool {
+        true
     }
 }
 
@@ -305,8 +311,12 @@ impl TreeElement for BitfieldsContent {
         }
         errors
     }
-    fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, _aux: AuxParams) {
+    fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, aux: AuxParams) {
         rules.sp_brace.check(acc, SpBracesArgs::from_bitfields_content(self));
+        rules.in3.check(acc, IN3Args::from_bitfields_content(self, aux.depth));
+    }
+    fn should_increment_depth(&self) -> bool {
+        true
     }
 }
 
