@@ -310,7 +310,6 @@ impl IN9Rule {
     fn indentation_is_not_aligned(&self, member_range: ZeroRange, depth: u32) -> bool {
         // Implicit IN1
         let expected_column = self.indentation_spaces * depth;
-        print!("{:#?}", expected_column);
         member_range.col_start.0 != expected_column
     }
 }
