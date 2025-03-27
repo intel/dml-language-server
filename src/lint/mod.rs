@@ -7,8 +7,7 @@ use rules::{instantiate_rules, CurrentRules, RuleType};
 use rules::{spacing::{SpBraceOptions, SpPunctOptions, NspFunparOptions,
                       NspInparenOptions, NspUnaryOptions, NspTrailingOptions},
                       indentation::{LongLineOptions, IN1Options, IN3Options,
-                                    IN2Options, IN9Options, IN6Options,
-                                    IN10Options},
+                                    IN2Options, IN9Options, IN10Options},
                     };
 use crate::analysis::{DMLError, IsolatedAnalysis, LocalDMLError};
 use crate::analysis::parsing::tree::TreeElement;
@@ -67,8 +66,6 @@ pub struct LintCfg {
     #[serde(default)]
     pub in3: Option<IN3Options>,
     #[serde(default)]
-    pub in6: Option<IN6Options>,
-    #[serde(default)]
     pub in9: Option<IN9Options>,
     #[serde(default)]
     pub in10: Option<IN10Options>,
@@ -87,7 +84,6 @@ impl Default for LintCfg {
             in1: Some(IN1Options{indentation_spaces: INDENTATION_LEVEL_DEFAULT}),
             in2: Some(IN2Options{}),
             in3: Some(IN3Options{indentation_spaces: INDENTATION_LEVEL_DEFAULT}),
-            in6: Some(IN6Options{indentation_spaces: INDENTATION_LEVEL_DEFAULT}),
             in9: Some(IN9Options{indentation_spaces: INDENTATION_LEVEL_DEFAULT}),
             in10: Some(IN10Options{indentation_spaces: INDENTATION_LEVEL_DEFAULT}),
         }
@@ -146,9 +142,6 @@ pub fn begin_style_check(ast: TopAst, file: String, rules: &CurrentRules) -> Res
         rules.long_lines.check(&mut linting_errors, row, line);
         rules.nsp_trailing.check(&mut linting_errors, row, line);
     }
-
-    // Continuation line check
-    rules.in6.check(&mut linting_errors, &lines);
 
     post_process_linting_errors(&mut linting_errors);
 
