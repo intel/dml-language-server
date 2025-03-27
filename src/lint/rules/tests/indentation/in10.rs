@@ -58,14 +58,43 @@ method some_function() {
 ";
 
 #[test]
-fn in10_empty_loop() {
+fn test_empty_loop_incorrect() {
     let rules = set_up();
-
     assert_snippet(IN10_EMPTY_LOOP_INCORRECT, 1, &rules);
+}
+
+#[test]
+fn test_empty_loop_incorrect_2() {
+    let rules = set_up();
     assert_snippet(IN10_EMPTY_LOOP_INCORRECT_2, 1, &rules);
+}
+
+#[test]
+fn test_empty_loop_incorrect_3() {
+    let rules = set_up();
     assert_snippet(IN10_EMPTY_LOOP_INCORRECT_3, 1, &rules);
+}
+
+#[test]
+fn test_empty_loop_ok() {
+    let rules = set_up();
     assert_snippet(IN10_EMPTY_LOOP_OK, 0, &rules);
+}
+
+#[test]
+fn test_empty_loop_ok_2() {
+    let rules = set_up();
     assert_snippet(IN10_EMPTY_LOOP_OK_2, 0, &rules);
+}
+
+#[test]
+fn test_nested_loop_incorrect() {
+    let rules = set_up();
     assert_snippet(IN10_NESTED_LOOP_INCORRECT, 1, &rules);
+}
+
+#[test]
+fn test_nested_loop_ok() {
+    let rules = set_up();
     assert_snippet(IN10_NESTED_LOOP_OK, 0, &rules);
 }
