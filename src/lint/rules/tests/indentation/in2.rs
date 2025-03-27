@@ -1,5 +1,5 @@
 use crate::lint::rules::tests::common::set_up;
-use crate::lint::rules::tests::indentation::assert_indentation;
+use crate::lint::rules::tests::indentation::assert_snippet;
 
 pub static IN2_USING_TAB_INDENT: &str = "
 bank BankA {
@@ -28,7 +28,7 @@ bank BankA {
 #[test]
 fn in2_using_tab_indent() {
     let rules = set_up();
-    assert_indentation(IN2_USING_TAB_INDENT, 6, rules);
+    assert_snippet(IN2_USING_TAB_INDENT, 6, &rules);
 }
 
 pub static IN2_USING_SPACE_INDENT: &str = "
@@ -58,5 +58,5 @@ bank BankA {
 #[test]
 fn in2_using_space_indent() {
     let rules = set_up();
-    assert_indentation(IN2_USING_SPACE_INDENT, 0, rules);
+    assert_snippet(IN2_USING_SPACE_INDENT, 0, &rules);
 }
