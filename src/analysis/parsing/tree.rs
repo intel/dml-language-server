@@ -100,8 +100,6 @@ pub trait TreeElement {
         } */
         if self.should_increment_depth() {
             aux.depth += 1;
-            print!("\nIncrementing depth! {} For\n {},{}", aux.depth,
-                   self.range().row_start.0, self.range().col_start.0);
         }
         self.evaluate_rules(acc, rules, aux);
         for sub in self.subs() {

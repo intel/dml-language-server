@@ -226,12 +226,7 @@ impl IN3Rule {
     fn indentation_is_not_aligned(&self, member_range: ZeroRange, depth: u32) -> bool {
         // Implicit IN1
         let expected_column = self.indentation_spaces * depth;
-        let res = member_range.col_start.0 != expected_column;
-        if res {
-            print!("\nFailed at row {}! {} vs {}",member_range.row_start.0, member_range.col_start.0, expected_column);
-        }
-        res
-
+        member_range.col_start.0 != expected_column
     }
 }
 
