@@ -3,7 +3,8 @@ use std::convert::TryInto;
 use serde::{Deserialize, Serialize};
 use crate::analysis::parsing::types::{BitfieldsContent, LayoutContent,
                                       StructTypeContent};
-use crate::lint::rules::Rule;
+use crate::lint::{rules::{Rule, RuleType},
+                  DMLStyleError};
 use crate::analysis::LocalDMLError;
 use crate::analysis::parsing::tree::{TreeElement, ZeroRange};
 use crate::analysis::parsing::expression::{FunctionCallContent, IndexContent,
@@ -97,23 +98,29 @@ impl SpBracesArgs {
 }
 
 impl SpBracesRule {
-    pub fn check(&self, acc: &mut Vec<LocalDMLError>,
+    pub fn check(&self, acc: &mut Vec<DMLStyleError>,
         ranges: Option<SpBracesArgs>) {
         if !self.enabled { return; }
         if let Some(location) = ranges {
             if (location.lbrace.row_end == location.body_start.row_start)
                 && (location.lbrace.col_end == location.body_start.col_start) {
-                let dmlerror = LocalDMLError {
-                    range: location.lbrace,
-                    description: Self::description().to_string(),
+                let dmlerror = DMLStyleError {
+                    error: LocalDMLError {
+                        range: location.lbrace,
+                        description: Self::description().to_string(),
+                    },
+                    rule_type: Self::get_rule_type(),
                 };
                 acc.push(dmlerror);
             }
             if (location.rbrace.row_start == location.body_end.row_end)
                 && (location.rbrace.col_start == location.body_end.col_end) {
-                let dmlerror = LocalDMLError {
-                    range: location.rbrace,
-                    description: Self::description().to_string(),
+                let dmlerror = DMLStyleError {
+                    error: LocalDMLError {
+                        range: location.rbrace,
+                        description: Self::description().to_string(),
+                    },
+                    rule_type: Self::get_rule_type(),
                 };
                 acc.push(dmlerror);
             }
@@ -127,6 +134,9 @@ impl Rule for SpBracesRule {
     }
     fn description() -> &'static str {
         "Missing space around brace"
+    }
+    fn get_rule_type() -> RuleType {
+        RuleType::SpBraces
     }
 }
 
@@ -230,7 +240,7 @@ impl SpPunctArgs {
 }
 
 impl SpPunctRule {
-    pub fn check(&self, acc: &mut Vec<LocalDMLError>,
+    pub fn check(&self, acc: &mut Vec<DMLStyleError>,
         ranges: Option<SpPunctArgs>) {
         if !self.enabled { return; }
         if let Some(args) = ranges {
@@ -244,9 +254,12 @@ impl SpPunctRule {
                         before_range.row_end, punct_range.row_start,
                         before_range.col_end, punct_range.col_start
                     );
-                    let dmlerror = LocalDMLError {
-                        range: error_range,
-                        description: Self::description().to_string(),
+                    let dmlerror = DMLStyleError {
+                        error: LocalDMLError {
+                            range: error_range,
+                            description: Self::description().to_string(),
+                        },
+                        rule_type: Self::get_rule_type(),
                     };
                     acc.push(dmlerror);
                 }
@@ -259,9 +272,12 @@ impl SpPunctRule {
                         punct_range.row_start, after_range.unwrap().row_end,
                         punct_range.col_start, after_range.unwrap().col_end,
                     );
-                    let dmlerror = LocalDMLError {
-                        range: error_range,
-                        description: Self::description().to_string(),
+                    let dmlerror = DMLStyleError {
+                        error: LocalDMLError {
+                            range: error_range,
+                            description: Self::description().to_string(),
+                        },
+                        rule_type: Self::get_rule_type(),
                     };
                     acc.push(dmlerror);
                 }
@@ -276,6 +292,9 @@ impl Rule for SpPunctRule {
     }
     fn description() -> &'static str {
         "Missing space after punctuation mark"
+    }
+    fn get_rule_type() -> RuleType {
+        RuleType::SpPunct
     }
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -309,13 +328,16 @@ impl NspFunparArgs {
 }
 impl NspFunparRule {
     pub fn check(&self,
-                 acc: &mut Vec<LocalDMLError>,
+                 acc: &mut Vec<DMLStyleError>,
                  range: Option<NspFunparArgs>) {
         if !self.enabled { return; }
         if let Some(gap) = range {
-            let dmlerror = LocalDMLError {
-                range: gap,
-                description: Self::description().to_string(),
+            let dmlerror = DMLStyleError {
+                error: LocalDMLError {
+                    range: gap,
+                    description: Self::description().to_string(),
+                },
+                rule_type: Self::get_rule_type(),
             };
             acc.push(dmlerror);
         }
@@ -327,6 +349,9 @@ impl Rule for NspFunparRule {
     }
     fn description() -> &'static str {
         "There should be no space between a method/function name and its opening parenthesis."
+    }
+    fn get_rule_type() -> RuleType {
+        RuleType::NspFunpar
     }
 }
 
@@ -398,7 +423,7 @@ impl NspInparenArgs {
 }
 impl NspInparenRule {
     pub fn check(&self,
-                 acc: &mut Vec<LocalDMLError>,
+                 acc: &mut Vec<DMLStyleError>,
                  ranges: Option<NspInparenArgs>) {
         if !self.enabled { return; }
         if let Some(location) =  ranges {
@@ -407,9 +432,12 @@ impl NspInparenRule {
                 let mut gap = location.opening;
                 gap.col_start = location.opening.col_end;
                 gap.col_end = location.content_start.col_start;
-                let dmlerror = LocalDMLError {
-                    range: gap,
-                    description: Self::description().to_string(),
+                let dmlerror = DMLStyleError {
+                    error: LocalDMLError {
+                        range: gap,
+                        description: Self::description().to_string(),
+                    },
+                    rule_type: Self::get_rule_type(),
                 };
                 acc.push(dmlerror);
             }
@@ -418,9 +446,12 @@ impl NspInparenRule {
                 let mut gap = location.closing;
                 gap.col_end = location.closing.col_start;
                 gap.col_start = location.content_end.col_end;
-                let dmlerror = LocalDMLError {
-                    range: gap,
-                    description: Self::description().to_string(),
+                let dmlerror = DMLStyleError {
+                    error: LocalDMLError {
+                        range: gap,
+                        description: Self::description().to_string(),
+                    },
+                    rule_type: Self::get_rule_type(),
                 };
                 acc.push(dmlerror);
             }
@@ -433,6 +464,9 @@ impl Rule for NspInparenRule {
     }
     fn description() -> &'static str {
         "There should be no space after opening or before closing () / []"
+    }
+    fn get_rule_type() -> RuleType {
+        RuleType::NspInparen
     }
 }
 
@@ -466,13 +500,16 @@ impl NspUnaryArgs {
 }
 impl NspUnaryRule {
     pub fn check(&self,
-                 acc: &mut Vec<LocalDMLError>,
+                 acc: &mut Vec<DMLStyleError>,
                  range: Option<NspUnaryArgs>) {
         if !self.enabled { return; }
         if let Some(gap) = range {
-            let dmlerror = LocalDMLError {
-                range: gap,
-                description: Self::description().to_string(),
+            let dmlerror = DMLStyleError {
+                error: LocalDMLError {
+                    range: gap,
+                    description: Self::description().to_string(),
+                },
+                rule_type: Self::get_rule_type(),
             };
             acc.push(dmlerror);
         }
@@ -485,6 +522,9 @@ impl Rule for NspUnaryRule {
     fn description() -> &'static str {
         "There should be no space between unary operator and its operand"
     }
+    fn get_rule_type() -> RuleType {
+        RuleType::NspUnary
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -494,18 +534,21 @@ pub struct NspTrailingRule {
     pub enabled: bool,
 }
 impl NspTrailingRule {
-    pub fn check(&self, acc: &mut Vec<LocalDMLError>, row: usize, line: &str) {
+    pub fn check(&self, acc: &mut Vec<DMLStyleError>, row: usize, line: &str) {
         if !self.enabled { return; }
         let len = line.len().try_into().unwrap();
         let row_u32 = row.try_into().unwrap();
         let tokens_end = line.trim_end().len().try_into().unwrap();
         if tokens_end < len {
-            let dmlerror = LocalDMLError {
-                range: Range::<ZeroIndexed>::from_u32(row_u32,
-                                                      row_u32,
-                                                      tokens_end,
-                                                      len),
-                description: Self::description().to_string(),
+            let dmlerror = DMLStyleError {
+                error: LocalDMLError {
+                    range: Range::<ZeroIndexed>::from_u32(row_u32,
+                                                        row_u32,
+                                                        tokens_end,
+                                                        len),
+                    description: Self::description().to_string(),
+                },
+                rule_type: Self::get_rule_type(),
             };
             acc.push(dmlerror);
         }
@@ -517,5 +560,8 @@ impl Rule for NspTrailingRule {
     }
     fn description() -> &'static str {
         "Found trailing whitespace on row"
+    }
+    fn get_rule_type() -> RuleType {
+        RuleType::NspTrailing
     }
 }

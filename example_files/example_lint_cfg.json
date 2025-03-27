@@ -6,7 +6,10 @@
     "nsp_unary": {},
     "nsp_trailing": {},
     "long_lines": { "max_length": 80 },
-    "in3": { "indentation_spaces": 4 },
-    "continuation_line": { "indentation_spaces": 4 },
-    "in9": { "indentation_spaces": 4 }
+    "in1": { "indentation_spaces": 4 },
+    "in2": {},
+    "in3": {},
+    "in4": {},
+    "in9": {},
+    "in10": {}
 }
