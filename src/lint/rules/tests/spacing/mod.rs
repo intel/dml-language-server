@@ -22,42 +22,38 @@ method this_is_empty_method() { }
 
 bank pcie_config {register command {field mem {
     method pcie_write(uint64 value) {
-        if (value != 0) {value = value + 1; }
+        if (value != 0) {value = value + 1;}
         default(value);
-        map_memory_alt();}
-}}}
+        map_memory_alt();
+    }
+}
+}
+}
 ";
 #[test]
 fn style_check_sp_braces() {
     let mut cfg = LintCfg::default();
     let mut rules = instantiate_rules(&cfg);
-    assert_snippet(SP_BRACES, 9, &rules);
+    assert_snippet(SP_BRACES, 6, &rules);
     // Test rule disable
     cfg.sp_brace = None;
     rules = instantiate_rules(&cfg);
-    assert_snippet(SP_BRACES, 1, &rules);
+    assert_snippet(SP_BRACES, 0, &rules);
 
 }
 
 pub static SP_BRACES_02: &str = "
 typedef struct {uint16 idx;} hqm_cq_list_release_ctx_t;
 
-typedef layout \"little-endian\" {bitfields 8 {uint2 rsvd @ [7:6];
-    uint1 error_f          @ [5:5];
-    uint1 int_arm          @ [4:4];
-    uint1 qe_valid         @ [3:3];
-    uint1 qe_frag          @ [2:2];
-    uint1 qe_comp          @ [1:1];
-    uint1 cq_token         @ [0:0];} byte;} prod_qe_cmd_t;
+typedef layout \"little-endian\" {bitfields 1 {uint1 cq @ [0:0];} byte;} q_t;
 ";
 #[test]
 fn style_check_sp_braces_02() {
     let mut cfg = LintCfg::default();
     let mut rules = instantiate_rules(&cfg);
-    assert_snippet(SP_BRACES_02, 8, &rules);
+    assert_snippet(SP_BRACES_02, 6, &rules);
     // Test rule disable
     cfg.sp_brace = None;
-    cfg.in4 = None;
     rules = instantiate_rules(&cfg);
     assert_snippet(SP_BRACES_02, 0, &rules);
 
