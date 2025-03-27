@@ -4,7 +4,7 @@ use crate::analysis::parsing::{statement::{self, CompoundContent, ForContent,
                                SwitchCase, WhileContent},
                                structure::ObjectStatementsContent,
                                types::{BitfieldsContent, LayoutContent, StructTypeContent}};
-use crate::span::{Range, ZeroIndexed, Row, Column};
+use crate::span::{Range, ZeroIndexed};
 use crate::analysis::LocalDMLError;
 use crate::analysis::parsing::tree::{ZeroRange, Content, TreeElement};
 use serde::{Deserialize, Serialize};
@@ -26,9 +26,6 @@ pub fn setup_indentation_size(cfg: &mut LintCfg) {
     }
     if let Some(in3) = &mut cfg.in3 {
         in3.indentation_spaces = indentation_spaces;
-    }
-    if let Some(in6) = &mut cfg.in6 {
-        in6.indentation_spaces = indentation_spaces;
     }
     if let Some(in9) = &mut cfg.in9 {
         in9.indentation_spaces = indentation_spaces;
@@ -248,92 +245,6 @@ impl Rule for IN3Rule {
     }
     fn get_rule_type() -> RuleType {
         RuleType::IN3
-    }
-}
-
-// IN6: Continuation Line
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct IN6Options {
-    #[serde(default = "default_indentation_spaces")]
-    pub indentation_spaces: u32,
-}
-
-pub struct IN6Rule {
-    pub enabled: bool,
-    pub indentation_spaces: u32,
-}
-
-impl IN6Rule {
-    pub fn from_options(options: &Option<IN6Options>) -> IN6Rule {
-        match options {
-            Some(in6) => IN6Rule {
-                enabled: true,
-                indentation_spaces: in6.indentation_spaces,
-            },
-            None => IN6Rule {
-                enabled: false,
-                indentation_spaces: 0,
-            },
-        }
-    }
-
-    pub fn check(&self, acc: &mut Vec<DMLStyleError>, lines: &[&str]) {
-        if !self.enabled {
-            return;
-        }
-
-        let arithmetic_operators = ["+", "-", "*", "/", "%", "="];
-        let comparison_operators = ["==", "!=", "<", ">", "<=", ">="];
-        let logical_operators = ["&&", "||"];
-        let bitwise_operators = ["&", "|", "<<", ">>"];
-
-        let operators = [
-            &arithmetic_operators[..],
-            &comparison_operators[..],
-            &logical_operators[..],
-            &bitwise_operators[..],
-        ];
-
-        for (i, line) in lines.iter().enumerate() {
-            if let Some(last_char) = line.trim().chars().last() {
-                if operators.iter().any(|ops| ops.contains(&last_char.to_string().as_str())) {
-                    let next_line = lines.get(i + 1);
-                    if let Some(next_line) = next_line {
-                        let expected_indent = line.chars().take_while(|c| c.is_whitespace()).count() + self.indentation_spaces as usize;
-                        let actual_indent = next_line.chars().take_while(|c| c.is_whitespace()).count();
-                        if actual_indent != expected_indent {
-                            let msg = IN6Rule::description().to_owned();
-                            let dmlerror = DMLStyleError {
-                                error: LocalDMLError {
-                                    range: Range::new(
-                                        Row::new_zero_indexed((i + 1) as u32),
-                                        Row::new_zero_indexed((i + 1) as u32),
-                                        Column::new_zero_indexed(0),
-                                        Column::new_zero_indexed(next_line.len() as u32)
-                                    ),
-                                    description: msg,
-                                },
-                                rule_type: Self::get_rule_type(),
-                            };
-                            acc.push(dmlerror);
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-impl Rule for IN6Rule {
-    fn name() -> &'static str {
-        "IN6_CONTINUATION_LINE"
-    }
-
-    fn description() -> &'static str {
-        "Continuation line not indented correctly."
-    }
-    fn get_rule_type() -> RuleType {
-        RuleType::IN6
     }
 }
 
