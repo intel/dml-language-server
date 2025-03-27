@@ -155,6 +155,47 @@ pub struct CompilationInfo {
 
 pub type CompilationInfoStorage = HashMap<CanonPath, CompilationInfo>;
 
+#[derive(PartialEq, Debug)]
+pub enum AnalysisProgressKind {
+    Isolated,
+    // NOTE: device implies waiting on isolated analysis
+    // for that file and any dependencies
+    Device,
+    // NOTE: this implies waiting on ALL isolated analysises,
+    // and then for all device dependencies that
+    // might trigger any of the paths specified
+    // This means that All|Device and All|DeviceDependencies
+    // are equivalent
+    DeviceDependencies,
+}
+
+#[derive(PartialEq, Debug)]
+pub enum AnalysisCoverageSpec {
+    Paths(Vec<CanonPath>),
+    All,
+}
+
+#[derive(PartialEq, Debug)]
+pub enum AnalysisStateResponse {
+    // The spec is true, AND the related analysises actually exist
+    Achieved,
+    // The spec is true, but we dont actually have all the anlysises
+    // that were requested
+    Satisfied,
+    // The server cancelled this wait, for whatever reason (currently unused)
+    Cancelled,
+    // Used to ping a channel to see if it is still alive, needed to drop
+    // waits in requests that time out
+    Ping,
+}
+
+#[derive(Debug)]
+pub struct AnalysisStateWaitDefinition {
+    progress_kind: AnalysisProgressKind,
+    coverage: AnalysisCoverageSpec,
+    response: channel::Sender<AnalysisStateResponse>,
+}
+
 /// Persistent context shared across all requests and actions after the DLS has
 /// been initialized.
 // NOTE: This is sometimes cloned before being passed to a handler
@@ -185,6 +226,8 @@ pub struct InitActionContext {
     pub device_active_contexts: Arc<Mutex<ActiveDeviceContexts>>,
 
     prev_changes: Arc<Mutex<HashMap<PathBuf, i32>>>,
+
+    active_waits: Arc<Mutex<Vec<AnalysisStateWaitDefinition>>>,
 
     pub config: Arc<Mutex<Config>>,
     pub lint_config: Arc<Mutex<LintCfg>>,
@@ -268,6 +311,7 @@ impl InitActionContext {
             client_capabilities: Arc::new(client_capabilities),
             has_notified_missing_builtins: false,
             //client_supports_cmd_run,
+            active_waits: Arc::default(),
             shut_down: Arc::new(AtomicBool::new(false)),
             pid,
             workspace_roots: Arc::default(),
@@ -834,6 +878,142 @@ impl InitActionContext {
             span::Position::new(pos.row, end),
             file_path,
         )
+    }
+
+    fn add_state_wait(&self, def: AnalysisStateWaitDefinition) {
+        self.active_waits.lock().unwrap().push(def);
+    }
+
+    pub fn retain_live_waits(&self) {
+        self.active_waits.lock().unwrap().
+            retain(|w|w.response.send(AnalysisStateResponse::Ping).is_ok());
+    }
+
+    pub fn wait_for_state(&self,
+                          progress_kind: AnalysisProgressKind,
+                          coverage: AnalysisCoverageSpec)
+                          -> Result<AnalysisStateResponse,
+                                    crossbeam::channel::RecvError> {
+        let (sender, receiver) = channel::unbounded();
+        let wait = AnalysisStateWaitDefinition {
+            progress_kind,
+            coverage,
+            response: sender,
+        };
+        if self.check_wait(&wait) {
+            Ok(self.check_wait_satisfied(&wait))
+        } else {
+            self.add_state_wait(wait);
+            loop {
+                match receiver.recv() {
+                    Ok(AnalysisStateResponse::Ping) => (),
+                    r => return r,
+                }
+            }
+        }
+    }
+
+    fn check_wait(&self, wait: &AnalysisStateWaitDefinition) -> bool {
+        let mut wait_done = true;
+        let analysis = self.analysis.lock().unwrap();
+        let queue = &self.analysis_queue;
+        if let AnalysisCoverageSpec::Paths(path) = &wait.coverage {
+            let mut paths: HashSet<CanonPath>
+                = path.iter().cloned().collect();
+            match wait.progress_kind {
+                AnalysisProgressKind::Device => {
+                    let extra_paths: Vec<CanonPath> =
+                        paths.iter().cloned().flat_map(
+                            |p|analysis.all_dependencies(&p, Some(&p)))
+                        .collect();
+                    paths.extend(extra_paths);
+                },
+                AnalysisProgressKind::DeviceDependencies => {
+                    wait_done = !queue.has_isolated_work();
+                    paths = paths.iter().cloned().flat_map(
+                        |p|analysis.device_triggers
+                            .get(&p).into_iter().flatten())
+                        .cloned()
+                        .collect();
+                },
+                _ => (),
+            }
+            if wait.progress_kind != AnalysisProgressKind::DeviceDependencies {
+                wait_done = !queue.working_on_isolated_for_paths(&paths);
+                if wait.progress_kind == AnalysisProgressKind::Device {
+                    wait_done = wait_done
+                        && !queue.working_on_device_for_paths(&paths);
+                }
+            } else {
+                wait_done = wait_done
+                    && !queue.working_on_device_for_paths(&paths);
+            }
+        } else {
+            wait_done = !queue.has_isolated_work();
+            if wait.progress_kind != AnalysisProgressKind::Isolated {
+                wait_done = wait_done && !queue.has_device_work();
+            }
+        }
+        wait_done
+    }
+
+    fn check_wait_satisfied(&self, wait: &AnalysisStateWaitDefinition)
+                            -> AnalysisStateResponse {
+        let mut achieved = true;
+        let analysis = self.analysis.lock().unwrap();
+
+        if let AnalysisCoverageSpec::Paths(paths) = &wait.coverage {
+            for path in paths {
+                if analysis.get_isolated_analysis(path).is_err() {
+                    achieved = false;
+                    break;
+                }
+                match wait.progress_kind {
+                    AnalysisProgressKind::Device =>
+                        if analysis.get_device_analysis(path).is_err() {
+                            achieved = false;
+                            break;
+                        },
+                    AnalysisProgressKind::DeviceDependencies =>
+                        if !analysis.device_triggers.get(path)
+                        .into_iter().flatten().any(
+                            |t|analysis.get_device_analysis(t).is_ok()) {
+                            achieved = false;
+                            break;
+                        },
+                    _ => (),
+                }
+            }
+        } else {
+            // NOTE: A little difficult to reason what this means, but we will
+            // call it satisfied as long as at least one analysis exists
+            if wait.progress_kind == AnalysisProgressKind::Isolated {
+                achieved = !analysis.isolated_analysis.is_empty();
+            } else {
+                achieved = !analysis.device_analysis.is_empty();
+            }
+        }
+        if achieved {
+            AnalysisStateResponse::Achieved
+        } else {
+            AnalysisStateResponse::Satisfied
+        }
+    }
+
+
+    // NOTE: we could potentially optimize this by checking only
+    // the waits on an updated path, but the expectation is that
+    // the number of waits is small
+    pub fn check_state_waits(&self) {
+        self.active_waits.lock().unwrap().retain(
+            |wait|
+            if self.check_wait(wait) {
+                // Dont care about error here
+                wait.response.send(self.check_wait_satisfied(wait)).ok();
+                false
+            } else {
+                true
+            });
     }
 }
 

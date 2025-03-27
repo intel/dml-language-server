@@ -391,12 +391,14 @@ impl<O: Output> LsService<O> {
                             ctx.trigger_device_analysis(&path, &self.output);
                         }
                         ctx.maybe_trigger_lint_analysis(&path, &self.output);
+                        ctx.check_state_waits();
                     }
                 },
                 ServerToHandle::DeviceAnalysisDone(path) => {
                     debug!("Received device analysis of {:?}", path);
                     if let ActionContext::Init(ctx) = &mut self.ctx {
                         ctx.report_errors(&path, &self.output);
+                        ctx.check_state_waits();
                     }
                 },
                 ServerToHandle::LinterDone(path) => {

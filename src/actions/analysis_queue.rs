@@ -248,6 +248,80 @@ impl AnalysisQueue {
         }
         has_work
     }
+
+    pub fn has_isolated_work(&self) -> bool {
+        {
+            let queue_lock = self.queue.lock().unwrap();
+            for job in queue_lock.iter() {
+                if matches!(job, QueuedJob::IsolatedAnalysisJob(_)) {
+                    return true;
+                }
+            }
+        }
+        let isolated_lock = self.isolated_tracker.lock().unwrap();
+        !isolated_lock.is_empty()
+    }
+
+    pub fn has_device_work(&self) -> bool {
+        {
+            let queue_lock = self.queue.lock().unwrap();
+            for job in queue_lock.iter() {
+                if matches!(job, QueuedJob::DeviceAnalysisJob(_)) {
+                    return true;
+                }
+            }
+        }
+        let device_lock = self.device_tracker.lock().unwrap();
+        !device_lock.is_empty()
+    }
+
+    pub fn working_on_isolated_for_paths(&self, paths: &HashSet<CanonPath>)
+                                         -> bool {
+        {
+            let queue_lock = self.queue.lock().unwrap();
+            for job in queue_lock.iter() {
+                if let QueuedJob::IsolatedAnalysisJob(ijob) = job {
+                    if paths.contains(&ijob.path) {
+                        return true;
+                    }
+                }
+            }
+        }
+        {
+            let isolated_lock = self.isolated_tracker.lock().unwrap();
+            for (_, path) in isolated_lock.iter() {
+                if paths.contains(path) {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+    // NOTE: it is caller responsibility to check for device dependencies
+    pub fn working_on_device_for_paths(&self, paths: &HashSet<CanonPath>)
+                                       -> bool {
+        {
+            let queue_lock = self.queue.lock().unwrap();
+            for job in queue_lock.iter() {
+                if let QueuedJob::DeviceAnalysisJob(ijob) = job {
+                    if paths.contains(&ijob.root.path) {
+                        return true;
+                    }
+                }
+            }
+        }
+        {
+            let device_lock = self.device_tracker.lock().unwrap();
+            for (path, _) in device_lock.values() {
+                if paths.contains(path) {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
 }
 
 impl RefUnwindSafe for AnalysisQueue {}
