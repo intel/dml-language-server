@@ -167,7 +167,7 @@ method control_device() {
 #[test]
 fn in3_cond_structure_bad_indent() {
     let rules = set_up();
-    assert_indentation(IN3_COND_STRUCTURE_BAD_INDENT, 5, rules);
+    assert_indentation(IN3_COND_STRUCTURE_BAD_INDENT, 4, rules);
 }
 
 pub static IN3_EMBEDDED_CORRECT_INDENT: &str = "

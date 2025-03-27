@@ -16,6 +16,12 @@ method some_switch(int arg) {
     }
 }
 ";
+#[test]
+// #[ignore]
+fn in9_correct_case_indent() {
+    let rules = set_up();
+    assert_snippet(IN9_CORRECT_CASE_INDENT, 0, &rules);
+}
 
 pub static IN9_INCORRECT_CASE_INDENT: &str = "
 method some_switch(int arg) {
@@ -28,19 +34,16 @@ method some_switch(int arg) {
             return;
         }
         some_call();
-        break;
+      break;
     case ONE: {
-          return;
+        return;
     }
     default: { return; }
     }
 }
 ";
-
 #[test]
-// #[ignore]
-fn in9_correct_case_indent() {
+fn in9_incorrect_case_indent() {
     let rules = set_up();
-    assert_snippet(IN9_CORRECT_CASE_INDENT, 0, &rules);
-    assert_snippet(IN9_INCORRECT_CASE_INDENT, 5, &rules);
+    assert_snippet(IN9_INCORRECT_CASE_INDENT, 3, &rules);
 }

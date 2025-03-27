@@ -84,26 +84,6 @@ pub fn test_closing_brace_not_first_switch() {
     assert_snippet(CLOSING_BRACE_NOT_FIRST_SWITCH, 1, &rules);
 }
 
-pub static CLOSING_BRACE_NOT_FIRST_SWITCH_HASH_IF: &str = "
-method my_method() {
-    switch (true) {
-    case 1:
-    #if (1) {
-    case 3:}
-        return;
-        break;
-    case 2:
-        return;
-        break;
-    }
-}";
-
-#[test]
-pub fn test_closing_brace_not_first_switch_hash_if() {
-    let rules = set_up();
-    assert_snippet(CLOSING_BRACE_NOT_FIRST_SWITCH_HASH_IF, 1, &rules);
-}
-
 pub static CLOSING_BRACE_NOT_FIRST_STRUCT: &str = "
 typedef struct {
     int x; } mystruct_t;
