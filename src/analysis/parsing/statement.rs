@@ -1019,19 +1019,9 @@ impl TreeElement for SwitchCase {
         rules.in9.check(acc, IN9Args::from_switch_case(self, aux.depth));
     }
     fn should_increment_depth(&self) -> bool {
-        if let SwitchCase::Statement(statement) = self {
-            if let Content::Some(ref content) = *statement.content {
-                if let statement::StatementContent::Compound(_) = content {
-                    return false;
-                } else {
-                    return true;
-                }
-            } else {
-                return false;
-            }
-        } else {
-            return false;
-        }
+        matches!(self, SwitchCase::Statement(statement)
+            if !matches!(*statement.content,
+                Content::Some(statement::StatementContent::Compound(_))))
     }
 }
 
