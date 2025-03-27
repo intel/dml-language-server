@@ -264,9 +264,9 @@ impl Rule for IN4Rule {
         "IN4"
     }
     fn description() -> &'static str {
-        "An closing brace at the beginning of a line is indented one level \
-         less than the previous line. A closing brace should only ever appear\
-         on the same line as the opening brace or first on a line."
+        "Closing braces at the beginning of a line should be aligned to the corresponding \
+        indentation level of the statement that started the code block. A closing brace should \
+        only ever appear on the same line as the opening brace, or first on a line."
     }
     fn get_rule_type() -> RuleType {
         RuleType::IN4
