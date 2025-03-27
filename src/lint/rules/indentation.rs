@@ -414,8 +414,8 @@ impl Rule for IN9Rule {
         "IN9"
     }
     fn description() -> &'static str {
-        "Case labels are indented one level less than surrounding lines, \
-         so that they are on the same level as the switch statement"
+        "Case labels should be indented at the same level as the switch keyword, \
+         statements should be indented one level deeper and not in the same line as the case label."
     }
     fn get_rule_type() -> RuleType {
         RuleType::IN9
