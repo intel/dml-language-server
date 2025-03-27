@@ -10,7 +10,7 @@ use crate::analysis::parsing::misc::{CDecl, CDeclList, Initializer,
                                      ident_filter, objident_filter};
 use crate::analysis::parsing::statement::Statement;
 use crate::analysis::parsing::tree::{AstObject, TreeElement, TreeElements,
-                                     LeafToken, ZeroRange};
+                                     LeafToken, ZeroRange, Content};
 use crate::analysis::parsing::types::CTypeDecl;
 use crate::analysis::parsing::parser::{doesnt_understand_tokens,
                                        FileParser, Parse, ParseContext,
@@ -835,7 +835,13 @@ impl TreeElement for CompositeObjectContent {
     }
     fn references<'a>(&self, _accumulator: &mut Vec<Reference>, _file: FileSpec<'a>) {}
     fn should_increment_depth(&self) -> bool {
-        true
+        match &*self.statements.content {
+            Content::Some(ObjectStatementsContent::List(lbrace, list, rbrace)) => {
+                ! (lbrace.range().row_start == list.range().row_start ||
+                    lbrace.range().row_start == rbrace.range().row_end)
+            },
+            _ => true,
+        }
     }
 }
 
