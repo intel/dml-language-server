@@ -26,10 +26,10 @@ use crate::analysis::LocalDMLError;
 use crate::lint::{DMLStyleError,
                   rules::{CurrentRules,
                           indentation::{IN3Args, IN4Args, IN9Args},
-                         spacing::{NspInparenArgs,
-                                   SpBracesArgs,
-                                   SpPunctArgs}},
-                                   AuxParams};
+                          spacing::{NspInparenArgs,
+                                    SpBracesArgs,
+                                    SpPunctArgs}},
+                                    AuxParams};
 use crate::vfs::TextFile;
 
 fn statement_contexts(context: &ParseContext)
