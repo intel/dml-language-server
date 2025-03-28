@@ -10,7 +10,7 @@ use crate::analysis::parsing::misc::{CDecl, CDeclList, Initializer,
                                      ident_filter, objident_filter};
 use crate::analysis::parsing::statement::Statement;
 use crate::analysis::parsing::tree::{AstObject, TreeElement, TreeElements,
-                                     LeafToken, ZeroRange, Content};
+                                     LeafToken, ZeroRange};
 use crate::analysis::parsing::types::CTypeDecl;
 use crate::analysis::parsing::parser::{doesnt_understand_tokens,
                                        FileParser, Parse, ParseContext,
@@ -709,6 +709,11 @@ impl TreeElement for ObjectStatementsContent {
         rules.in3.check(acc, IN3Args::from_obj_stmts_content(self, aux.depth));
         rules.in4.check(acc, IN4Args::from_obj_stmts_content(self, aux.depth));
     }
+    fn should_increment_depth(&self) -> bool {
+        matches!(self, ObjectStatementsContent::List(lbrace, list, rbrace)
+            if lbrace.range().row_start != list.range().row_start &&
+               lbrace.range().row_start != rbrace.range().row_end)
+    }
 }
 
 fn check_dmlobject_kind(obj: &DMLObjectContent, _file: &TextFile) ->
@@ -835,15 +840,6 @@ impl TreeElement for CompositeObjectContent {
         errors
     }
     fn references<'a>(&self, _accumulator: &mut Vec<Reference>, _file: FileSpec<'a>) {}
-    fn should_increment_depth(&self) -> bool {
-        match &*self.statements.content {
-            Content::Some(ObjectStatementsContent::List(lbrace, list, rbrace)) => {
-                ! (lbrace.range().row_start == list.range().row_start ||
-                    lbrace.range().row_start == rbrace.range().row_end)
-            },
-            _ => true,
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -213,3 +213,43 @@ fn embedded_indent_incorrect() {
     let rules = set_up();
     assert_snippet(EMBEDDED_INDENT_INCORRECT, 3, &rules);
 }
+
+static TEMPLATE_CORRECT: &str = "
+template template_name {
+    is some_other_template;
+
+    register some_reg size 8 @ ami_offset_0 + (0x0) {
+        is osdml_reg_or_field;
+        param some_param = SOME_CONSTANT;
+        field some_field @ [63:0] is (some_template) {
+            is some_other_template;
+            param init_val = 0x200004000100460a;
+        }
+    }
+}
+";
+#[test]
+fn template_correct() {
+    let rules = set_up();
+    assert_snippet(TEMPLATE_CORRECT, 0, &rules);
+}
+
+static TEMPLATE_INCORRECT: &str = "
+template template_name {
+      is some_other_template;
+
+   register some_reg size 8 @ ami_offset_0 + (0x0) {
+        is osdml_reg_or_field;
+         param some_param = SOME_CONSTANT;
+        field some_field @ [63:0] is (some_template) {
+             is some_other_template;
+            param init_val = 0x200004000100460a;
+        }
+    }
+}
+";
+#[test]
+fn template_incorrect() {
+    let rules = set_up();
+    assert_snippet(TEMPLATE_INCORRECT, 4, &rules);
+}
