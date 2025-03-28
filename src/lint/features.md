@@ -20,8 +20,19 @@ Below are listed the currently supported rules for linting:
     x = interrupt_disabled || is_intr(interrupt_device,
                                       irq_level);
 ```
-- **IN7**: Any line not indented according to the other indentation rules is indented to same level as the preceding non-empty line
+- **IN7**: Any line not indented according to the other indentation rules is indented to same level as the preceding non-empty line (this rule is implicit in enforcement of **IN3**)
 - **IN9**: Case labels should be indented at the same level as the switch keyword, statements should be indented one level deeper and not in the same line as the case label
+```
+    switch (p->what) {
+    case Winning:
+        b = 1000;
+    case Losing:
+        b = -1000;
+        break;
+    default:
+        callback();
+    }
+```
 - **IN10**: When the body of a while or for loop is left empty, indent the semicolon to the appropriate statement level
 
 ```
