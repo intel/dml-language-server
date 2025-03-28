@@ -1,6 +1,6 @@
 use crate::lint::rules::tests::common::{set_up, assert_snippet};
 
-pub static BASIC_CORRECT: &str = "
+static BASIC_COMPOUND_CORRECT: &str = "
 method my_method() {
     if (true) {
         return;
@@ -10,12 +10,12 @@ method my_method() {
 
 
 #[test]
-fn test_basic_correct() {
+fn basic_compound_correct() {
     let rules = set_up();
-    assert_snippet(BASIC_CORRECT, 0, &rules);
+    assert_snippet(BASIC_COMPOUND_CORRECT, 0, &rules);
 }
 
-pub static CLOSING_BRACE_NOT_FIRST: &str = "
+static CLOSING_BRACE_NOT_FIRST_IN_LINE_INCORRECT: &str = "
 method my_method() {
     if (true) {
         return; }
@@ -23,24 +23,24 @@ method my_method() {
 ";
 
 #[test]
-fn test_closing_brace_not_first() {
+fn closing_brace_not_first_in_line_incorrect() {
     let rules = set_up();
-    assert_snippet(CLOSING_BRACE_NOT_FIRST, 1, &rules);
+    assert_snippet(CLOSING_BRACE_NOT_FIRST_IN_LINE_INCORRECT, 1, &rules);
 }
 
-pub static CLOSING_AND_OPEN_BRACE_ON_SAME_LINE: &str = "
+static CLOSING_AND_OPEN_BRACE_ON_SAME_LINE_CORRECT: &str = "
 method my_method() {
     if (true) { return; }
 }
 ";
 
 #[test]
-fn test_closing_and_open_brace_on_same_line() {
+fn closing_and_open_brace_on_same_line_correct() {
     let rules = set_up();
-    assert_snippet(CLOSING_AND_OPEN_BRACE_ON_SAME_LINE, 0, &rules);
+    assert_snippet(CLOSING_AND_OPEN_BRACE_ON_SAME_LINE_CORRECT, 0, &rules);
 }
 
-pub static CLOSING_BRACE_NOT_DEINDENTED: &str = "
+static CLOSING_BRACE_NOT_DEINDENTED_INCORRECT: &str = "
 method my_method() {
     if (true) {
         return;
@@ -48,12 +48,12 @@ method my_method() {
 }";
 
 #[test]
-fn test_closing_brace_not_deindented() {
+fn closing_brace_not_deindented_incorrect() {
     let rules = set_up();
-    assert_snippet(CLOSING_BRACE_NOT_DEINDENTED, 1, &rules);
+    assert_snippet(CLOSING_BRACE_NOT_DEINDENTED_INCORRECT, 1, &rules);
 }
 
-pub static CLOSING_BRACE_OVERINDENTED: &str = "
+static CLOSING_BRACE_OVERINDENTED_INCORRECT: &str = "
 method my_method() {
     if (true) {
         return;
@@ -62,12 +62,12 @@ method my_method() {
 ";
 
 #[test]
-pub fn test_closing_brace_overindented() {
+fn closing_brace_overindented_incorrect() {
     let rules = set_up();
-    assert_snippet(CLOSING_BRACE_OVERINDENTED, 1, &rules);
+    assert_snippet(CLOSING_BRACE_OVERINDENTED_INCORRECT, 1, &rules);
 }
 
-pub static CLOSING_BRACE_NOT_FIRST_SWITCH: &str = "
+static CLOSING_BRACE_NOT_FIRST_SWITCH_INCORRECT: &str = "
 method my_method() {
     switch (true) {
     case 1:
@@ -79,34 +79,34 @@ method my_method() {
 }";
 
 #[test]
-pub fn test_closing_brace_not_first_switch() {
+fn closing_brace_not_first_switch_incorrect() {
     let rules = set_up();
-    assert_snippet(CLOSING_BRACE_NOT_FIRST_SWITCH, 1, &rules);
+    assert_snippet(CLOSING_BRACE_NOT_FIRST_SWITCH_INCORRECT, 1, &rules);
 }
 
-pub static CLOSING_BRACE_NOT_FIRST_STRUCT: &str = "
+static CLOSING_BRACE_NOT_FIRST_STRUCT_INCORRECT: &str = "
 typedef struct {
     int x; } mystruct_t;
 ";
 
 #[test]
-pub fn test_closing_brace_not_first_struct() {
+fn closing_brace_not_first_struct_incorrect() {
     let rules = set_up();
-    assert_snippet(CLOSING_BRACE_NOT_FIRST_STRUCT, 1, &rules);
+    assert_snippet(CLOSING_BRACE_NOT_FIRST_STRUCT_INCORRECT, 1, &rules);
 }
 
-pub static CLOSING_BRACE_NOT_FIRST_LAYOUT: &str = "
+static CLOSING_BRACE_NOT_FIRST_LAYOUT_INCORRECT: &str = "
 typedef layout \"little-endian\" {
     uint8 cmd_code; } mylayout_t;
 ";
 
 #[test]
-pub fn test_closing_brace_not_first_layout() {
+fn closing_brace_not_first_layout_incorrect() {
     let rules = set_up();
-    assert_snippet(CLOSING_BRACE_NOT_FIRST_LAYOUT, 1, &rules);
+    assert_snippet(CLOSING_BRACE_NOT_FIRST_LAYOUT_INCORRECT, 1, &rules);
 }
 
-pub static CLOSING_BRACE_NOT_FIRST_BITFIELD: &str = "
+static CLOSING_BRACE_NOT_FIRST_BITFIELD_INCORRECT: &str = "
 typedef layout \"little-endian\" {
     bitfields 8 {
         uint7 addr        @ [7:1];
@@ -115,12 +115,12 @@ typedef layout \"little-endian\" {
 ";
 
 #[test]
-pub fn test_closing_brace_not_first_bitfield() {
+fn closing_brace_not_first_bitfield_incorrect() {
     let rules = set_up();
-    assert_snippet(CLOSING_BRACE_NOT_FIRST_BITFIELD, 1, &rules);
+    assert_snippet(CLOSING_BRACE_NOT_FIRST_BITFIELD_INCORRECT, 1, &rules);
 }
 
-pub static SWITCH_CASE_SAME_LINE: &str = "
+static SWITCH_CASE_SAME_LINE_CORRECT: &str = "
 method my_method() {
     switch (true) {
     case 1: { return; }
@@ -129,12 +129,12 @@ method my_method() {
 }";
 
 #[test]
-pub fn test_switch_case_same_line() {
+fn switch_case_same_line_correct() {
     let rules = set_up();
-    assert_snippet(SWITCH_CASE_SAME_LINE, 0, &rules);
+    assert_snippet(SWITCH_CASE_SAME_LINE_CORRECT, 0, &rules);
 }
 
-pub static IN4_COMPOSITE_CORRECT_INDENT: &str = "
+static COMPOSITE_INDENT_CORRECT: &str = "
 bank pcie_config {
     register command {
         field mem {
@@ -151,12 +151,12 @@ bank pcie_config {
 }
 ";
 #[test]
-fn in4_composite_correct_indent() {
+fn composite_indent_correct() {
     let rules = set_up();
-    assert_snippet(IN4_COMPOSITE_CORRECT_INDENT, 0, &rules);
+    assert_snippet(COMPOSITE_INDENT_CORRECT, 0, &rules);
 }
 
-pub static IN4_COMPOSITE_INCORRECT_INDENT: &str = "
+static COMPOSITE_INDENT_INCORRECT: &str = "
 bank pcie_config {
     register command {
         field mem {
@@ -171,7 +171,7 @@ bank pcie_config {
 } } }
 ";
 #[test]
-fn in4_composite_incorrect_indent() {
+fn composite_indent_incorrect() {
     let rules = set_up();
-    assert_snippet(IN4_COMPOSITE_INCORRECT_INDENT, 4, &rules);
+    assert_snippet(COMPOSITE_INDENT_INCORRECT, 4, &rules);
 }

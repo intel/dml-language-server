@@ -1,7 +1,7 @@
 use crate::lint::rules::tests::common::set_up;
 use crate::lint::rules::tests::indentation::assert_snippet;
 
-pub static IN2_USING_TAB_INDENT: &str = "
+static USING_TAB_INDENT_INCORRECT: &str = "
 bank BankA {
     group GroupB {
         param some_param = this.REG_C;
@@ -26,12 +26,12 @@ bank BankA {
 }
 ";
 #[test]
-fn in2_using_tab_indent() {
+fn using_tab_indent_incorrect() {
     let rules = set_up();
-    assert_snippet(IN2_USING_TAB_INDENT, 6, &rules);
+    assert_snippet(USING_TAB_INDENT_INCORRECT, 6, &rules);
 }
 
-pub static IN2_USING_SPACE_INDENT: &str = "
+static USING_SPACE_INDENT_CORRECT: &str = "
 bank BankA {
     group GroupB {
         param some_param = this.REG_C;
@@ -56,7 +56,7 @@ bank BankA {
 }
 ";
 #[test]
-fn in2_using_space_indent() {
+fn using_space_indent_correct() {
     let rules = set_up();
-    assert_snippet(IN2_USING_SPACE_INDENT, 0, &rules);
+    assert_snippet(USING_SPACE_INDENT_CORRECT, 0, &rules);
 }

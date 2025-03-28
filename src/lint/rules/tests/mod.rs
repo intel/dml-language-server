@@ -1,3 +1,3 @@
-pub mod indentation;
-pub mod spacing;
-pub mod common;
+mod indentation;
+mod spacing;
+mod common;

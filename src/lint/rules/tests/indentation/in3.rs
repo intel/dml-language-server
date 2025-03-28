@@ -1,50 +1,50 @@
 use crate::lint::rules::tests::common::set_up;
 use crate::lint::rules::tests::indentation::assert_snippet;
 
-pub static IN3_FUNCTION_CONTENTS_CORRECT_INDENT: &str = "
+static FUNCTION_CONTENTS_INDENT_CORRECT: &str = "
 method some_function(int a) {
     return 0;
 }
 ";
 #[test]
-fn in3_function_contents_should_indent() {
+fn function_contents_indent_correct() {
     let rules = set_up();
-    assert_snippet(IN3_FUNCTION_CONTENTS_CORRECT_INDENT, 0, &rules);
+    assert_snippet(FUNCTION_CONTENTS_INDENT_CORRECT, 0, &rules);
 }
 
-pub static IN3_ONE_LINE_NO_INDENT: &str = "
+static ONE_LINE_NO_INDENT_CORRECT: &str = "
 method some_function(int a) { return 0; }
 ";
 #[test]
-fn in3_one_line_no_indent() {
+fn one_line_no_indent_correct() {
     let rules = set_up();
-    assert_snippet(IN3_ONE_LINE_NO_INDENT, 0, &rules);
+    assert_snippet(ONE_LINE_NO_INDENT_CORRECT, 0, &rules);
 }
 
-pub static IN3_FUNCTION_CONTENTS_NO_INDENT: &str = "
+static FUNCTION_CONTENTS_INDENT_INCORRECT: &str = "
 method some_function(int a) {
 return a;
 }
 ";
 #[test]
-fn in3_function_contents_no_indent() {
+fn function_contents_indent_incorrect() {
     let rules = set_up();
-    assert_snippet(IN3_FUNCTION_CONTENTS_NO_INDENT, 1, &rules);
+    assert_snippet(FUNCTION_CONTENTS_INDENT_INCORRECT, 1, &rules);
 }
 
-pub static IN3_FUNCTION_PARAMS_BREAKED_AND_NO_INDENT: &str = "
+static FUNCTION_PARAMS_BREAKED_AND_NO_INDENT: &str = "
 method some_function(int a,
                      int b) {
 return a;
 }
 ";
 #[test]
-fn in3_function_params_breaked_and_no_indent() {
+fn function_params_breaked_and_no_indent() {
     let rules = set_up();
-    assert_snippet(IN3_FUNCTION_PARAMS_BREAKED_AND_NO_INDENT, 1, &rules);
+    assert_snippet(FUNCTION_PARAMS_BREAKED_AND_NO_INDENT, 1, &rules);
 }
 
-pub static IN3_FUNCTION_PARAMS_BADLY_BREAKED_AND_NO_INDENT: &str = "
+static FUNCTION_PARAMS_BADLY_BREAKED_AND_NO_INDENT: &str = "
 method some_function(int a,
     int b)
 {
@@ -52,12 +52,12 @@ return a;
 }
 ";
 #[test]
-fn in3_function_params_badly_breaked_and_no_indent() {
+fn function_params_badly_breaked_and_no_indent() {
     let rules = set_up();
-    assert_snippet(IN3_FUNCTION_PARAMS_BADLY_BREAKED_AND_NO_INDENT, 1, &rules);
+    assert_snippet(FUNCTION_PARAMS_BADLY_BREAKED_AND_NO_INDENT, 1, &rules);
 }
 
-pub static IN3_INLINE_FUNCTION_PARAMS_BADLY_BREAKED_AND_NO_INDENT: &str = "
+static INLINE_FUNCTION_PARAMS_BADLY_BREAKED_AND_NO_INDENT: &str = "
 inline method some_function(int a,
     int b)
 {
@@ -65,12 +65,12 @@ return a;
 }
 ";
 #[test]
-fn in3_inline_function_params_badly_breaked_and_no_indent() {
+fn inline_function_params_badly_breaked_and_no_indent() {
     let rules = set_up();
-    assert_snippet(IN3_INLINE_FUNCTION_PARAMS_BADLY_BREAKED_AND_NO_INDENT, 1, &rules);
+    assert_snippet(INLINE_FUNCTION_PARAMS_BADLY_BREAKED_AND_NO_INDENT, 1, &rules);
 }
 
-pub static IN3_FULL_BANK_CORRECT_INDENT: &str = "
+static FULL_BANK_INDENT_CORRECT: &str = "
 bank BankA {
     group GroupB {
         param some_param = this.REG_C;
@@ -95,12 +95,12 @@ bank BankA {
 }
 ";
 #[test]
-fn in3_full_bank_correct_indent() {
+fn full_bank_indent_correct() {
     let rules = set_up();
-    assert_snippet(IN3_FULL_BANK_CORRECT_INDENT, 0, &rules);
+    assert_snippet(FULL_BANK_INDENT_CORRECT, 0, &rules);
 }
 
-pub static IN3_STRUCTS_CORRECT_INDENT: &str = "
+static STRUCTS_INDENT_CORRECT: &str = "
 typedef struct {
     uint16 idx;
     uint8 qid_co;
@@ -120,12 +120,12 @@ typedef layout \"little-endian\" {
 } prod_qe_cmd_t;
 ";
 #[test]
-fn in3_structs_correct_indent() {
+fn structs_indent_correct() {
     let rules = set_up();
-    assert_snippet(IN3_STRUCTS_CORRECT_INDENT, 0, &rules);
+    assert_snippet(STRUCTS_INDENT_CORRECT, 0, &rules);
 }
 
-pub static IN3_STRUCTS_BAD_INDENT: &str = "
+static STRUCTS_INDENT_INCORRECT: &str = "
 typedef struct {
      uint16 idx;
        uint8 qid_co;
@@ -145,12 +145,12 @@ typedef layout \"little-endian\" {
 } prod_qe_cmd_t;
 ";
 #[test]
-fn in3_structs_bad_indent() {
+fn structs_bad_indent() {
     let rules = set_up();
-    assert_snippet(IN3_STRUCTS_BAD_INDENT, 5, &rules);
+    assert_snippet(STRUCTS_INDENT_INCORRECT, 5, &rules);
 }
 
-pub static IN3_COND_STRUCTURE_BAD_INDENT: &str = "
+static COND_STRUCTURE_INDENT_INCORRECT: &str = "
 method control_device() {
     if (control.start == 1) {
     log info, 2: 'Starting the device';
@@ -165,12 +165,12 @@ method control_device() {
 ";
 
 #[test]
-fn in3_cond_structure_bad_indent() {
+fn cond_structure_indent_incorrect() {
     let rules = set_up();
-    assert_snippet(IN3_COND_STRUCTURE_BAD_INDENT, 4, &rules);
+    assert_snippet(COND_STRUCTURE_INDENT_INCORRECT, 4, &rules);
 }
 
-pub static IN3_EMBEDDED_CORRECT_INDENT: &str = "
+static EMBEDDED_INDENT_CORRECT: &str = "
 bank pcie_config {
     register command {
         field mem {
@@ -187,12 +187,12 @@ bank pcie_config {
 }
 ";
 #[test]
-fn in3_embedded_correct_indent() {
+fn embedded_indent_correct() {
     let rules = set_up();
-    assert_snippet(IN3_EMBEDDED_CORRECT_INDENT, 0, &rules);
+    assert_snippet(EMBEDDED_INDENT_CORRECT, 0, &rules);
 }
 
-pub static IN3_EMBEDDED_INCORRECT_INDENT: &str = "
+static EMBEDDED_INDENT_INCORRECT: &str = "
 bank pcie_config {
     register command {
           field mem {
@@ -209,7 +209,7 @@ bank pcie_config {
 }
 ";
 #[test]
-fn in3_embedded_incorrect_indent() {
+fn embedded_indent_incorrect() {
     let rules = set_up();
-    assert_snippet(IN3_EMBEDDED_INCORRECT_INDENT, 3, &rules);
+    assert_snippet(EMBEDDED_INDENT_INCORRECT, 3, &rules);
 }
