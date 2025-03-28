@@ -166,11 +166,18 @@ fn post_process_linting_errors(errors: &mut Vec<DMLStyleError>) {
     });
 }
 
+// AuxParams is an extensible struct.
+// It can be used for any data that needs
+// to be passed down the tree nodes
+// to where Rules can use such data.
 #[derive(Copy, Clone)]
 pub struct AuxParams {
+    // depth is used by the indentation rules for calculating
+    // the correct indentation level for a node in the AST.
+    // Individual nodes update depth to affect level of their
+    // nested TreeElements. See more in src/lint/README.md
     pub depth: u32,
 }
-
 
 pub mod rules;
 pub mod tests {
