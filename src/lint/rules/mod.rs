@@ -51,7 +51,7 @@ pub trait Rule {
     fn push_err(&self, acc: &mut Vec<DMLStyleError>, range: ZeroRange) {
         let dmlerror = DMLStyleError {
             error: LocalDMLError {
-                range: range,
+                range,
                 description: Self::description().to_string(),
             },
             rule_type: Self::get_rule_type(),

@@ -6,6 +6,7 @@ use crate::lint::LintCfg;
 //  SP.reserved around reserved words, such as if, else, default,
 //  size, const and in, except when a reserved word is used as an identifier
 //  (e.g., local uint8 *data;)
+#[allow(dead_code)]
 static SP_RESERVED: &str = "
 method this_is_some_method() {
 local int this_some_integer = 0x666;
@@ -61,6 +62,7 @@ fn style_check_sp_braces_02() {
 
 //  SP.binop around binary operators except the dereferencing operators dot
 //  (a.b) and arrow (a->b)
+#[allow(dead_code)]
 static SP_BINOP: &str = "
 method this_is_some_method() {
 local int this_some_integer = 5+6;
@@ -70,6 +72,7 @@ if (this_some_integer == 0x666)
 ";
 
 //  SP.ternary around ? and : in the ternary ?: operator
+#[allow(dead_code)]
 static SP_TERNARY: &str = "
 method this_is_some_method(bool flag) {
 local int this_some_integer = (flag?5:7));
@@ -77,6 +80,7 @@ local int this_some_integer = (flag?5:7));
 ";
 
 //  SP.punct after but not before colon, semicolon and comma
+#[allow(dead_code)]
 static SP_PUNCT: &str = "
 method this_is_some_method(bool flag ,int8 var) {
     local int this_some_integer = 0x666 ;
@@ -97,6 +101,7 @@ fn style_check_sp_punct_rule() {
 }
 
 //  SP.ptrdecl between a type and the * marking a pointer
+#[allow(dead_code)]
 static SP_PTRDECL: &str = "
 method this_is_some_method(conf_object_t* dummy_obj) {
 if(!dummy_obj)
@@ -105,6 +110,7 @@ if(!dummy_obj)
 ";
 
 //  SP.comment around the comment delimiters //, /* and **/
+#[allow(dead_code)]
 static SP_COMMENT: &str = "
 /*Function
 documentation*/
@@ -174,6 +180,7 @@ fn style_check_nsp_unary() {
 }
 
 //  NSP.ptrdecl after the * marking a pointer in a declaration
+#[allow(dead_code)]
 static NSP_PTRDECL: &str = "
 method this_is_some_method(conf_object_t * dummy_obj) {
 if(!dummy_obj)

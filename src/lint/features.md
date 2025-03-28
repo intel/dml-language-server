@@ -11,7 +11,7 @@ Below are listed the currently supported rules for linting:
 - **NSP.TrailingWhitespace**: no spaces between the last token in a line and the corresponding newline `\n`
 
 ## Indentation
-- **IN1**: Lines are indented a fixed amount of spaces for each indentation level. Defaults to 4, can be set to a custom value.
+- **IN1**: Lines are indented a fixed amount of spaces for each indentation level. Defaults to 4, can be set to a custom value
 - **IN2**: Tab characters (ASCII 9) should never be used to indent lines
 - **IN3**: If the previous line contains an opening brace without corresponding closing brace, the current line should be indented one level more than the previous line
 - **IN4**: Closing braces at the beginning of a line should be aligned to the corresponding indentation level of the statement that started the code block. A closing brace should only ever appear on the same line as the opening brace, or first on a line

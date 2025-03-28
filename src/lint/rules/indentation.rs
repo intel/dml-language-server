@@ -374,7 +374,7 @@ impl IN4Rule {
         let rbrace_on_same_ind_level_than_switchtok:bool = args.rbrace.col_start.0
             == args.expected_depth * self.indentation_spaces;
         if !rbrace_on_same_ind_level_than_switchtok {
-            return self.push_err(acc, args.rbrace);
+            self.push_err(acc, args.rbrace);
         }
     }
 }
@@ -401,10 +401,8 @@ impl IN9Args {
             SwitchCase::Case(_, _, _) |
             SwitchCase::Default(_, _) => {},
             SwitchCase::Statement(statement) => {
-                if let Content::Some(ref content) = *statement.content {
-                    if let statement::StatementContent::Compound(_) = content {
-                        return None;
-                    }
+                if let Content::Some(statement::StatementContent::Compound(_)) = *statement.content {
+                    return None;
                 }
             },
             SwitchCase::HashIf(_) => {
@@ -497,7 +495,7 @@ impl IN10Args {
             });
             
         }
-        return None;
+        None
     }
 
     pub fn from_while_content(node: &WhileContent, depth: u32) -> Option<IN10Args> {
@@ -509,7 +507,7 @@ impl IN10Args {
             });
             
         }
-        return None;
+        None
     }
 }
 
