@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
 
+use crate::actions::ContextDefinition;
 use crate::actions::progress::{DiagnosticsNotifier,
                                AnalysisDiagnosticsNotifier};
 use crate::analysis::scope::{ContextedSymbol, ContextKey};
@@ -118,6 +119,8 @@ pub struct AnalysisStorage {
             CanonPath, TimestampedStorage<LinterAnalysis>>,
     // Maps file paths to device paths that depend on them
     pub device_triggers: HashMap<CanonPath, HashSet<CanonPath>>,
+    // The inverse of the above
+    pub device_dependencies: HashMap<CanonPath, HashSet<CanonPath>>,
 
     pub dependencies: AnalysisDirectDependencies,
     pub import_map: AnalysisImportMap,
@@ -166,13 +169,25 @@ impl AnalysisStorage {
                 |(p, tss)|(p, &tss.stored)).collect()
         }
 
-    pub fn all_device_analysises_containing_file(&self, path: &CanonPath)
-                                                 -> Vec<&DeviceAnalysis>{
-        self.device_triggers.get(path).map(
-            |triggers|triggers.iter()
-                .filter_map(|p|self.get_device_analysis(p).ok())
-                .collect())
+    pub fn filtered_device_analysises_containing_file(
+        &self,
+        path: &CanonPath,
+        filter: Option<&HashSet<ContextDefinition>>)
+        -> Vec<&DeviceAnalysis>{
+        self.device_triggers.get(path)
+            .map(|triggers|triggers.iter()
+                 .filter(
+                     |p|filter.map_or(
+                         true,
+                         |f|f.contains(&ContextDefinition::Device((*p).clone()))))
+                 .filter_map(|p|self.get_device_analysis(p).ok())
+                 .collect())
             .unwrap_or_else(||vec![])
+    }
+
+    pub fn all_device_analysises_containing_file(
+        &self, path: &CanonPath) -> Vec<&DeviceAnalysis> {
+        self.filtered_device_analysises_containing_file(path, None)
     }
 
     pub fn init(notify: channel::Sender<ServerToHandle>) -> Self {
@@ -185,6 +200,7 @@ impl AnalysisStorage {
             isolated_analysis: HashMap::default(),
             device_analysis:  HashMap::default(),
             device_triggers:  HashMap::default(),
+            device_dependencies: HashMap::default(),
             dependencies: HashMap::default(),
             import_map: HashMap::default(),
             unresolved_dependency: HashMap::default(),
@@ -343,6 +359,17 @@ impl AnalysisStorage {
                 let entry = self.device_triggers
                     .entry(trigger_path.clone()).or_default();
                 entry.insert((*device).clone());
+            }
+        }
+
+        // rebuild dependencies
+        // TODO: this could be optimized by folding it into the logic above,
+        // but I cannot imagine it's worth the hassle
+        self.device_dependencies.clear();
+        for (path, devices) in &self.device_triggers {
+            for device in devices {
+                self.device_dependencies.entry(device.clone())
+                    .or_default().insert(path.clone());
             }
         }
     }
@@ -664,7 +691,18 @@ impl AnalysisStorage {
         }
     }
 
-    pub fn report_errors<O: Output>(&mut self, path: &CanonPath, output: &O) {
+    pub fn report_errors<O: Output>(
+        &mut self,
+        path: &CanonPath,
+        output: &O) {
+        self.report_filtered_errors(path, output, None);
+    }
+
+    pub fn report_filtered_errors<O: Output>(
+        &mut self,
+        path: &CanonPath,
+        output: &O,
+        filter: Option<&HashSet<ContextDefinition>>) {
         debug!("Reporting all errors for {:?}", path);
         // By this being a hashset, we will not double-report any errors
         let mut dmlerrors:HashMap<PathBuf, HashSet<DMLError>>
@@ -685,19 +723,22 @@ impl AnalysisStorage {
                 .extend(self
                     .gather_linter_errors(&file).into_iter());
         }
-        for (file, errors) in self.gather_device_errors(path) {
-            dmlerrors.entry(file.clone())
-                .or_default()
-                .extend(errors.into_iter());
-            if !self.has_client_file(&PathBuf::from("dml-builtins.dml")) {
-                dmlerrors.get_mut(&file).unwrap().insert(
-                    DMLError {
-                        span: ZeroSpan::invalid(&file),
-                        description: "Could not find required builtin \
-                                      file 'dml-builtins.dml'".to_string(),
-                        related: vec![],
-                        severity: Some(DiagnosticSeverity::ERROR),
-                    });
+        // Only report device errors if this analysis context is active
+        if filter.map_or(true, |f|f.contains(&path.clone().into())) {
+            for (file, errors) in self.gather_device_errors(path) {
+                dmlerrors.entry(file.clone())
+                    .or_default()
+                    .extend(errors.into_iter());
+                if !self.has_client_file(&PathBuf::from("dml-builtins.dml")) {
+                    dmlerrors.get_mut(&file).unwrap().insert(
+                        DMLError {
+                            span: ZeroSpan::invalid(&file),
+                            description: "Could not find required builtin \
+                                          file 'dml-builtins.dml'".to_string(),
+                            related: vec![],
+                            severity: Some(DiagnosticSeverity::ERROR),
+                        });
+                }
             }
         }
 

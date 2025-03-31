@@ -519,7 +519,8 @@ impl<O: Output> LsService<O> {
                 notifications::DidChangeConfiguration,
                 notifications::DidChangeWatchedFiles,
                 notifications::DidChangeWorkspaceFolders,
-                notifications::Cancel;
+                notifications::Cancel,
+                notifications::ChangeActiveContexts;
             blocking_requests:
                 ShutdownRequest,
                 InitializeRequest;
@@ -539,7 +540,8 @@ impl<O: Output> LsService<O> {
                 requests::GotoDeclaration,
                 requests::References,
                 requests::Completion,
-                requests::CodeLensRequest;
+                requests::CodeLensRequest,
+                requests::GetKnownContextsRequest;
         );
         Ok(())
     }

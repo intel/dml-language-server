@@ -103,6 +103,7 @@ define_dispatch_request_enum!(
     RangeFormatting,
     ExecuteCommand,
     CodeLensRequest,
+    GetKnownContextsRequest,
 );
 
 /// Provides ability to dispatch requests to a worker thread that will

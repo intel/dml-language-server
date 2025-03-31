@@ -10,7 +10,8 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use crate::actions::hover;
-use crate::actions::InitActionContext;
+use crate::actions::{ContextDefinition, InitActionContext};
+use crate::actions::notifications::ContextDefinitionKindParam;
 use crate::analysis::{ZeroSpan, ZeroFilePosition, SymbolRef};
 use crate::analysis::reference::ReferenceKind;
 use crate::analysis::symbols::SimpleSymbol;
@@ -140,11 +141,14 @@ fn fp_to_symbol_refs(fp: &ZeroFilePosition,
     // but I keep it as separate here so that we could, perhaps,
     // returns different information for "no symbols found" and
     // "no info at pos"
-    info!("Looking up symbols/references at {:?}", fp);
+    debug!("Looking up symbols/references at {:?}", fp);
     let (context_sym, reference) = (analysis.context_symbol_at_pos(fp)?,
                                     analysis.reference_at_pos(fp)?);
-    info!("Got {:?} and {:?}", context_sym, reference);
-
+    debug!("Got {:?} and {:?}", context_sym, reference);
+    let canon_path = CanonPath::from_path_buf(fp.path()).unwrap();
+    // Rather than holding the lock throughout the request, clone
+    // the filter
+    let filter = Some(ctx.device_active_contexts.lock().unwrap().clone());
     let mut definitions = vec![];
     let analysises = analysis.all_device_analysises_containing_file(
         &CanonPath::from_path_buf(fp.path()).unwrap());
@@ -162,7 +166,9 @@ fn fp_to_symbol_refs(fp: &ZeroFilePosition,
                         (reference is {:?}), defaulted to symbol",
                        &fp, refer);
             }
-            for device in &analysises {
+            for device in analysis.filtered_device_analysises_containing_file(
+                &canon_path,
+                filter.as_ref()) {
                 definitions.extend(
                     device.lookup_symbols_by_contexted_symbol(
                         &sym, relevant_limitations)
@@ -179,7 +185,9 @@ fn fp_to_symbol_refs(fp: &ZeroFilePosition,
 
             let first_context = analysis.first_context_at_pos(fp).unwrap();
             let mut any_template_used = false;
-            for device in &analysises {
+            for device in analysis.filtered_device_analysises_containing_file(
+                &canon_path,
+                filter.as_ref()) {
                 debug!("reference info is {:?}", device.reference_info.keys());
                 // NOTE: This ends up being the correct place to warn users
                 // about references inside uninstantiated templates,
@@ -847,5 +855,82 @@ impl RequestAction for CodeLensRequest {
     ) -> Result<Self::Response, ResponseError> {
         // TODO: figure out if we want to use this
         Self::fallback_response()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
+pub struct ContextDefinitionParam {
+    kind: ContextDefinitionKindParam,
+    active: bool,
+    ready: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct GetKnownContextsRequest;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GetKnownContextsParams {
+    // None or empty implies to get ALL contexts
+    pub paths: Option<Vec<lsp_types::Uri>>,
+}
+
+impl LSPRequest for GetKnownContextsRequest {
+    type Params = GetKnownContextsParams;
+    type Result = Option<Vec<(lsp_types::Uri, Vec<ContextDefinitionParam>)>>;
+
+    const METHOD: &'static str = "$getKnownContexts";
+}
+
+impl RequestAction for GetKnownContextsRequest {
+    type Response = Vec<ContextDefinitionParam>;
+
+    fn fallback_response() -> Result<Self::Response, ResponseError> {
+        Err(ResponseError::Empty)
+    }
+
+    fn handle(
+        ctx: InitActionContext,
+        params: Self::Params,
+    ) -> Result<Self::Response, ResponseError> {
+        let for_these_paths: Vec<CanonPath> =
+            if let Some(params) = params.paths {
+                params.iter().filter_map(
+                    |uri|parse_file_path!(&uri, "GetKnownContexts")
+                        .ok()
+                        .and_then(CanonPath::from_path_buf))
+                    .collect()
+            } else {
+                vec![]
+            };
+        let contexts: HashSet<(ContextDefinition, bool, bool)>
+            = if for_these_paths.is_empty() {
+                ctx.get_all_context_info()
+            } else {
+                for_these_paths
+                    .into_iter()
+                    .flat_map(|canon|{
+                        let info = ctx.get_context_info(&canon);
+                        info.into_iter()
+                    })
+                    .collect()
+            };
+        Ok(contexts.into_iter().filter_map(
+            |(context, b, r)|
+            if let ContextDefinition::Device(dev) = context {
+                Some((dev, b, r))
+            } else {
+                None
+            })
+           .filter_map(
+               |(path, b, r)|
+               parse_uri(path.as_str()).ok()
+                   .map(|uri|
+                        ContextDefinitionParam {
+                            kind: ContextDefinitionKindParam::Device(uri),
+                            active: b,
+                            ready: r,
+                        }))
+           .collect()
+        )
     }
 }

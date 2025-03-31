@@ -18,10 +18,10 @@ use std::sync::{Arc, Mutex};
 use crate::actions::analysis_storage::AnalysisStorage;
 use crate::actions::analysis_queue::AnalysisQueue;
 use crate::actions::progress::{AnalysisProgressNotifier, ProgressNotifier};
-use crate::analysis::DLSLimitation;
+use crate::analysis::{DLSLimitation, IMPLICIT_IMPORTS};
 use crate::analysis::structure::expressions::Expression;
 use crate::concurrency::{Jobs, ConcurrentJob};
-use crate::config::Config;
+use crate::config::{Config, DeviceContextMode};
 use crate::file_management::{PathResolver, CanonPath};
 use crate::lint::{LintCfg, maybe_parse_lint_cfg};
 use crate::lsp_data;
@@ -180,6 +180,10 @@ pub struct InitActionContext {
     pub direct_opens: Arc<Mutex<HashSet<CanonPath>>>,
     pub compilation_info: Arc<Mutex<CompilationInfoStorage>>,
 
+    // maps files to the paths of device contexts they should be
+    // analyzed under
+    pub device_active_contexts: Arc<Mutex<ActiveDeviceContexts>>,
+
     prev_changes: Arc<Mutex<HashMap<PathBuf, i32>>>,
 
     pub config: Arc<Mutex<Config>>,
@@ -213,6 +217,30 @@ impl UninitActionContext {
     }
 }
 
+#[derive(Clone, Eq, PartialEq, Hash, Debug)]
+pub enum ContextDefinition {
+    // The path here is the "topmost" file which the simulated context imports
+    Simulated(CanonPath), // TODO: Actually implement support for this
+    Device(CanonPath),
+}
+
+impl From<CanonPath> for ContextDefinition {
+    fn from(val: CanonPath) -> ContextDefinition {
+        ContextDefinition::Device(val)
+    }
+}
+
+impl ContextDefinition {
+    fn as_canon_path(&self) -> &CanonPath {
+        match self {
+            ContextDefinition::Simulated(p) => p,
+            ContextDefinition::Device(p) => p,
+        }
+    }
+}
+
+pub type ActiveDeviceContexts = HashSet<ContextDefinition>;
+
 impl InitActionContext {
     fn new(
         analysis: Arc<Mutex<AnalysisStorage>>,
@@ -245,6 +273,7 @@ impl InitActionContext {
             workspace_roots: Arc::default(),
             compilation_info: Arc::default(),
             sent_warnings: Arc::default(),
+            device_active_contexts: Arc::default(),
         }
     }
 
@@ -523,6 +552,7 @@ impl InitActionContext {
     fn device_analyze<O: Output>(&mut self, device: &CanonPath, out: &O) {
         debug!("Wants device analysis of {:?}", device);
         self.maybe_start_progress(out);
+        self.maybe_add_device_context(device);
         let (job, token) = ConcurrentJob::new();
         self.add_job(job);
         let locked_analysis = &mut self.analysis.lock().unwrap();
@@ -533,6 +563,162 @@ impl InitActionContext {
             device,
             dependencies,
             token);
+    }
+
+    // (DeviceContextPath, IsActive, IsReady)
+    pub fn get_all_context_info(&self)
+                                -> HashSet<(ContextDefinition, bool, bool)> {
+        let mut analysis = self.analysis.lock().unwrap();
+        analysis.update_analysis(&self.construct_resolver());
+        let contexts = self.device_active_contexts.lock().unwrap();
+        analysis.device_triggers.values().flatten()
+            .map(|path|ContextDefinition::from(path.clone()))
+            .map(|con|{
+                let b = contexts.contains(&con);
+                let r = analysis.get_device_analysis(
+                    con.as_canon_path()).is_ok();
+                (con, b, r)
+            }).collect()
+    }
+
+    pub fn get_context_info(&self, path: &CanonPath)
+                            -> HashSet<(ContextDefinition, bool, bool)> {
+        let mut analysis = self.analysis.lock().unwrap();
+        analysis.update_analysis(&self.construct_resolver());
+        let contexts = self.device_active_contexts.lock().unwrap();
+        analysis.device_triggers.get(path)
+            .into_iter().flatten()
+            .map(|path|ContextDefinition::from(path.clone()))
+            .map(|con|{
+                let b = contexts.contains(&con);
+                let r = analysis.get_device_analysis(
+                    con.as_canon_path()).is_ok();
+                (con, b, r)
+            }).collect()
+    }
+
+    pub fn maybe_add_device_context(&self, path: &CanonPath) {
+        if match self.config.lock().unwrap().new_device_context_mode {
+            DeviceContextMode::Always => true,
+            DeviceContextMode::AnyNew => {
+                let mut any_uncontexted = false;
+                let analysis = self.analysis.lock().unwrap();
+                for dependency in analysis
+                    .device_dependencies
+                    .get(path)
+                    .iter().flat_map(|h|h.iter())
+                {
+                        let mut had_context = false;
+                    for device in analysis
+                        .device_triggers
+                        .get(dependency)
+                        .iter().flat_map(|h|h.iter())
+                    {
+                        if self.device_active_contexts.lock().unwrap()
+                            .contains(&device.clone().into()) {
+                                had_context = true;
+                                break;
+                            }
+                    }
+                    if !had_context {
+                        any_uncontexted = true;
+                        break;
+                    }
+                }
+                any_uncontexted
+            },
+            DeviceContextMode::First => {
+                let mut all_uncontexted = true;
+                let analysis = self.analysis.lock().unwrap();
+                for dependency in analysis
+                    .device_dependencies
+                    .get(path)
+                    .iter().flat_map(|h|h.iter())
+                // NOTE: do not include files that seem like core
+                // files in this. TODO: For now, just do implicit imports but
+                // things like 'utility.dml' should probably be included too
+                    .filter(|dep|
+                            !IMPLICIT_IMPORTS.iter().any(
+                                |ii|dep.file_name()
+                                    .and_then(|f|f.to_str()).unwrap() == *ii))
+                {
+                    let mut had_context = false;
+                    for device in analysis
+                        .device_triggers.get(dependency)
+                        .iter().flat_map(|h|h.iter())
+                    {
+                        if self.device_active_contexts.lock().unwrap()
+                            .contains(&device.clone().into()) {
+                                had_context = true;
+                                break;
+                            }
+                    }
+                    if had_context {
+                        all_uncontexted = false;
+                        break;
+                    }
+                }
+                all_uncontexted
+            },
+            DeviceContextMode::SameModule => {
+                let mut matched_dir = false;
+                let analysis = self.analysis.lock().unwrap();
+                for device in analysis.device_dependencies.keys() {
+                    if path.starts_with(device.parent().unwrap()) ||
+                        device.starts_with(path.parent().unwrap()) {
+                            matched_dir = true;
+                            break;
+                        }
+                }
+                matched_dir
+            },
+            DeviceContextMode::Never => false,
+        } {
+            debug!("Automatically activated device context at {}",
+                   path.to_str().unwrap());
+            self.device_active_contexts.lock().unwrap().insert(
+                ContextDefinition::Device(path.clone()));
+        }
+    }
+
+    // Updates active contexts in such a way that the only active contexts
+    // for path are the provided ones, effectively disabling all contexts
+    // that are available for the specified path but not
+    // provided
+    pub fn update_contexts(&self,
+                           path: &CanonPath,
+                           new_active_contexts: HashSet<ContextDefinition>) {
+        let all_device_contexts: Vec<CanonPath> =
+            self.analysis.lock().unwrap()
+            .device_triggers
+            .get(path)
+            .into_iter()
+            .flatten()
+            .cloned()
+            .collect();
+        let mut current_contexts = self.device_active_contexts.lock().unwrap();
+        current_contexts.retain(
+            |context|match context {
+                c @ ContextDefinition::Device(ref p) =>
+                    !all_device_contexts.contains(p)
+                    || new_active_contexts.contains(c),
+                // TODO: handle synthetic contexts
+                ContextDefinition::Simulated(_) => true,
+            });
+        for context in new_active_contexts {
+            match context {
+                ref c @ ContextDefinition::Device(ref p) =>
+                    if !all_device_contexts.contains(p) {
+                        error!("Tried to activate context {:?} for {:?},\
+                                but it is not a known device context for that \
+                                path", c, path);
+                    } else {
+                        current_contexts.insert(c.clone());
+                    },
+                // TODO: handle synthetic contexts
+                ContextDefinition::Simulated(_) => (),
+            }
+        }
     }
 
     pub fn maybe_trigger_lint_analysis<O: Output>(&mut self,
