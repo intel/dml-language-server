@@ -5,6 +5,8 @@
 # Change Log
 
 ## 0.9.9
+- Fixed an issue that could cause analysis thread crash when an object was declared both
+  as an array and not one
 
 ## 0.9.8
 - Added "warning" as a valid log statement type.
