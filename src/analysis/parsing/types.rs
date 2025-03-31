@@ -1,7 +1,10 @@
-use crate::lint::rules::spacing::SpBracesArgs;
-use crate::lint::rules::CurrentRules;
 //  © 2024 Intel Corporation
 //  SPDX-License-Identifier: Apache-2.0 and MIT
+use crate::lint::{rules::{indentation::{IN3Args, IN4Args},
+                            spacing::SpBracesArgs,
+                            CurrentRules},
+                            AuxParams,
+                            DMLStyleError};
 use crate::span::Range;
 use crate::analysis::parsing::lexer::TokenKind;
 use crate::analysis::parsing::parser::{doesnt_understand_tokens,
@@ -51,8 +54,13 @@ impl TreeElement for StructTypeContent {
         }
         errors
     }
-    fn evaluate_rules(&self, acc: &mut Vec<LocalDMLError>, rules: &CurrentRules) {
+    fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, aux: AuxParams) {
+        rules.in3.check(acc, IN3Args::from_struct_type_content(self, aux.depth));
+        rules.in4.check(acc, IN4Args::from_struct_type_content(self, aux.depth));
         rules.sp_brace.check(acc, SpBracesArgs::from_struct_type_content(self));
+    }
+    fn should_increment_depth(&self) -> bool {
+        true
     }
 }
 
@@ -129,8 +137,13 @@ impl TreeElement for LayoutContent {
         }
         errors
     }
-    fn evaluate_rules(&self, acc: &mut Vec<LocalDMLError>, rules: &CurrentRules) {
+    fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, aux: AuxParams) {
+        rules.in3.check(acc, IN3Args::from_layout_content(self, aux.depth));
+        rules.in4.check(acc, IN4Args::from_layout_content(self, aux.depth));
         rules.sp_brace.check(acc, SpBracesArgs::from_layout_content(self));
+    }
+    fn should_increment_depth(&self) -> bool {
+        true
     }
 }
 
@@ -301,8 +314,13 @@ impl TreeElement for BitfieldsContent {
         }
         errors
     }
-    fn evaluate_rules(&self, acc: &mut Vec<LocalDMLError>, rules: &CurrentRules) {
+    fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, aux: AuxParams) {
         rules.sp_brace.check(acc, SpBracesArgs::from_bitfields_content(self));
+        rules.in3.check(acc, IN3Args::from_bitfields_content(self, aux.depth));
+        rules.in4.check(acc, IN4Args::from_bitfields_content(self, aux.depth));
+    }
+    fn should_increment_depth(&self) -> bool {
+        true
     }
 }
 
