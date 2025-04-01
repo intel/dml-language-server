@@ -35,7 +35,10 @@ use lsp_types::{
     ImplementationProviderCapability,
     InitializeResult, OneOf, ServerCapabilities,
     ServerInfo,
-    TextDocumentSyncCapability, TextDocumentSyncKind,
+    TextDocumentSyncCapability,
+    TextDocumentSyncOptions,
+    TextDocumentSyncKind,
+    TextDocumentSyncSaveOptions,
     WorkspaceServerCapabilities,
     WorkspaceFoldersServerCapabilities,
 };
@@ -367,9 +370,7 @@ impl<O: Output> LsService<O> {
                     debug!("Received isolated analysis of {:?}", path);
                     if let ActionContext::Init(ctx) = &mut self.ctx {
                         let config = ctx.config.lock().unwrap().to_owned();
-                        ctx.update_analysis();
-                        ctx.analysis.lock().unwrap().report_errors(
-                            &path, &self.output);
+                        ctx.report_errors(&self.output);
                         for file in requests {
                             // A little bit of redundancy here, we need to
                             // pre-resolve this import into an absolute path
@@ -398,17 +399,13 @@ impl<O: Output> LsService<O> {
                 ServerToHandle::DeviceAnalysisDone(path) => {
                     debug!("Received device analysis of {:?}", path);
                     if let ActionContext::Init(ctx) = &mut self.ctx {
-                        ctx.update_analysis();
-                        ctx.analysis.try_lock().unwrap().report_errors(
-                            &path, &self.output);
+                        ctx.report_errors(&self.output);
                     }
                 },
                 ServerToHandle::LinterDone(path) => {
                     debug!("Received linter analysis of {:?}", path);
                     if let ActionContext::Init(ctx) = &mut self.ctx {
-                        ctx.update_analysis();
-                        ctx.analysis.try_lock().unwrap().report_errors(
-                            &path, &self.output);
+                        ctx.report_errors(&self.output);
                     }
                 },
                 ServerToHandle::AnalysisRequest(importpath, context) => {
@@ -520,6 +517,7 @@ impl<O: Output> LsService<O> {
             notifications:
                 notifications::Initialized,
                 notifications::DidOpenTextDocument,
+                notifications::DidCloseTextDocument,
                 notifications::DidChangeTextDocument,
                 notifications::DidSaveTextDocument,
                 notifications::DidChangeConfiguration,
@@ -627,8 +625,14 @@ fn server_caps(_ctx: &ActionContext) -> ServerCapabilities {
         moniker_provider: None,
         position_encoding: None,
         semantic_tokens_provider: None,
-        text_document_sync: Some(TextDocumentSyncCapability::Kind(
-            TextDocumentSyncKind::INCREMENTAL,
+        text_document_sync: Some(TextDocumentSyncCapability::Options(
+            TextDocumentSyncOptions {
+                open_close: Some(true),
+                change: Some(TextDocumentSyncKind::INCREMENTAL),
+                will_save: None,
+                will_save_wait_until: None,
+                save: Some(TextDocumentSyncSaveOptions::Supported(true)),
+            }
         )),
         hover_provider: Some(HoverProviderCapability::Simple(true)),
         completion_provider: None,

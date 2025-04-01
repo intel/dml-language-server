@@ -10,6 +10,7 @@ use serde::Deserialize;
 use serde_json::json;
 
 use std::collections::{HashMap, HashSet};
+use std::cmp::Ordering;
 use std::path::{Path, PathBuf};
 use std::fs;
 use std::sync::atomic::AtomicBool;
@@ -17,8 +18,11 @@ use std::sync::{Arc, Mutex};
 
 use crate::actions::analysis_storage::AnalysisStorage;
 use crate::actions::analysis_queue::AnalysisQueue;
-use crate::actions::progress::{AnalysisProgressNotifier, ProgressNotifier};
-use crate::analysis::DLSLimitation;
+use crate::actions::progress::{AnalysisProgressNotifier,
+                               AnalysisDiagnosticsNotifier,
+                               DiagnosticsNotifier,
+                               ProgressNotifier};
+use crate::analysis::{DMLError, DLSLimitation};
 use crate::analysis::structure::expressions::Expression;
 use crate::concurrency::{Jobs, ConcurrentJob};
 use crate::config::Config;
@@ -45,7 +49,7 @@ macro_rules! parse_file_path {
 macro_rules! ignore_non_file_uri {
     ($expr: expr, $uri: expr, $log_name: expr) => {
         $expr.map_err(|_| {
-            trace!("{}: Non-`file` URI scheme, ignoring: {:?}", $log_name, $uri);
+            log::trace!("{}: Non-`file` URI scheme, ignoring: {:?}", $log_name, $uri);
         })
     };
 }
@@ -331,6 +335,55 @@ impl InitActionContext {
         } else {
             trace!("Failed to lock config");
         }
+    }
+
+    pub fn report_errors<O: Output>(&mut self, output: &O) {
+        self.update_analysis();
+        let (isolated, device, lint) =
+            self.analysis.try_lock().unwrap().gather_errors();
+        let notifier = AnalysisDiagnosticsNotifier::new("indexing".to_string(),
+                                                        output.clone());
+        notifier.notify_begin_diagnostics();
+        let files: HashSet<&PathBuf> =
+            isolated.keys()
+            .chain(device.keys())
+            .chain(lint.keys())
+            .collect();
+        let config = self.config.lock().unwrap();
+        let direct_opens = self.direct_opens.lock().unwrap();
+        for file in files {
+            let mut sorted_errors: Vec<DMLError> =
+                isolated.get(file).into_iter().flatten()
+                .chain(device.get(file).into_iter().flatten())
+                .chain(
+                    lint.get(file).into_iter().flatten()
+                        .filter(
+                            |_|!config.lint_direct_only
+                                || direct_opens.contains(
+                                    &file.clone().into())
+                        ))
+                .cloned()
+                .collect();
+            debug!("Reporting errors for {:?}", file);
+            // Sort by line
+            sorted_errors.sort_unstable_by(
+                |e1, e2|if e1.span.range > e2.span.range {
+                    Ordering::Greater
+                } else {
+                    Ordering::Less
+                });
+            match parse_uri(file.to_str().unwrap()) {
+                Ok(url) => notifier.notify_publish_diagnostics(
+                    PublishDiagnosticsParams::new(
+                        url,
+                        sorted_errors.iter()
+                            .map(DMLError::to_diagnostic).collect(),
+                        None)),
+                // The Url crate does not report interesting errors
+                Err(_) => error!("Could not convert {:?} to Url", file),
+            }
+        }
+        notifier.notify_end_diagnostics();
     }
 
     pub fn compilation_info_from_file(&self, path: &PathBuf) ->
