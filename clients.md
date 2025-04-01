@@ -97,7 +97,7 @@ The DLS also uses some custom messages to provide additional info to clients or
 to allow them to exert special control over the language server.
 
 Notifications:
-* '$changeActiveContexts'
+* '$/changeActiveContexts'
   The client sends this notification to the server to control for which paths
   semantic errors and information is used. Usually you would precede this with
   a '\$getKnownContexts' request to find which paths are available, and for which
@@ -106,17 +106,16 @@ Notifications:
   are provided [in source](./src/actions/notifications.rs#L253-L257).
 
 Requests:
-* '$getKnownContexts'
+* '$/getKnownContexts'
   The client sends this request to the server together with a list of
   paths, to obtain the paths with device declarations that import any file on
   the original list, directly or indirectly, together with information
   about which of those paths are used for semantic errors or information.
   Details on parameter format is available [in source](./src/actions/requests.rs#L714-L717).
 
-From Server to Client:
-
-* `window/progress`: notification, `title: "Analysing", value: WorkDoneProgressBegin`. Sent when the first analysis starts
-* `window/progress`: notification, `title: "Analysing", value: WorkDoneProgressEnd`. Sent when the last analysis finishes
+From Server to Client, these notifcations have had additional fields added:
+* `window/progress` - added `title: "Analysing", value: WorkDoneProgressBegin`. Sent when the first analysis starts
+* `window/progress` - added `title: "Analysing", value: WorkDoneProgressEnd`. Sent when the last analysis finishes
 
 ## Resources
 

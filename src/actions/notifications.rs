@@ -252,6 +252,7 @@ pub enum ContextDefinitionKindParam {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ChangeActiveContextsParams {
     pub active_contexts: Vec<ContextDefinitionKindParam>,
     // None implies update ALL context paths
@@ -276,7 +277,7 @@ impl ContextDefinitionKindParam {
 }
 
 impl LSPNotification for ChangeActiveContexts {
-    const METHOD: &'static str = "$ChangeActiveContexts";
+    const METHOD: &'static str = "$/changeActiveContexts";
     type Params = ChangeActiveContextsParams;
 }
 

@@ -879,7 +879,7 @@ impl LSPRequest for GetKnownContextsRequest {
     type Params = GetKnownContextsParams;
     type Result = Option<Vec<(lsp_types::Uri, Vec<ContextDefinitionParam>)>>;
 
-    const METHOD: &'static str = "$getKnownContexts";
+    const METHOD: &'static str = "$/getKnownContexts";
 }
 
 impl RequestAction for GetKnownContextsRequest {
