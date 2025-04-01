@@ -5,6 +5,8 @@
 # Change Log
 
 ## 0.9.9
+- Added a configuration option, "lint\_direct\_only", that disables lint reports
+  for files not directly opened in the editor. Defaults to true.
 
 ## 0.9.8
 - Added "warning" as a valid log statement type.
