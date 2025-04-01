@@ -7,6 +7,9 @@
 ## 0.9.9
 - Fixed an issue that could cause analysis thread crash when an object was declared both
   as an array and not one
+- Added LSP protocol extension notification "changeActiveContexts" and request
+  "getKnownContexts" which together can be used to determine and control the active
+  device contexts for the server.
 
 ## 0.9.8
 - Added "warning" as a valid log statement type.
