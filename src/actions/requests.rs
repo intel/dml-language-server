@@ -3,7 +3,7 @@
 //! Requests that the DLS can respond to.
 
 use jsonrpc::error::{StandardError, standard_error};
-use log::{info, debug, error, trace};
+use log::{info, debug, error, trace, warn};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashSet;
@@ -53,33 +53,26 @@ use crate::server::{Ack, Output, Request, RequestAction,
 
 // Gives a slightly-better error message than the short-form one specified by
 // the error.
-// NOTE: The reason these are NOT affected by the show_warnings setting
-// (despite being sent as warnings) are that these indicate something wrong to
-// the user they can actually do something about, rather than pointing out
-// an inherent (current) limitation
-fn error_to_description(error: AnalysisLookupError, file: Option<&str>)
-                        -> String {
+fn warn_miss_lookup(error: AnalysisLookupError, file: Option<&str>) {
     match error {
         AnalysisLookupError::NoFile =>
-            format!(
+            error!(
                 "Could not find a real file corresponding to '{}'",
                 if let Some(f) = file { f.to_string() }
                 else { "the opened file".to_string() }),
         AnalysisLookupError::NoIsolatedAnalysis =>
-            format!(
-                "No syntactical analysis available{}, the server may not have \
-                 finished it yet.",
+            warn!(
+                "No syntactical analysis available{}",
                 if let Some(f) = file { format!(" for the file '{}'", f) }
                 else { "".to_string() }),
         AnalysisLookupError::NoLintAnalysis =>
-            format!(
-                "No linting analysis available{}, the server may not \
-                 have finished it yet.",
+            warn!(
+                "No linting analysis available{}",
                 if let Some(f) = file { format!(" for the file '{}'", f) }
                 else { "".to_string() }),
         AnalysisLookupError::NoDeviceAnalysis =>
-            format!(
-                "No semantic analysis available{}, you may need to open a file \
+            warn!(
+                "No semantic analysis available{}, may need to open a file \
                  with a 'device' declaration that imports{}, directly or \
                  indirectly.",
                 if let Some(f) = file { format!(" that includes the file '{}'", f) }
@@ -522,10 +515,9 @@ impl RequestAction for GotoImplementation {
             },
             Err(lookuperror) => {
                 let main_file_name = fp.path();
-                Ok(ResponseWithMessage::Warn(
-                    None,
-                    error_to_description(lookuperror,
-                                         main_file_name.to_str())))
+                warn_miss_lookup(lookuperror,
+                                 main_file_name.to_str());
+                Self::fallback_response()
             },
         }
     }
@@ -569,11 +561,9 @@ impl RequestAction for GotoDeclaration {
             },
             Err(lookuperror) => {
                 let main_file_name = fp.path();
-                Ok(ResponseWithMessage::Warn(
-                    None,
-                    error_to_description(lookuperror,
-                                         main_file_name.to_str())))
-
+                warn_miss_lookup(lookuperror,
+                                 main_file_name.to_str());
+                Self::fallback_response()
             },
         }
     }
@@ -618,11 +608,9 @@ impl RequestAction for GotoDefinition {
             },
             Err(lookuperror) => {
                 let main_file_name = fp.path();
-                Ok(ResponseWithMessage::Warn(
-                    None,
-                    error_to_description(lookuperror,
-                                         main_file_name.to_str())))
-
+                warn_miss_lookup(lookuperror,
+                                 main_file_name.to_str());
+                Self::fallback_response()
             },
         }
     }
@@ -666,11 +654,9 @@ impl RequestAction for References {
             },
             Err(lookuperror) => {
                 let main_file_name = fp.path();
-                Ok(ResponseWithMessage::Warn(
-                    vec![],
-                    error_to_description(lookuperror,
-                                         main_file_name.to_str())))
-
+                warn_miss_lookup(lookuperror,
+                                 main_file_name.to_str());
+                Self::fallback_response()
             },
         }
     }

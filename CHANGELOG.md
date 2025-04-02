@@ -10,6 +10,8 @@
 - Added LSP protocol extension notification "changeActiveContexts" and request
   "getKnownContexts" which together can be used to determine and control the active
   device contexts for the server.
+- Moved warning feedback when syntactic/semantic analysis is not available to
+  server output from server message
 
 ## 0.9.8
 - Added "warning" as a valid log statement type.
