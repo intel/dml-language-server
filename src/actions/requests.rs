@@ -493,6 +493,11 @@ impl RequestAction for GotoImplementation {
             }
             maybe_fp.unwrap()
         };
+        ctx.wait_for_state(
+            AnalysisProgressKind::DeviceDependencies,
+            AnalysisCoverageSpec::Paths(
+                std::iter::once(CanonPath::from_path_buf(fp.path()).unwrap())
+                    .collect())).ok();
 
         let mut limitations = HashSet::new();
         match fp_to_symbol_refs(&fp, &ctx, &mut limitations) {
@@ -544,6 +549,12 @@ impl RequestAction for GotoDeclaration {
             }
             maybe_fp.unwrap()
         };
+        ctx.wait_for_state(
+            AnalysisProgressKind::DeviceDependencies,
+            AnalysisCoverageSpec::Paths(
+                std::iter::once(CanonPath::from_path_buf(fp.path()).unwrap())
+                    .collect())).ok();
+
         let mut limitations = HashSet::new();
         match fp_to_symbol_refs(&fp, &ctx, &mut limitations) {
             Ok(symbols) => {
@@ -590,6 +601,11 @@ impl RequestAction for GotoDefinition {
             }
             maybe_fp.unwrap()
         };
+        ctx.wait_for_state(
+            AnalysisProgressKind::DeviceDependencies,
+            AnalysisCoverageSpec::Paths(
+                std::iter::once(CanonPath::from_path_buf(fp.path()).unwrap())
+                    .collect())).ok();
 
         let mut limitations = HashSet::new();
         match fp_to_symbol_refs(&fp, &ctx, &mut limitations) {
@@ -637,6 +653,11 @@ impl RequestAction for References {
             }
             maybe_fp.unwrap()
         };
+        ctx.wait_for_state(
+            AnalysisProgressKind::DeviceDependencies,
+            AnalysisCoverageSpec::Paths(
+                std::iter::once(CanonPath::from_path_buf(fp.path()).unwrap())
+                    .collect())).ok();
         let mut limitations = HashSet::new();
         match fp_to_symbol_refs(&fp, &ctx, &mut limitations) {
             Ok(symbols) => {

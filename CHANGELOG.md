@@ -12,6 +12,8 @@
   device contexts for the server.
 - Moved warning feedback when syntactic/semantic analysis is not available to
   server output from server message
+- Goto-definition/declaration/implementation/references will now try to wait
+  for ongoing device analysis on the file before responding.
 
 ## 0.9.8
 - Added "warning" as a valid log statement type.
