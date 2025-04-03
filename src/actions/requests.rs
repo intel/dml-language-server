@@ -10,7 +10,8 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use crate::actions::hover;
-use crate::actions::{AnalysisProgressKind, AnalysisCoverageSpec,
+use crate::actions::{AnalysisProgressKind, AnalysisWaitKind,
+                     AnalysisCoverageSpec,
                      ContextDefinition, InitActionContext};
 use crate::actions::notifications::ContextDefinitionKindParam;
 use crate::analysis::{ZeroSpan, ZeroFilePosition, SymbolRef};
@@ -495,6 +496,7 @@ impl RequestAction for GotoImplementation {
         };
         ctx.wait_for_state(
             AnalysisProgressKind::DeviceDependencies,
+            AnalysisWaitKind::Work,
             AnalysisCoverageSpec::Paths(
                 std::iter::once(CanonPath::from_path_buf(fp.path()).unwrap())
                     .collect())).ok();
@@ -551,6 +553,7 @@ impl RequestAction for GotoDeclaration {
         };
         ctx.wait_for_state(
             AnalysisProgressKind::DeviceDependencies,
+            AnalysisWaitKind::Work,
             AnalysisCoverageSpec::Paths(
                 std::iter::once(CanonPath::from_path_buf(fp.path()).unwrap())
                     .collect())).ok();
@@ -603,6 +606,7 @@ impl RequestAction for GotoDefinition {
         };
         ctx.wait_for_state(
             AnalysisProgressKind::DeviceDependencies,
+            AnalysisWaitKind::Work,
             AnalysisCoverageSpec::Paths(
                 std::iter::once(CanonPath::from_path_buf(fp.path()).unwrap())
                     .collect())).ok();
@@ -655,6 +659,7 @@ impl RequestAction for References {
         };
         ctx.wait_for_state(
             AnalysisProgressKind::DeviceDependencies,
+            AnalysisWaitKind::Work,
             AnalysisCoverageSpec::Paths(
                 std::iter::once(CanonPath::from_path_buf(fp.path()).unwrap())
                     .collect())).ok();
@@ -912,6 +917,7 @@ impl RequestAction for GetKnownContextsRequest {
             };
         ctx.wait_for_state(
             AnalysisProgressKind::Isolated,
+            AnalysisWaitKind::Existence,
             AnalysisCoverageSpec::Paths(for_these_paths.clone())).ok();
 
         let contexts: HashSet<(ContextDefinition, bool, bool)>

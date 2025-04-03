@@ -176,6 +176,16 @@ pub enum AnalysisCoverageSpec {
 }
 
 #[derive(PartialEq, Debug)]
+pub enum AnalysisWaitKind {
+    // Waits for work on the specified to finish
+    Work,
+    // Wait for the specified to exist at all, even if it may
+    // soon be out-of-date
+    Existence,
+}
+
+
+#[derive(PartialEq, Debug)]
 pub enum AnalysisStateResponse {
     // The spec is true, AND the related analysises actually exist
     Achieved,
@@ -193,6 +203,7 @@ pub enum AnalysisStateResponse {
 pub struct AnalysisStateWaitDefinition {
     progress_kind: AnalysisProgressKind,
     coverage: AnalysisCoverageSpec,
+    wait_kind: AnalysisWaitKind,
     response: channel::Sender<AnalysisStateResponse>,
 }
 
@@ -891,12 +902,14 @@ impl InitActionContext {
 
     pub fn wait_for_state(&self,
                           progress_kind: AnalysisProgressKind,
+                          wait_kind: AnalysisWaitKind,
                           coverage: AnalysisCoverageSpec) ->
         Result<AnalysisStateResponse, crossbeam::channel::RecvError> {
             let (sender, receiver) = channel::unbounded();
             let wait = AnalysisStateWaitDefinition {
                 progress_kind,
                 coverage,
+                wait_kind,
                 response: sender,
             };
             if self.check_wait(&wait) {
@@ -920,42 +933,60 @@ impl InitActionContext {
         let analysis = self.analysis.lock().unwrap();
         let queue = &self.analysis_queue;
         if let AnalysisCoverageSpec::Paths(path) = &wait.coverage {
-            let mut paths: HashSet<CanonPath>
+            let mut isolated_paths: HashSet<CanonPath>
                 = path.iter().cloned().collect();
+            let mut device_paths: HashSet<CanonPath>
+                = HashSet::default();
             match wait.progress_kind {
                 AnalysisProgressKind::Device => {
+                    device_paths.extend(isolated_paths.clone());
                     let extra_paths: Vec<CanonPath> =
-                        paths.iter().cloned().flat_map(
-                            |p|analysis.all_dependencies(&p, Some(&p)))
+                        isolated_paths.iter().flat_map(
+                            |p|analysis.all_dependencies(p, Some(p)))
                         .collect();
-                    paths.extend(extra_paths);
+                    isolated_paths.extend(extra_paths);
                 },
                 AnalysisProgressKind::DeviceDependencies => {
-                    wait_done = !queue.has_isolated_work();
-                    paths = paths.iter().cloned().flat_map(
-                        |p|analysis.device_triggers
-                            .get(&p).into_iter().flatten())
-                        .cloned()
-                        .collect();
+                    device_paths.extend(
+                        isolated_paths.iter().flat_map(
+                            |p|analysis.device_triggers
+                                .get(p).into_iter().flatten())
+                            .cloned());
+                    if wait.wait_kind == AnalysisWaitKind::Work {
+                        wait_done = !queue.has_isolated_work();
+                    } else {
+                        isolated_paths.extend(device_paths.iter().flat_map(
+                            |p|analysis.all_dependencies(p, Some(p))));
+                    }
                 },
                 _ => (),
             }
-            if wait.progress_kind != AnalysisProgressKind::DeviceDependencies {
-                wait_done = !queue.working_on_isolated_for_paths(&paths);
-                if wait.progress_kind == AnalysisProgressKind::Device {
-                    wait_done = wait_done
-                        && !queue.working_on_device_for_paths(&paths);
-                }
+            if wait.wait_kind == AnalysisWaitKind::Work {
+                wait_done = wait_done &&
+                    !queue.working_on_isolated_for_paths(&isolated_paths);
+                wait_done = wait_done &&
+                    !queue.working_on_device_for_paths(&device_paths);
             } else {
-                wait_done = wait_done
-                    && !queue.working_on_device_for_paths(&paths);
+                wait_done = wait_done && !isolated_paths.iter().any(
+                    |p|analysis.get_isolated_analysis(p).is_err());
+                wait_done = wait_done && !device_paths.iter().any(
+                    |p|analysis.get_device_analysis(p).is_err());
             }
-        } else {
+        } else if wait.wait_kind == AnalysisWaitKind::Work {
             wait_done = !queue.has_isolated_work();
             if wait.progress_kind != AnalysisProgressKind::Isolated {
                 wait_done = wait_done && !queue.has_device_work();
             }
+        } else {
+            // It's a little bit weird to wait for 'any' existence, but we
+            // interpret it as just the existence of anything
+            wait_done = !analysis.isolated_analysis.is_empty();
+            if wait.progress_kind != AnalysisProgressKind::Isolated {
+                wait_done = wait_done
+                    && !analysis.device_analysis.is_empty();
+            }
         }
+
         if wait_done {
             debug!("{:?} was done", wait);
         } else {
@@ -964,6 +995,7 @@ impl InitActionContext {
         wait_done
     }
 
+    // TODO: This is equivalent between existence and work kinds, I think
     fn check_wait_satisfied(&self, wait: &AnalysisStateWaitDefinition)
                             -> AnalysisStateResponse {
         let mut achieved = true;
