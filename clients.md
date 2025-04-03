@@ -102,8 +102,20 @@ Notifications:
   semantic errors and information is used. Usually you would precede this with
   a '\$getKnownContexts' request to find which paths are available, and for which
   contexts are already active. Details on semantic analysis is provided
-  [here](CONTRIBUTING.md#analysis) and the exact parameters of the notifications
-  are provided [in source](./src/actions/notifications.rs#L253-L257).
+  [here](CONTRIBUTING.md#analysis). Parameters are:
+  ```typescript
+  interface ContextDefinitionKindParam {
+      device: DocumentUri;
+  }
+
+  interface ChangeActiveContextsParams {
+      activeContexts: ContextDefinitionKindParam[];
+      // Specifies tge document for which 'activeContexts' should be the
+      // only active contexts. If not set, 'activeContexts' should be the
+      // only active contexts for all files
+      uri?: DocumentUri;
+  }
+  ```
 
 Requests:
 * '$/getKnownContexts'
@@ -111,11 +123,38 @@ Requests:
   paths, to obtain the paths with device declarations that import any file on
   the original list, directly or indirectly, together with information
   about which of those paths are used for semantic errors or information.
-  Details on parameter format is available [in source](./src/actions/requests.rs#L714-L717).
+  Parameters are:
+  ```typescript
+  interface GetKnownContextsParams {
+      paths?: DocumentUri[];
+  }
+  ```
+  'paths' specifies the paths for which the known contexts should be reported,
+  will report all contexts if paths is empty or not set.
+  The response is
+  ```typescript
+  interface ContextDefinitionKindParam {
+      // The URI of the known context
+      device: DocumentUri;
+  }
+  interface ContextDefinitionParam {
+      kind: ContextDefinitionKindParam;
+      // 'true' if the context is active on the server
+      active: boolean;
+      // 'true' if the server has an available device analysis
+      // for this context
+      ready: boolean;
+  }
+  export type GetKnownContextsResponse = ContextDefinitionParam[];
+  ```
 
-From Server to Client, these notifcations have had additional fields added:
-* `window/progress` - added `title: "Analysing", value: WorkDoneProgressBegin`. Sent when the first analysis starts
-* `window/progress` - added `title: "Analysing", value: WorkDoneProgressEnd`. Sent when the last analysis finishes
+From Server to Client, these notifcations have a specified data value:
+* `window/progress`
+  Uses the 'WorkDoneProgressBegin', 'WorkDoneProgressReport', and
+  'WorkDoneProgressEnd' schema. Notably it will signal a 'WorkDoneProgressBegin'
+  with the title "Analysing" when it starts on any long-term work, and a
+  'WorkDoneProgressEnd' with the corresponding id when it finishes all such
+  work.
 
 ## Resources
 
