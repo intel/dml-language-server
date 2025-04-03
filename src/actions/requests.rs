@@ -7,6 +7,7 @@ use log::{info, debug, error, trace, warn};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashSet;
+use std::path::Path;
 use std::sync::Arc;
 
 use crate::actions::hover;
@@ -84,6 +85,7 @@ fn warn_miss_lookup(error: AnalysisLookupError, file: Option<&str>) {
 }
 
 fn response_maybe_with_limitations<I, R>(
+    path: &Path,
     response: R,
     limitations: I,
     ctx: &InitActionContext)
@@ -97,11 +99,13 @@ where
             WarningFrequency::Never => vec![],
             WarningFrequency::Once => {
                 let filtered = limitations.into_iter()
-                    .filter(|lim|!ctx.sent_warnings.lock().unwrap()
-                            .contains(lim))
+                    .filter(|lim|
+                            !ctx.sent_warnings.lock().unwrap()
+                            .contains(&(lim.issue_num, path.to_path_buf())))
                     .collect::<Vec<_>>();
                 ctx.sent_warnings.lock().unwrap()
-                    .extend(filtered.iter().cloned());
+                    .extend(filtered.iter().map(
+                        |lim|(lim.issue_num, path.to_path_buf())));
                 filtered
             },
             _ => limitations.into_iter().collect(),
@@ -516,6 +520,9 @@ impl RequestAction for GotoImplementation {
                     .collect();
                 info!("Requested implementations are {:?}", lsp_locations);
                 Ok(response_maybe_with_limitations(
+                    // NOTE: this ends up being the client-path, which is
+                    // actually what we want
+                    &fp.path(),
                     Some(GotoImplementationResponse::Array(lsp_locations)),
                     limitations,
                     &ctx))
@@ -569,6 +576,7 @@ impl RequestAction for GotoDeclaration {
                     .collect();
                 info!("Requested declarations are {:?}", lsp_locations);
                 Ok(response_maybe_with_limitations(
+                    &fp.path(),
                     Some(GotoDefinitionResponse::Array(lsp_locations)),
                     limitations,
                     &ctx))
@@ -622,6 +630,7 @@ impl RequestAction for GotoDefinition {
                     .collect();
                 info!("Requested definitions are {:?}", lsp_locations);
                 Ok(response_maybe_with_limitations(
+                    &fp.path(),
                     Some(GotoDefinitionResponse::Array(lsp_locations)),
                     limitations,
                     &ctx))
@@ -674,6 +683,7 @@ impl RequestAction for References {
                     .collect();
                 info!("Requested references are {:?}", lsp_locations);
                 Ok(response_maybe_with_limitations(
+                    &fp.path(),
                     lsp_locations,
                     limitations,
                     &ctx))

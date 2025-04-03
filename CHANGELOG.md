@@ -14,6 +14,8 @@
   server output from server message
 - Goto-definition/declaration/implementation/references will now try to wait
   for ongoing device analysis on the file before responding.
+- The DLS warning message setting 'once' will now warn once per file-warning
+  combination, rather than once per warning.
 
 ## 0.9.8
 - Added "warning" as a valid log statement type.
