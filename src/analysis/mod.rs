@@ -77,7 +77,9 @@ pub struct FileSpec<'a> {
 
 pub const IMPLICIT_IMPORTS: [&str; 2] = ["dml-builtins.dml",
                                          "simics/device-api.dml"];
-
+// The issue number is used as the _unique identifier_ for this
+// limitation, and should be the number of an open GITHUB
+// issue.
 #[allow(dead_code)]
 const EXAMPLE: DLSLimitation =
     DLSLimitation {

@@ -31,8 +31,8 @@ use log::{info, debug, trace, error};
 use crossbeam::channel;
 
 // Maps in-process device jobs the timestamps of their dependencies
-type InFlightDeviceJobTracker = HashMap<u64, HashMap<CanonPath, SystemTime>>;
-type InFlightIsolatedJobTracker = HashSet<u64>;
+type InFlightDeviceJobTracker = HashMap<u64, (CanonPath, HashMap<CanonPath, SystemTime>)>;
+type InFlightIsolatedJobTracker = HashMap<u64, CanonPath>;
 // Queue up analysis tasks and execute them on the same thread (this is slower
 // than executing in parallel, but allows us to skip indexing tasks).
 pub struct AnalysisQueue {
@@ -115,7 +115,7 @@ impl AnalysisQueue {
                               tracking_token: JobToken) {
         match DeviceAnalysisJob::new(tracking_token, storage, bases, device) {
             Ok(newjob) => {
-                if let Some(previous_bases) = self.device_tracker
+                if let Some((_, previous_bases)) = self.device_tracker
                     .lock().unwrap()
                     .get(&newjob.hash) {
                         let mut newer_bases = false;
@@ -153,9 +153,9 @@ impl AnalysisQueue {
         {
             let mut queue = self.queue.lock().unwrap();
             // Remove any analysis jobs which this job obsoletes.
-            debug!("Pre-prune queue len: {}", queue.len());
+            trace!("Pre-prune queue len: {}", queue.len());
             queue.retain(|j|j.hash() != queuedjob.hash());
-            debug!("Post-prune queue len: {}", queue.len());
+            trace!("Post-prune queue len: {}", queue.len());
             queue.push(queuedjob);
         }
 
@@ -179,12 +179,14 @@ impl AnalysisQueue {
                         Some(QueuedJob::DeviceAnalysisJob(job)) => {
                             device_tracker.lock().unwrap().insert(
                                 job.hash,
-                                job.bases.iter().map(
-                                    |base|(base.stored.path.clone(),
-                                           base.timestamp)).collect());
+                                (job.root.path.clone(),
+                                 job.bases.iter().map(
+                                     |base|(base.stored.path.clone(),
+                                            base.timestamp)).collect()));
                         },
                         Some(QueuedJob::IsolatedAnalysisJob(job)) => {
-                            isolated_tracker.lock().unwrap().insert(job.hash);
+                            isolated_tracker.lock().unwrap()
+                                .insert(job.hash, job.path.clone());
                         },
                         _ => (),
                     }
@@ -214,7 +216,7 @@ impl AnalysisQueue {
                         }});
                 },
                 Some(QueuedJob::FileLinterJob(job)) => {
-                    job.process() 
+                    job.process()
                 },
                 Some(QueuedJob::DeviceAnalysisJob(job)) => {
                     thread::spawn({
@@ -245,6 +247,92 @@ impl AnalysisQueue {
                    queue_lock, device_lock, isolated_lock);
         }
         has_work
+    }
+
+    pub fn has_isolated_work(&self) -> bool {
+        {
+            let queue_lock = self.queue.lock().unwrap();
+            for job in queue_lock.iter() {
+                if matches!(job, QueuedJob::IsolatedAnalysisJob(_)) {
+                    return true;
+                }
+            }
+        }
+        let isolated_lock = self.isolated_tracker.lock().unwrap();
+        !isolated_lock.is_empty()
+    }
+
+    pub fn has_device_work(&self) -> bool {
+        {
+            let queue_lock = self.queue.lock().unwrap();
+            for job in queue_lock.iter() {
+                if matches!(job, QueuedJob::DeviceAnalysisJob(_)) {
+                    return true;
+                }
+            }
+        }
+        let device_lock = self.device_tracker.lock().unwrap();
+        !device_lock.is_empty()
+    }
+
+    pub fn working_on_isolated_for_paths(&self, paths: &HashSet<CanonPath>)
+                                         -> bool {
+        {
+            let queue_lock = self.queue.lock().unwrap();
+            for job in queue_lock.iter() {
+                if let QueuedJob::IsolatedAnalysisJob(ijob) = job {
+                    if paths.contains(&ijob.path) {
+                        debug!("Detected there is still isolated \
+                                work in queue on {:?}",
+                               &ijob.path);
+                        return true;
+                    }
+                }
+            }
+        }
+        {
+            let isolated_lock = self.isolated_tracker.lock().unwrap();
+            for (_, path) in isolated_lock.iter() {
+                if paths.contains(path) {
+                    debug!("Detected there is still isolated \
+                            work in-flight on {:?}",
+                           path);
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+    // NOTE: it is caller responsibility to check for device dependencies
+    pub fn working_on_device_for_paths(&self, paths: &HashSet<CanonPath>)
+                                       -> bool {
+        {
+            let queue_lock = self.queue.lock().unwrap();
+            for job in queue_lock.iter() {
+                if let QueuedJob::DeviceAnalysisJob(ijob) = job {
+                    if paths.contains(&ijob.root.path) {
+                        debug!("Detected there is still device \
+                                work in queue on {:?}",
+                               &ijob.root.path);
+                        return true;
+                    }
+                }
+            }
+        }
+        {
+            let device_lock = self.device_tracker.lock().unwrap();
+            for (path, _) in device_lock.values() {
+                if paths.contains(path) {
+                    debug!("Detected there is still device \
+                            work in-flight on {:?}",
+                           path);
+                    return true;
+                }
+            }
+        }
+
+        false
     }
 }
 
