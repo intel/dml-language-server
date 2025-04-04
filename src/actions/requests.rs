@@ -10,7 +10,8 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use crate::actions::hover;
-use crate::actions::{ContextDefinition, InitActionContext};
+use crate::actions::{AnalysisProgressKind, AnalysisCoverageSpec,
+                     ContextDefinition, InitActionContext};
 use crate::actions::notifications::ContextDefinitionKindParam;
 use crate::analysis::{ZeroSpan, ZeroFilePosition, SymbolRef};
 use crate::analysis::reference::ReferenceKind;
@@ -902,6 +903,10 @@ impl RequestAction for GetKnownContextsRequest {
             } else {
                 vec![]
             };
+        ctx.wait_for_state(
+            AnalysisProgressKind::Isolated,
+            AnalysisCoverageSpec::Paths(for_these_paths.clone())).ok();
+
         let contexts: HashSet<(ContextDefinition, bool, bool)>
             = if for_these_paths.is_empty() {
                 ctx.get_all_context_info()

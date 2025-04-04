@@ -97,7 +97,7 @@ impl<T> AsRef<T> for Inferrable<T> {
 /// common-code files that already have an active device context
 // TODO: support for non-all mode
 // NOTE: future synthetic isolated context settings are NOT included here
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
 pub enum DeviceContextMode {
     // By default, every encountered context will be marked as being
     // reported for

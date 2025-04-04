@@ -282,6 +282,9 @@ impl AnalysisQueue {
             for job in queue_lock.iter() {
                 if let QueuedJob::IsolatedAnalysisJob(ijob) = job {
                     if paths.contains(&ijob.path) {
+                        debug!("Detected there is still isolated \
+                                work in queue on {:?}",
+                               &ijob.path);
                         return true;
                     }
                 }
@@ -291,6 +294,9 @@ impl AnalysisQueue {
             let isolated_lock = self.isolated_tracker.lock().unwrap();
             for (_, path) in isolated_lock.iter() {
                 if paths.contains(path) {
+                    debug!("Detected there is still isolated \
+                            work in-flight on {:?}",
+                           path);
                     return true;
                 }
             }
@@ -306,6 +312,9 @@ impl AnalysisQueue {
             for job in queue_lock.iter() {
                 if let QueuedJob::DeviceAnalysisJob(ijob) = job {
                     if paths.contains(&ijob.root.path) {
+                        debug!("Detected there is still device \
+                                work in queue on {:?}",
+                               &ijob.root.path);
                         return true;
                     }
                 }
@@ -315,6 +324,9 @@ impl AnalysisQueue {
             let device_lock = self.device_tracker.lock().unwrap();
             for (path, _) in device_lock.values() {
                 if paths.contains(path) {
+                    debug!("Detected there is still device \
+                            work in-flight on {:?}",
+                           path);
                     return true;
                 }
             }

@@ -891,29 +891,31 @@ impl InitActionContext {
 
     pub fn wait_for_state(&self,
                           progress_kind: AnalysisProgressKind,
-                          coverage: AnalysisCoverageSpec)
-                          -> Result<AnalysisStateResponse,
-                                    crossbeam::channel::RecvError> {
-        let (sender, receiver) = channel::unbounded();
-        let wait = AnalysisStateWaitDefinition {
-            progress_kind,
-            coverage,
-            response: sender,
-        };
-        if self.check_wait(&wait) {
-            Ok(self.check_wait_satisfied(&wait))
-        } else {
-            self.add_state_wait(wait);
-            loop {
-                match receiver.recv() {
-                    Ok(AnalysisStateResponse::Ping) => (),
-                    r => return r,
+                          coverage: AnalysisCoverageSpec) ->
+        Result<AnalysisStateResponse, crossbeam::channel::RecvError> {
+            let (sender, receiver) = channel::unbounded();
+            let wait = AnalysisStateWaitDefinition {
+                progress_kind,
+                coverage,
+                response: sender,
+            };
+            if self.check_wait(&wait) {
+                debug!("Wait {:?} was immediately completed", wait);
+                Ok(self.check_wait_satisfied(&wait))
+            } else {
+                debug!("Wait {:?} needs to wait", wait);
+                self.add_state_wait(wait);
+                loop {
+                    match receiver.recv() {
+                        Ok(AnalysisStateResponse::Ping) => (),
+                        r => return r,
+                    }
                 }
             }
         }
-    }
 
     fn check_wait(&self, wait: &AnalysisStateWaitDefinition) -> bool {
+        debug!("Checking wait {:?}", wait);
         let mut wait_done = true;
         let analysis = self.analysis.lock().unwrap();
         let queue = &self.analysis_queue;
@@ -953,6 +955,11 @@ impl InitActionContext {
             if wait.progress_kind != AnalysisProgressKind::Isolated {
                 wait_done = wait_done && !queue.has_device_work();
             }
+        }
+        if wait_done {
+            debug!("{:?} was done", wait);
+        } else {
+            debug!("{:?} not done", wait);
         }
         wait_done
     }

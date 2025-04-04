@@ -6,7 +6,7 @@
 
 use crate::actions::{notifications, requests, ActionContext};
 use crate::analysis::IMPLICIT_IMPORTS;
-use crate::config::{Config, DEPRECATED_OPTIONS};
+use crate::config::{Config, DeviceContextMode, DEPRECATED_OPTIONS};
 use crate::file_management::CanonPath;
 use crate::lsp_data;
 use crate::lsp_data::{
@@ -366,6 +366,24 @@ impl<O: Output> LsService<O> {
                                                      requests) => {
                     debug!("Received isolated analysis of {:?}", path);
                     if let ActionContext::Init(ctx) = &mut self.ctx {
+                        // hack where we try to activate a device context
+                        // as early as we possibly can, unless device context
+                        // mode _requires_ that we wait
+                        {
+                            if ctx.analysis.lock().unwrap()
+                                .get_isolated_analysis(&path)
+                                .map_or(false, |a|a.is_device_file()) {
+                                    // We cannot be sure that all the imported are
+                                    // uncovered by contexts until we know
+                                    // what all the imported files are, which
+                                    // requires more info than we might have here
+                                    if ctx.config.lock().unwrap()
+                                        .new_device_context_mode
+                                        != DeviceContextMode::First {
+                                            ctx.maybe_add_device_context(&path);
+                                        }
+                                }
+                        }
                         let config = ctx.config.lock().unwrap().to_owned();
                         ctx.report_errors(&path, &self.output);
                         for file in requests {
