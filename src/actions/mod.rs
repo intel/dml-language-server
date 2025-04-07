@@ -541,6 +541,7 @@ impl InitActionContext {
                     out.clone());
                 notifier.notify_end_progress();
                 self.maybe_warn_missing_builtins(out);
+                *self.current_notifier.lock().unwrap() = None;
             }
         }
     }

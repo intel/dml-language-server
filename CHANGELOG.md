@@ -16,6 +16,7 @@
   for ongoing device analysis on the file before responding.
 - The DLS warning message setting 'once' will now warn once per file-warning
   combination, rather than once per warning.
+- The DLS will no longer multi-report 'WorkDoneProgressEnd'.
 
 ## 0.9.8
 - Added "warning" as a valid log statement type.
