@@ -51,7 +51,7 @@ use crate::vfs::Vfs;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 
-mod dispatch;
+pub mod dispatch;
 pub mod io;
 pub mod message;
 

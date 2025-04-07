@@ -480,6 +480,10 @@ impl RequestAction for HoverRequest {
 impl RequestAction for GotoImplementation {
     type Response = ResponseWithMessage<Option<GotoImplementationResponse>>;
 
+    fn timeout() -> std::time::Duration {
+        crate::server::dispatch::DEFAULT_REQUEST_TIMEOUT * 5
+    }
+
     fn fallback_response() -> Result<Self::Response, ResponseError> {
         Ok(None.into())
     }
@@ -540,6 +544,10 @@ impl RequestAction for GotoImplementation {
 impl RequestAction for GotoDeclaration {
     type Response = ResponseWithMessage<Option<GotoDeclarationResponse>>;
 
+    fn timeout() -> std::time::Duration {
+        crate::server::dispatch::DEFAULT_REQUEST_TIMEOUT * 5
+    }
+
     fn fallback_response() -> Result<Self::Response, ResponseError> {
         Ok(None.into())
     }
@@ -594,6 +602,10 @@ impl RequestAction for GotoDeclaration {
 impl RequestAction for GotoDefinition {
     type Response = ResponseWithMessage<Option<GotoDefinitionResponse>>;
 
+    fn timeout() -> std::time::Duration {
+        crate::server::dispatch::DEFAULT_REQUEST_TIMEOUT * 5
+    }
+
     fn fallback_response() -> Result<Self::Response, ResponseError> {
         Ok(None.into())
     }
@@ -647,6 +659,10 @@ impl RequestAction for GotoDefinition {
 
 impl RequestAction for References {
     type Response = ResponseWithMessage<Vec<Location>>;
+
+    fn timeout() -> std::time::Duration {
+        crate::server::dispatch::DEFAULT_REQUEST_TIMEOUT * 5
+    }
 
     fn fallback_response() -> Result<Self::Response, ResponseError> {
         Ok(vec![].into())
@@ -906,6 +922,10 @@ impl LSPRequest for GetKnownContextsRequest {
 
 impl RequestAction for GetKnownContextsRequest {
     type Response = Vec<ContextDefinitionParam>;
+
+    fn timeout() -> std::time::Duration {
+        crate::server::dispatch::DEFAULT_REQUEST_TIMEOUT * 10
+    }
 
     fn fallback_response() -> Result<Self::Response, ResponseError> {
         Err(ResponseError::Empty)
