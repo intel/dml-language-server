@@ -40,6 +40,7 @@ use lsp_types::{
     WorkspaceFoldersServerCapabilities,
 };
 use crossbeam::channel;
+use serde::Serialize;
 use serde_json::Value;
 
 use std::path::{Path, PathBuf};
@@ -630,13 +631,25 @@ pub enum ServerStateChange {
     Break { exit_code: i32 },
 }
 
+#[derive(Eq, PartialEq, Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExperimentalFeatures {
+    context_control: bool,
+}
+
+fn experimental_caps() -> Value {
+    serde_json::to_value(ExperimentalFeatures {
+        context_control: true
+    }).unwrap()
+}
+
 fn server_caps(_ctx: &ActionContext) -> ServerCapabilities {
     ServerCapabilities {
         call_hierarchy_provider: None,
         declaration_provider: Some(DeclarationCapability::Simple(true)),
         diagnostic_provider: None,
         document_link_provider: None,
-        experimental: None,
+        experimental: Some(experimental_caps()),
         inlay_hint_provider: None,
         inline_value_provider: None,
         linked_editing_range_provider: None,

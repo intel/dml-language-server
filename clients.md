@@ -148,6 +148,16 @@ Requests:
   export type GetKnownContextsResponse = ContextDefinitionParam[];
   ```
 
+Note that since older version of the language server did not know about these
+notifications/requests, you can check if the server you are working towards
+supports these by checking if the 'experimental' field of the server
+capabilities contains at least this field:
+```
+interface ExperimentalServerCapabilities {
+    contextControl = true;
+}
+```
+
 From Server to Client, these notifcations have a specified data value:
 * `window/progress`
   Uses the 'WorkDoneProgressBegin', 'WorkDoneProgressReport', and
