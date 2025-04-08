@@ -1,8 +1,11 @@
 use std::convert::TryInto;
 
-use crate::analysis::parsing::{statement::{self, CompoundContent, ForContent,
-                               SwitchCase, WhileContent, SwitchContent},
-                               structure::ObjectStatementsContent,
+use crate::analysis::parsing::{expression::{CastContent, FunctionCallContent, ParenExpressionContent},
+                               lexer::TokenKind,
+                               statement::{self, CompoundContent, DoContent, ForContent, ForeachContent,
+                                           IfContent, SwitchCase, SwitchContent, WhileContent},
+                               structure::{MethodContent, ObjectStatementsContent},
+                               tree::TreeElementTokenIterator,
                                types::{BitfieldsContent, LayoutContent, StructTypeContent}};
 use crate::span::{Range, ZeroIndexed};
 use crate::analysis::LocalDMLError;
@@ -213,6 +216,7 @@ impl IN3Rule {
     {
         if !self.enabled { return; }
         let Some(args) = args else { return; };
+        if args.members_ranges.is_empty() { return; }
         if args.lbrace.row_start == args.rbrace.row_start ||
             args.lbrace.row_start == args.members_ranges[0].row_start { return; }
         for member_range in args.members_ranges {
@@ -378,6 +382,164 @@ impl IN4Rule {
         }
     }
 }
+
+
+pub struct IN5Rule {
+    pub enabled: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct IN5Options {}
+
+pub struct IN5Args {
+    members_ranges: Vec<ZeroRange>,
+    lparen: ZeroRange,
+}
+
+impl IN5Args {
+    fn filter_out_parenthesized_ranges(expression_tokens: TreeElementTokenIterator) -> Vec<ZeroRange> {
+        let mut token_ranges: Vec<ZeroRange> = vec![];
+        let mut paren_depth = 0;
+        // paren_depth is used to identify nested
+        // parenthesized expressions within other expressions
+        // and avoid double checking this type, given
+        // ParenExpressionContent already checks in5 on its own
+        for token in expression_tokens {
+            match token.kind {
+                TokenKind::LParen => {
+                    paren_depth += 1;
+                    token_ranges.push(token.range);
+                },
+                TokenKind::RParen => paren_depth-=1,
+                _ => { if paren_depth == 0 { token_ranges.push(token.range); }
+                }
+            }
+        }
+        token_ranges
+    }
+
+    pub fn from_for(node: &ForContent) -> Option<IN5Args> {
+        // For loop has three parts within parentheses: pre, cond, and post
+        let mut filtered_member_ranges: Vec<ZeroRange> = vec![];
+        filtered_member_ranges.append(&mut Self::filter_out_parenthesized_ranges(node.pre.tokens()));
+        filtered_member_ranges.push(node.lsemi.range());
+        filtered_member_ranges.append(&mut Self::filter_out_parenthesized_ranges(node.cond.tokens()));
+        filtered_member_ranges.push(node.rsemi.range());
+        filtered_member_ranges.append(&mut Self::filter_out_parenthesized_ranges(node.post.tokens()));
+
+        Some(IN5Args {
+            members_ranges: filtered_member_ranges,
+            lparen: node.lparen.range(),
+        })
+    }
+
+    pub fn from_foreach(node: &ForeachContent) -> Option<IN5Args> {
+        Some(IN5Args {
+            members_ranges: Self::filter_out_parenthesized_ranges(node.expression.tokens()),
+            lparen: node.lparen.range(),
+        })
+    }
+
+    pub fn from_function_call(node: &FunctionCallContent) -> Option<IN5Args> {
+        let mut filtered_member_ranges: Vec<ZeroRange> = vec![];
+        for (arg, _comma) in node.arguments.iter() {
+            filtered_member_ranges.append(&mut Self::filter_out_parenthesized_ranges(arg.tokens()));
+        }
+        Some(IN5Args {
+            members_ranges: filtered_member_ranges,
+            lparen: node.lparen.range(),
+        })
+    }
+
+    pub fn from_paren_expression(node: &ParenExpressionContent)
+            -> Option<IN5Args> {
+        Some(IN5Args {
+            members_ranges: Self::filter_out_parenthesized_ranges(node.expr.tokens()),
+            lparen: node.lparen.range(),
+        })
+    }
+
+    pub fn from_method(node: &MethodContent) -> Option<IN5Args> {
+        let mut filtered_member_ranges: Vec<ZeroRange> = vec![];
+        for (arg, _comma) in node.arguments.iter() {
+            filtered_member_ranges.append(&mut Self::filter_out_parenthesized_ranges(arg.tokens()));
+        }
+        Some(IN5Args {
+            members_ranges: filtered_member_ranges,
+            lparen: node.lparen.range(),
+        })
+    }
+
+    pub fn from_while(node: &WhileContent) -> Option<IN5Args> {
+        Some(IN5Args {
+            members_ranges: Self::filter_out_parenthesized_ranges(node.cond.tokens()),
+            lparen: node.lparen.range(),
+        })
+    }
+
+    pub fn from_do_while(node: &DoContent) -> Option<IN5Args> {
+        Some(IN5Args {
+            members_ranges: Self::filter_out_parenthesized_ranges(node.cond.tokens()),
+            lparen: node.lparen.range(),
+        })
+    }
+
+    pub fn from_if(node: &IfContent) -> Option<IN5Args>  {
+        Some(IN5Args {
+            members_ranges: Self::filter_out_parenthesized_ranges(node.cond.tokens()),
+            lparen: node.lparen.range(),
+        })
+    }
+
+    pub fn from_cast(node: &CastContent) -> Option<IN5Args> {
+        let mut cast_member_tokens = node.from.tokens();
+        cast_member_tokens.append(&mut node.to.tokens());
+        Some(IN5Args {
+            members_ranges: Self::filter_out_parenthesized_ranges(cast_member_tokens),
+            lparen: node.lparen.range(),
+        })
+    }
+
+    pub fn from_switch(node: &SwitchContent) -> Option<IN5Args> {
+        Some(IN5Args {
+            members_ranges: Self::filter_out_parenthesized_ranges(node.expr.tokens()),
+            lparen: node.lparen.range(),
+        })
+    }
+}
+
+impl IN5Rule {
+    pub fn check<'a> (&self, acc: &mut Vec<DMLStyleError>,
+        args: Option<IN5Args>) {
+        if !self.enabled { return; }
+        let Some(args) = args else { return; };
+        let expected_line_start = args.lparen.col_start.0 + 1;
+        let mut last_row = args.lparen.row_start.0;
+
+        for member_range in args.members_ranges {
+            if member_range.row_start.0 != last_row {
+                last_row = member_range.row_start.0;
+                if member_range.col_start.0 != expected_line_start {
+                    self.push_err(acc, member_range);
+                }
+            }
+        }
+    }
+}
+
+impl Rule for IN5Rule {
+    fn name() -> &'static str {
+        "IN5"
+    }
+    fn description() -> &'static str {
+        "Continuation line broken inside a parenthesized expression not\
+         indented to line up with the corresponding parenthesis."
+    }
+    fn get_rule_type() -> RuleType {
+        RuleType::IN5
+    }
+}
+
 
 pub struct IN9Rule {
     pub enabled: bool,

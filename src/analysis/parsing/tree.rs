@@ -24,6 +24,7 @@ impl <T: TreeElement + ReferenceContainer + std::fmt::Debug>
     TreeElementMember for T {}
 
 pub type TreeElements<'t> = Vec<&'t dyn TreeElementMember>;
+pub type TreeElementTokenIterator = Vec<Token>;
 // TODO: Might be worth moving this specialization somewhere else
 pub type Vfs = GenVfs<()>;
 
@@ -89,6 +90,20 @@ pub trait TreeElement {
                       accumulator: &mut Vec<Reference>,
                       file: FileSpec<'a>) {
         self.default_references(accumulator, file);
+    }
+    // TODO: This places a hard requirement that subs()
+    // returns the sub nodes in order, which I _think_
+    // is true but is not currently tested
+    fn tokens(&self) -> TreeElementTokenIterator {
+        let mut coll = vec![];
+        self.gather_tokens(&mut coll);
+        coll
+    }
+
+    fn gather_tokens(&self, coll: &mut TreeElementTokenIterator) {
+        for sub in self.subs() {
+            sub.gather_tokens(coll);
+        }
     }
 
     fn style_check(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, mut aux: AuxParams) {
@@ -259,6 +274,11 @@ impl TreeElement for LeafToken {
         match self {
             Self::Actual(_) => vec![],
             Self::Missing(missingtok) => vec![missingtok.into()],
+        }
+    }
+    fn gather_tokens(&self, coll: &mut TreeElementTokenIterator) {
+        if let Self::Actual(t) = self {
+            coll.push(t.clone())
         }
     }
 }

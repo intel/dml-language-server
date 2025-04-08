@@ -20,7 +20,7 @@ use crate::lint::rules::spacing::{SpBracesArgs,
                                   NspInparenArgs,
                                   NspFunparArgs,
                                   SpPunctArgs};
-use crate::lint::rules::indentation::{IN3Args, IN4Args};
+use crate::lint::rules::indentation::{IN3Args, IN4Args, IN5Args};
 use crate::lint::{rules::CurrentRules, AuxParams, DMLStyleError};
 use crate::analysis::reference::{Reference, ReferenceKind};
 use crate::analysis::FileSpec;
@@ -239,6 +239,7 @@ impl TreeElement for MethodContent {
         rules.nsp_funpar.check(acc, NspFunparArgs::from_method(self));
         rules.nsp_inparen.check(acc, NspInparenArgs::from_method(self));
         rules.sp_punct.check(acc, SpPunctArgs::from_method(self));
+        rules.in5.check(acc, IN5Args::from_method(self));
     }
 }
 

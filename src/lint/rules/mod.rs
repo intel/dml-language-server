@@ -7,7 +7,7 @@ pub mod tests;
 use spacing::{SpBracesRule,
     SpPunctRule, NspFunparRule, NspInparenRule,
     NspUnaryRule, NspTrailingRule};
-use indentation::{LongLinesRule, IN2Rule, IN3Rule, IN4Rule, IN9Rule, IN10Rule};
+use indentation::{LongLinesRule, IN2Rule, IN3Rule, IN4Rule, IN5Rule, IN9Rule, IN10Rule};
 use crate::lint::{LintCfg, DMLStyleError};
 use crate::analysis::{LocalDMLError, parsing::tree::ZeroRange};
 
@@ -22,6 +22,7 @@ pub struct CurrentRules {
     pub in2: IN2Rule,
     pub in3: IN3Rule,
     pub in4: IN4Rule,
+    pub in5: IN5Rule,
     pub in9: IN9Rule,
     pub in10: IN10Rule
 }
@@ -38,6 +39,7 @@ pub fn  instantiate_rules(cfg: &LintCfg) -> CurrentRules {
         in2: IN2Rule { enabled: cfg.in2.is_some() },
         in3: IN3Rule::from_options(&cfg.in3),
         in4: IN4Rule::from_options(&cfg.in4),
+        in5: IN5Rule { enabled: cfg.in5.is_some() },
         in9: IN9Rule::from_options(&cfg.in9),
         in10: IN10Rule::from_options(&cfg.in10)
     }
@@ -72,6 +74,7 @@ pub enum RuleType {
     IN2,
     IN3,
     IN4,
+    IN5,
     IN6,
     IN9,
     IN10

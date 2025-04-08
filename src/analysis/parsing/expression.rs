@@ -24,6 +24,7 @@ use crate::lint::{DMLStyleError,
                                     SpPunctArgs},
                                     CurrentRules},
                                     AuxParams};
+use crate::lint::rules::indentation::{IN5Args};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct UnaryExpressionContent {
@@ -166,6 +167,9 @@ impl TreeElement for ParenExpressionContent {
     fn subs(&self) -> TreeElements<'_> {
         create_subs!(&self.lparen, &self.expr, &self.rparen)
     }
+    fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, _aux: AuxParams) {
+        rules.in5.check(acc, IN5Args::from_paren_expression(self));
+    }
 }
 
 impl Parse<ExpressionContent> for ParenExpressionContent{
@@ -214,6 +218,7 @@ impl TreeElement for FunctionCallContent {
         rules.nsp_funpar.check(acc, NspFunparArgs::from_function_call(self));
         rules.nsp_inparen.check(acc, NspInparenArgs::from_function_call(self));
         rules.sp_punct.check(acc, SpPunctArgs::from_function_call(self));
+        rules.in5.check(acc, IN5Args::from_function_call(self));
     }
 }
 
@@ -326,6 +331,9 @@ impl TreeElement for CastContent {
     fn subs(&self) -> TreeElements<'_> {
         create_subs!(&self.cast, &self.lparen, &self.from,
                      &self.comma, &self.to, &self.rparen)
+    }
+    fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, _aux: AuxParams) {
+        rules.in5.check(acc, IN5Args::from_cast(self));
     }
 }
 

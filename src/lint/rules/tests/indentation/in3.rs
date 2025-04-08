@@ -46,7 +46,7 @@ fn function_params_breaked_and_no_indent() {
 
 static FUNCTION_PARAMS_BADLY_BREAKED_AND_NO_INDENT: &str = "
 method some_function(int a,
-    int b)
+                     int b)
 {
 return a;
 }
@@ -59,7 +59,7 @@ fn function_params_badly_breaked_and_no_indent() {
 
 static INLINE_FUNCTION_PARAMS_BADLY_BREAKED_AND_NO_INDENT: &str = "
 inline method some_function(int a,
-    int b)
+                            int b)
 {
 return a;
 }
