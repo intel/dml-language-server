@@ -5,5 +5,12 @@
     "nsp_inparen": {},
     "nsp_unary": {},
     "nsp_trailing": {},
-    "long_lines": { "max_length": 80 }
+    "long_lines": { "max_length": 80 },
+    "in1": { "indentation_spaces": 4 },
+    "in2": {},
+    "in3": {},
+    "in4": {},
+    "in5": {},
+    "in9": {},
+    "in10": {}
 }

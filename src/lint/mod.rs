@@ -3,31 +3,21 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use log::{debug, error, trace};
 use serde::{Deserialize, Serialize};
-use rules::{instantiate_rules, CurrentRules};
-use rules::spacing::{SpBraceOptions, SpPunctOptions, NspFunparOptions,
-                     NspInparenOptions, NspUnaryOptions, NspTrailingOptions};
-use rules::indentation::{LongLineOptions};
+use rules::{instantiate_rules, CurrentRules, RuleType};
+use rules::{spacing::{SpBraceOptions, SpPunctOptions, NspFunparOptions,
+                      NspInparenOptions, NspUnaryOptions, NspTrailingOptions},
+                      indentation::{LongLineOptions, IN1Options, IN3Options,
+                                    IN2Options, IN4Options, IN5Options, IN9Options, IN10Options},
+                    };
 use crate::analysis::{DMLError, IsolatedAnalysis, LocalDMLError};
 use crate::analysis::parsing::tree::TreeElement;
 use crate::file_management::CanonPath;
 use crate::vfs::{Error, TextFile};
 use crate::analysis::parsing::structure::TopAst;
-use crate::lint::rules::indentation::{LongLinesRule, MAX_LENGTH_DEFAULT};
-
-impl LongLineOptions{
-    fn into_rule(options: &Option<LongLineOptions>) -> LongLinesRule {
-        match options {
-            Some(long_lines) => LongLinesRule {
-                enabled: true,
-                max_length: long_lines.max_length,
-            },
-            None => LongLinesRule {
-                enabled: false,
-                max_length: MAX_LENGTH_DEFAULT,
-            },
-        }
-    }
-}
+use crate::lint::rules::indentation::{MAX_LENGTH_DEFAULT,
+                                      INDENTATION_LEVEL_DEFAULT,
+                                      setup_indentation_size
+                                    };
 
 pub fn parse_lint_cfg(path: PathBuf) -> Result<LintCfg, String> {
     debug!("Reading Lint configuration from {:?}", path);
@@ -40,7 +30,10 @@ pub fn parse_lint_cfg(path: PathBuf) -> Result<LintCfg, String> {
 
 pub fn maybe_parse_lint_cfg(path: PathBuf) -> Option<LintCfg> {
     match parse_lint_cfg(path) {
-        Ok(cfg) => Some(cfg),
+        Ok(mut cfg) => {
+            setup_indentation_size(&mut cfg);
+            Some(cfg)
+        },
         Err(e) => {
             error!("Failed to parse linting CFG: {}", e);
             None
@@ -66,6 +59,20 @@ pub struct LintCfg {
     pub nsp_trailing: Option<NspTrailingOptions>,
     #[serde(default)]
     pub long_lines: Option<LongLineOptions>,
+    #[serde(default)]
+    pub in1: Option<IN1Options>,
+    #[serde(default)]
+    pub in2: Option<IN2Options>,
+    #[serde(default)]
+    pub in3: Option<IN3Options>,
+    #[serde(default)]
+    pub in4: Option<IN4Options>,
+    #[serde(default)]
+    pub in5: Option<IN5Options>,
+    #[serde(default)]
+    pub in9: Option<IN9Options>,
+    #[serde(default)]
+    pub in10: Option<IN10Options>,
 }
 
 impl Default for LintCfg {
@@ -77,11 +84,21 @@ impl Default for LintCfg {
             nsp_inparen: Some(NspInparenOptions{}),
             nsp_unary: Some(NspUnaryOptions{}),
             nsp_trailing: Some(NspTrailingOptions{}),
-            long_lines: Some(LongLineOptions {
-                max_length: MAX_LENGTH_DEFAULT,
-            }),
+            long_lines: Some(LongLineOptions{max_length: MAX_LENGTH_DEFAULT}),
+            in1: Some(IN1Options{indentation_spaces: INDENTATION_LEVEL_DEFAULT}),
+            in2: Some(IN2Options{}),
+            in3: Some(IN3Options{indentation_spaces: INDENTATION_LEVEL_DEFAULT}),
+            in4: Some(IN4Options{indentation_spaces: INDENTATION_LEVEL_DEFAULT}),
+            in5: Some(IN5Options{}),
+            in9: Some(IN9Options{indentation_spaces: INDENTATION_LEVEL_DEFAULT}),
+            in10: Some(IN10Options{indentation_spaces: INDENTATION_LEVEL_DEFAULT}),
         }
     }
+}
+
+pub struct DMLStyleError {
+    pub error: LocalDMLError,
+    pub rule_type: RuleType,
 }
 
 #[derive(Debug, Clone)]
@@ -121,18 +138,49 @@ impl LinterAnalysis {
 }
 
 pub fn begin_style_check(ast: TopAst, file: String, rules: &CurrentRules) -> Result<Vec<LocalDMLError>, Error> {
-    let mut linting_errors: Vec<LocalDMLError> = vec![];
-    ast.style_check(&mut linting_errors, rules);
+    let mut linting_errors: Vec<DMLStyleError> = vec![];
+    ast.style_check(&mut linting_errors, rules, AuxParams { depth: 0 });      
 
     // Per line checks
-    for (row, line) in file.lines().enumerate() {
+    let lines: Vec<&str> = file.lines().collect();
+    for (row, line) in lines.iter().enumerate() {
+        rules.in2.check(&mut linting_errors, row, line);
         rules.long_lines.check(&mut linting_errors, row, line);
         rules.nsp_trailing.check(&mut linting_errors, row, line);
     }
 
-    Ok(linting_errors)
+    post_process_linting_errors(&mut linting_errors);
+
+    Ok(linting_errors.into_iter().map(|e| e.error).collect())
 }
 
+fn post_process_linting_errors(errors: &mut Vec<DMLStyleError>) {
+    // Collect in2 ranges
+    let in2_ranges: Vec<_> = errors.iter()
+        .filter(|style_err| style_err.rule_type == RuleType::IN2)
+        .map(|style_err| style_err.error.range)
+        .collect();
+
+    // Remove linting errors that are in in2 rows
+    errors.retain(|style_err| {
+        !in2_ranges.iter().any(|range|
+            (range.row_start == style_err.error.range.row_start || range.row_end == style_err.error.range.row_end)
+            && style_err.rule_type != RuleType::IN2)
+    });
+}
+
+// AuxParams is an extensible struct.
+// It can be used for any data that needs
+// to be passed down the tree nodes
+// to where Rules can use such data.
+#[derive(Copy, Clone)]
+pub struct AuxParams {
+    // depth is used by the indentation rules for calculating
+    // the correct indentation level for a node in the AST.
+    // Individual nodes update depth to affect level of their
+    // nested TreeElements. See more in src/lint/README.md
+    pub depth: u32,
+}
 
 pub mod rules;
 pub mod tests {
