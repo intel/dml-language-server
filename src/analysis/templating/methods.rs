@@ -9,7 +9,7 @@ use crate::analysis::structure::types::DMLType;
 use crate::analysis::structure::objects::{MaybeAbstract, MethodArgument,
                                           MethodModifier, Method};
 use crate::analysis::structure::statements::{Statement, StatementKind};
-use crate::analysis::{DMLNamed, DMLError};
+use crate::analysis::{DeclarationSpan, DMLNamed, DMLError};
 use crate::analysis::templating::Declaration;
 use crate::analysis::templating::objects::DMLNamedMember;
 use crate::analysis::templating::types::{eval_type_simple, DMLResolvedType};
@@ -116,6 +116,7 @@ pub struct MethodDecl {
     pub method_args: Vec<DMLMethodArg>,
     pub return_types: Vec<DMLResolvedType>,
     pub body: Statement,
+    pub span: ZeroSpan,
 }
 
 impl MaybeAbstract for MethodDecl {
@@ -135,6 +136,12 @@ impl DMLNamedMember for MethodDecl {
 
     fn location(&self) -> &ZeroSpan {
         &self.name.span
+    }
+}
+
+impl DeclarationSpan for MethodDecl {
+    fn span(&self) -> &ZeroSpan {
+        &self.span
     }
 }
 
@@ -259,6 +266,7 @@ impl MethodDecl {
             throws: content.throws,
             method_args: eval_method_args(&content.arguments, report),
             return_types: eval_method_returns(&content.returns, report),
+            span: *content.span(),
         }
     }
 }
@@ -383,6 +391,15 @@ impl DMLNamedMember for DMLMethodRef {
     }
 }
 
+impl DeclarationSpan for DMLMethodRef {
+    fn span(&self) -> &ZeroSpan {
+        match self {
+            DMLMethodRef::TraitMethod(_, decl) => decl.span(),
+            DMLMethodRef::ConcreteMethod(decl) => decl.span(),
+        }
+    }
+ }
+
 // This is roughly equivalent with a non-codegenned method in DMLC
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DMLConcreteMethod {
@@ -447,5 +464,11 @@ impl MethodDeclaration for DMLConcreteMethod {
 impl MaybeAbstract for DMLConcreteMethod {
     fn is_abstract(&self) -> bool {
         self.decl.is_abstract()
+    }
+}
+
+impl DeclarationSpan for DMLConcreteMethod {
+    fn span(&self) -> &ZeroSpan {
+        self.decl.span()
     }
 }
