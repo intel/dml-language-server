@@ -240,6 +240,7 @@ pub struct InitActionContext {
     // maps files to the paths of device contexts they should be
     // analyzed under
     pub device_active_contexts: Arc<Mutex<ActiveDeviceContexts>>,
+    previously_checked_contexts: Arc<Mutex<ActiveDeviceContexts>>,
 
     prev_changes: Arc<Mutex<HashMap<PathBuf, i32>>>,
 
@@ -334,6 +335,7 @@ impl InitActionContext {
             compilation_info: Arc::default(),
             sent_warnings: Arc::default(),
             device_active_contexts: Arc::default(),
+            previously_checked_contexts: Arc::default(),
         }
     }
 
@@ -704,6 +706,16 @@ impl InitActionContext {
     }
 
     pub fn maybe_add_device_context(&self, path: &CanonPath) {
+        {
+            let mut previous_checks =
+                self.previously_checked_contexts.lock().unwrap();
+            let context = ContextDefinition::Device(path.clone());
+            if previous_checks.contains(&context) {
+                return;
+            } else {
+                previous_checks.insert(context);
+            }
+        }
         if match self.config.lock().unwrap().new_device_context_mode {
             DeviceContextMode::Always => true,
             DeviceContextMode::AnyNew => {
