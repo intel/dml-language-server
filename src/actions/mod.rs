@@ -424,8 +424,9 @@ impl InitActionContext {
 
     pub fn report_errors<O: Output>(&mut self, output: &O) {
         self.update_analysis();
+        let filter = Some(self.device_active_contexts.lock().unwrap().clone());
         let (isolated, device, lint) =
-            self.analysis.try_lock().unwrap().gather_errors(None);
+            self.analysis.try_lock().unwrap().gather_errors(filter.as_ref());
         let notifier = AnalysisDiagnosticsNotifier::new("indexing".to_string(),
                                                         output.clone());
         notifier.notify_begin_diagnostics();

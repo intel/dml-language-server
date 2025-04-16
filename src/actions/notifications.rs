@@ -287,7 +287,7 @@ impl BlockingNotificationAction for ChangeActiveContexts {
     fn handle<O: Output>(
         params: ChangeActiveContextsParams,
         ctx: &mut InitActionContext,
-        _out: O) -> Result<(), ResponseError> {
+        out: O) -> Result<(), ResponseError> {
         debug!("ChangeActiveContexts: {:?}", params);
         let contexts: Vec<ContextDefinition> = params.active_contexts
             .iter()
@@ -318,6 +318,8 @@ impl BlockingNotificationAction for ChangeActiveContexts {
             *ctx.device_active_contexts.lock().unwrap()
                 = devices;
         }
+        // Re-report errors, since what we report for might have changed
+        ctx.report_errors(&out);
         Ok(())
     }
 }
