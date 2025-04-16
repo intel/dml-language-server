@@ -18,10 +18,10 @@ use std::sync::{Arc, Mutex};
 use crate::actions::analysis_storage::AnalysisStorage;
 use crate::actions::analysis_queue::AnalysisQueue;
 use crate::actions::progress::{AnalysisProgressNotifier, ProgressNotifier};
-use crate::analysis::DLSLimitation;
+use crate::analysis::IMPLICIT_IMPORTS;
 use crate::analysis::structure::expressions::Expression;
 use crate::concurrency::{Jobs, ConcurrentJob};
-use crate::config::Config;
+use crate::config::{Config, DeviceContextMode};
 use crate::file_management::{PathResolver, CanonPath};
 use crate::lint::{LintCfg, maybe_parse_lint_cfg};
 use crate::lsp_data;
@@ -155,6 +155,58 @@ pub struct CompilationInfo {
 
 pub type CompilationInfoStorage = HashMap<CanonPath, CompilationInfo>;
 
+#[derive(PartialEq, Debug)]
+pub enum AnalysisProgressKind {
+    Isolated,
+    // NOTE: device implies waiting on isolated analysis
+    // for that file and any dependencies
+    Device,
+    // NOTE: this implies waiting on ALL isolated analysises,
+    // and then for all device dependencies that
+    // might trigger any of the paths specified
+    // This means that All|Device and All|DeviceDependencies
+    // are equivalent
+    DeviceDependencies,
+}
+
+#[derive(PartialEq, Debug)]
+pub enum AnalysisCoverageSpec {
+    Paths(Vec<CanonPath>),
+    All,
+}
+
+#[derive(PartialEq, Debug)]
+pub enum AnalysisWaitKind {
+    // Waits for work on the specified to finish
+    Work,
+    // Wait for the specified to exist at all, even if it may
+    // soon be out-of-date
+    Existence,
+}
+
+
+#[derive(PartialEq, Debug)]
+pub enum AnalysisStateResponse {
+    // The spec is true, AND the related analysises actually exist
+    Achieved,
+    // The spec is true, but we dont actually have all the anlysises
+    // that were requested
+    Satisfied,
+    // The server cancelled this wait, for whatever reason (currently unused)
+    Cancelled,
+    // Used to ping a channel to see if it is still alive, needed to drop
+    // waits in requests that time out
+    Ping,
+}
+
+#[derive(Debug)]
+pub struct AnalysisStateWaitDefinition {
+    progress_kind: AnalysisProgressKind,
+    coverage: AnalysisCoverageSpec,
+    wait_kind: AnalysisWaitKind,
+    response: channel::Sender<AnalysisStateResponse>,
+}
+
 /// Persistent context shared across all requests and actions after the DLS has
 /// been initialized.
 // NOTE: This is sometimes cloned before being passed to a handler
@@ -180,11 +232,17 @@ pub struct InitActionContext {
     pub direct_opens: Arc<Mutex<HashSet<CanonPath>>>,
     pub compilation_info: Arc<Mutex<CompilationInfoStorage>>,
 
+    // maps files to the paths of device contexts they should be
+    // analyzed under
+    pub device_active_contexts: Arc<Mutex<ActiveDeviceContexts>>,
+
     prev_changes: Arc<Mutex<HashMap<PathBuf, i32>>>,
+
+    active_waits: Arc<Mutex<Vec<AnalysisStateWaitDefinition>>>,
 
     pub config: Arc<Mutex<Config>>,
     pub lint_config: Arc<Mutex<LintCfg>>,
-    pub sent_warnings: Arc<Mutex<HashSet<DLSLimitation>>>,
+    pub sent_warnings: Arc<Mutex<HashSet<(u64, PathBuf)>>>,
     jobs: Arc<Mutex<Jobs>>,
     pub client_capabilities: Arc<lsp_data::ClientCapabilities>,
     pub has_notified_missing_builtins: bool,
@@ -213,6 +271,30 @@ impl UninitActionContext {
     }
 }
 
+#[derive(Clone, Eq, PartialEq, Hash, Debug)]
+pub enum ContextDefinition {
+    // The path here is the "topmost" file which the simulated context imports
+    Simulated(CanonPath), // TODO: Actually implement support for this
+    Device(CanonPath),
+}
+
+impl From<CanonPath> for ContextDefinition {
+    fn from(val: CanonPath) -> ContextDefinition {
+        ContextDefinition::Device(val)
+    }
+}
+
+impl ContextDefinition {
+    fn as_canon_path(&self) -> &CanonPath {
+        match self {
+            ContextDefinition::Simulated(p) => p,
+            ContextDefinition::Device(p) => p,
+        }
+    }
+}
+
+pub type ActiveDeviceContexts = HashSet<ContextDefinition>;
+
 impl InitActionContext {
     fn new(
         analysis: Arc<Mutex<AnalysisStorage>>,
@@ -240,11 +322,13 @@ impl InitActionContext {
             client_capabilities: Arc::new(client_capabilities),
             has_notified_missing_builtins: false,
             //client_supports_cmd_run,
+            active_waits: Arc::default(),
             shut_down: Arc::new(AtomicBool::new(false)),
             pid,
             workspace_roots: Arc::default(),
             compilation_info: Arc::default(),
             sent_warnings: Arc::default(),
+            device_active_contexts: Arc::default(),
         }
     }
 
@@ -331,6 +415,11 @@ impl InitActionContext {
         } else {
             trace!("Failed to lock config");
         }
+    }
+
+    pub fn report_errors<O: Output>(&mut self, path: &CanonPath, output: &O) {
+        self.update_analysis();
+        self.analysis.try_lock().unwrap().report_errors(path, output);
     }
 
     pub fn compilation_info_from_file(&self, path: &PathBuf) ->
@@ -452,6 +541,7 @@ impl InitActionContext {
                     out.clone());
                 notifier.notify_end_progress();
                 self.maybe_warn_missing_builtins(out);
+                *self.current_notifier.lock().unwrap() = None;
             }
         }
     }
@@ -518,6 +608,7 @@ impl InitActionContext {
     fn device_analyze<O: Output>(&mut self, device: &CanonPath, out: &O) {
         debug!("Wants device analysis of {:?}", device);
         self.maybe_start_progress(out);
+        self.maybe_add_device_context(device);
         let (job, token) = ConcurrentJob::new();
         self.add_job(job);
         let locked_analysis = &mut self.analysis.lock().unwrap();
@@ -528,6 +619,162 @@ impl InitActionContext {
             device,
             dependencies,
             token);
+    }
+
+    // (DeviceContextPath, IsActive, IsReady)
+    pub fn get_all_context_info(&self)
+                                -> HashSet<(ContextDefinition, bool, bool)> {
+        let mut analysis = self.analysis.lock().unwrap();
+        analysis.update_analysis(&self.construct_resolver());
+        let contexts = self.device_active_contexts.lock().unwrap();
+        analysis.device_triggers.values().flatten()
+            .map(|path|ContextDefinition::from(path.clone()))
+            .map(|con|{
+                let b = contexts.contains(&con);
+                let r = analysis.get_device_analysis(
+                    con.as_canon_path()).is_ok();
+                (con, b, r)
+            }).collect()
+    }
+
+    pub fn get_context_info(&self, path: &CanonPath)
+                            -> HashSet<(ContextDefinition, bool, bool)> {
+        let mut analysis = self.analysis.lock().unwrap();
+        analysis.update_analysis(&self.construct_resolver());
+        let contexts = self.device_active_contexts.lock().unwrap();
+        analysis.device_triggers.get(path)
+            .into_iter().flatten()
+            .map(|path|ContextDefinition::from(path.clone()))
+            .map(|con|{
+                let b = contexts.contains(&con);
+                let r = analysis.get_device_analysis(
+                    con.as_canon_path()).is_ok();
+                (con, b, r)
+            }).collect()
+    }
+
+    pub fn maybe_add_device_context(&self, path: &CanonPath) {
+        if match self.config.lock().unwrap().new_device_context_mode {
+            DeviceContextMode::Always => true,
+            DeviceContextMode::AnyNew => {
+                let mut any_uncontexted = false;
+                let analysis = self.analysis.lock().unwrap();
+                for dependency in analysis
+                    .device_dependencies
+                    .get(path)
+                    .iter().flat_map(|h|h.iter())
+                {
+                        let mut had_context = false;
+                    for device in analysis
+                        .device_triggers
+                        .get(dependency)
+                        .iter().flat_map(|h|h.iter())
+                    {
+                        if self.device_active_contexts.lock().unwrap()
+                            .contains(&device.clone().into()) {
+                                had_context = true;
+                                break;
+                            }
+                    }
+                    if !had_context {
+                        any_uncontexted = true;
+                        break;
+                    }
+                }
+                any_uncontexted
+            },
+            DeviceContextMode::First => {
+                let mut all_uncontexted = true;
+                let analysis = self.analysis.lock().unwrap();
+                for dependency in analysis
+                    .device_dependencies
+                    .get(path)
+                    .iter().flat_map(|h|h.iter())
+                // NOTE: do not include files that seem like core
+                // files in this. TODO: For now, just do implicit imports but
+                // things like 'utility.dml' should probably be included too
+                    .filter(|dep|
+                            !IMPLICIT_IMPORTS.iter().any(
+                                |ii|dep.file_name()
+                                    .and_then(|f|f.to_str()).unwrap() == *ii))
+                {
+                    let mut had_context = false;
+                    for device in analysis
+                        .device_triggers.get(dependency)
+                        .iter().flat_map(|h|h.iter())
+                    {
+                        if self.device_active_contexts.lock().unwrap()
+                            .contains(&device.clone().into()) {
+                                had_context = true;
+                                break;
+                            }
+                    }
+                    if had_context {
+                        all_uncontexted = false;
+                        break;
+                    }
+                }
+                all_uncontexted
+            },
+            DeviceContextMode::SameModule => {
+                let mut matched_dir = false;
+                let analysis = self.analysis.lock().unwrap();
+                for device in analysis.device_dependencies.keys() {
+                    if path.starts_with(device.parent().unwrap()) ||
+                        device.starts_with(path.parent().unwrap()) {
+                            matched_dir = true;
+                            break;
+                        }
+                }
+                matched_dir
+            },
+            DeviceContextMode::Never => false,
+        } {
+            debug!("Automatically activated device context at {}",
+                   path.to_str().unwrap());
+            self.device_active_contexts.lock().unwrap().insert(
+                ContextDefinition::Device(path.clone()));
+        }
+    }
+
+    // Updates active contexts in such a way that the only active contexts
+    // for path are the provided ones, effectively disabling all contexts
+    // that are available for the specified path but not
+    // provided
+    pub fn update_contexts(&self,
+                           path: &CanonPath,
+                           new_active_contexts: HashSet<ContextDefinition>) {
+        let all_device_contexts: Vec<CanonPath> =
+            self.analysis.lock().unwrap()
+            .device_triggers
+            .get(path)
+            .into_iter()
+            .flatten()
+            .cloned()
+            .collect();
+        let mut current_contexts = self.device_active_contexts.lock().unwrap();
+        current_contexts.retain(
+            |context|match context {
+                c @ ContextDefinition::Device(ref p) =>
+                    !all_device_contexts.contains(p)
+                    || new_active_contexts.contains(c),
+                // TODO: handle synthetic contexts
+                ContextDefinition::Simulated(_) => true,
+            });
+        for context in new_active_contexts {
+            match context {
+                ref c @ ContextDefinition::Device(ref p) =>
+                    if !all_device_contexts.contains(p) {
+                        error!("Tried to activate context {:?} for {:?},\
+                                but it is not a known device context for that \
+                                path", c, path);
+                    } else {
+                        current_contexts.insert(c.clone());
+                    },
+                // TODO: handle synthetic contexts
+                ContextDefinition::Simulated(_) => (),
+            }
+        }
     }
 
     pub fn maybe_trigger_lint_analysis<O: Output>(&mut self,
@@ -643,6 +890,170 @@ impl InitActionContext {
             span::Position::new(pos.row, end),
             file_path,
         )
+    }
+
+    fn add_state_wait(&self, def: AnalysisStateWaitDefinition) {
+        self.active_waits.lock().unwrap().push(def);
+    }
+
+    pub fn retain_live_waits(&self) {
+        self.active_waits.lock().unwrap().
+            retain(|w|w.response.send(AnalysisStateResponse::Ping).is_ok());
+    }
+
+    pub fn wait_for_state(&self,
+                          progress_kind: AnalysisProgressKind,
+                          wait_kind: AnalysisWaitKind,
+                          coverage: AnalysisCoverageSpec) ->
+        Result<AnalysisStateResponse, crossbeam::channel::RecvError> {
+            let (sender, receiver) = channel::unbounded();
+            let wait = AnalysisStateWaitDefinition {
+                progress_kind,
+                coverage,
+                wait_kind,
+                response: sender,
+            };
+            if self.check_wait(&wait) {
+                debug!("Wait {:?} was immediately completed", wait);
+                Ok(self.check_wait_satisfied(&wait))
+            } else {
+                debug!("Wait {:?} needs to wait", wait);
+                self.add_state_wait(wait);
+                loop {
+                    match receiver.recv() {
+                        Ok(AnalysisStateResponse::Ping) => (),
+                        r => return r,
+                    }
+                }
+            }
+        }
+
+    fn check_wait(&self, wait: &AnalysisStateWaitDefinition) -> bool {
+        debug!("Checking wait {:?}", wait);
+        let mut wait_done = true;
+        let analysis = self.analysis.lock().unwrap();
+        let queue = &self.analysis_queue;
+        if let AnalysisCoverageSpec::Paths(path) = &wait.coverage {
+            let mut isolated_paths: HashSet<CanonPath>
+                = path.iter().cloned().collect();
+            let mut device_paths: HashSet<CanonPath>
+                = HashSet::default();
+            match wait.progress_kind {
+                AnalysisProgressKind::Device => {
+                    device_paths.extend(isolated_paths.clone());
+                    let extra_paths: Vec<CanonPath> =
+                        isolated_paths.iter().flat_map(
+                            |p|analysis.all_dependencies(p, Some(p)))
+                        .collect();
+                    isolated_paths.extend(extra_paths);
+                },
+                AnalysisProgressKind::DeviceDependencies => {
+                    device_paths.extend(
+                        isolated_paths.iter().flat_map(
+                            |p|analysis.device_triggers
+                                .get(p).into_iter().flatten())
+                            .cloned());
+                    if wait.wait_kind == AnalysisWaitKind::Work {
+                        wait_done = !queue.has_isolated_work();
+                    } else {
+                        isolated_paths.extend(device_paths.iter().flat_map(
+                            |p|analysis.all_dependencies(p, Some(p))));
+                    }
+                },
+                _ => (),
+            }
+            if wait.wait_kind == AnalysisWaitKind::Work {
+                wait_done = wait_done &&
+                    !queue.working_on_isolated_for_paths(&isolated_paths);
+                wait_done = wait_done &&
+                    !queue.working_on_device_for_paths(&device_paths);
+            } else {
+                wait_done = wait_done && !isolated_paths.iter().any(
+                    |p|analysis.get_isolated_analysis(p).is_err());
+                wait_done = wait_done && !device_paths.iter().any(
+                    |p|analysis.get_device_analysis(p).is_err());
+            }
+        } else if wait.wait_kind == AnalysisWaitKind::Work {
+            wait_done = !queue.has_isolated_work();
+            if wait.progress_kind != AnalysisProgressKind::Isolated {
+                wait_done = wait_done && !queue.has_device_work();
+            }
+        } else {
+            // It's a little bit weird to wait for 'any' existence, but we
+            // interpret it as just the existence of anything
+            wait_done = !analysis.isolated_analysis.is_empty();
+            if wait.progress_kind != AnalysisProgressKind::Isolated {
+                wait_done = wait_done
+                    && !analysis.device_analysis.is_empty();
+            }
+        }
+
+        if wait_done {
+            debug!("{:?} was done", wait);
+        } else {
+            debug!("{:?} not done", wait);
+        }
+        wait_done
+    }
+
+    // TODO: This is equivalent between existence and work kinds, I think
+    fn check_wait_satisfied(&self, wait: &AnalysisStateWaitDefinition)
+                            -> AnalysisStateResponse {
+        let mut achieved = true;
+        let analysis = self.analysis.lock().unwrap();
+
+        if let AnalysisCoverageSpec::Paths(paths) = &wait.coverage {
+            for path in paths {
+                if analysis.get_isolated_analysis(path).is_err() {
+                    achieved = false;
+                    break;
+                }
+                match wait.progress_kind {
+                    AnalysisProgressKind::Device =>
+                        if analysis.get_device_analysis(path).is_err() {
+                            achieved = false;
+                            break;
+                        },
+                    AnalysisProgressKind::DeviceDependencies =>
+                        if !analysis.device_triggers.get(path)
+                        .into_iter().flatten().any(
+                            |t|analysis.get_device_analysis(t).is_ok()) {
+                            achieved = false;
+                            break;
+                        },
+                    _ => (),
+                }
+            }
+        } else {
+            // NOTE: A little difficult to reason what this means, but we will
+            // call it satisfied as long as at least one analysis exists
+            if wait.progress_kind == AnalysisProgressKind::Isolated {
+                achieved = !analysis.isolated_analysis.is_empty();
+            } else {
+                achieved = !analysis.device_analysis.is_empty();
+            }
+        }
+        if achieved {
+            AnalysisStateResponse::Achieved
+        } else {
+            AnalysisStateResponse::Satisfied
+        }
+    }
+
+
+    // NOTE: we could potentially optimize this by checking only
+    // the waits on an updated path, but the expectation is that
+    // the number of waits is small
+    pub fn check_state_waits(&self) {
+        self.active_waits.lock().unwrap().retain(
+            |wait|
+            if self.check_wait(wait) {
+                // Dont care about error here
+                wait.response.send(self.check_wait_satisfied(wait)).ok();
+                false
+            } else {
+                true
+            });
     }
 }
 

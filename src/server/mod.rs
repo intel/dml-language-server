@@ -6,7 +6,7 @@
 
 use crate::actions::{notifications, requests, ActionContext};
 use crate::analysis::IMPLICIT_IMPORTS;
-use crate::config::{Config, DEPRECATED_OPTIONS};
+use crate::config::{Config, DeviceContextMode, DEPRECATED_OPTIONS};
 use crate::file_management::CanonPath;
 use crate::lsp_data;
 use crate::lsp_data::{
@@ -40,6 +40,7 @@ use lsp_types::{
     WorkspaceFoldersServerCapabilities,
 };
 use crossbeam::channel;
+use serde::Serialize;
 use serde_json::Value;
 
 use std::path::{Path, PathBuf};
@@ -51,7 +52,7 @@ use crate::vfs::Vfs;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 
-mod dispatch;
+pub mod dispatch;
 pub mod io;
 pub mod message;
 
@@ -366,10 +367,26 @@ impl<O: Output> LsService<O> {
                                                      requests) => {
                     debug!("Received isolated analysis of {:?}", path);
                     if let ActionContext::Init(ctx) = &mut self.ctx {
+                        // hack where we try to activate a device context
+                        // as early as we possibly can, unless device context
+                        // mode _requires_ that we wait
+                        {
+                            if ctx.analysis.lock().unwrap()
+                                .get_isolated_analysis(&path)
+                                .map_or(false, |a|a.is_device_file()) {
+                                    // We cannot be sure that all the imported are
+                                    // uncovered by contexts until we know
+                                    // what all the imported files are, which
+                                    // requires more info than we might have here
+                                    if ctx.config.lock().unwrap()
+                                        .new_device_context_mode
+                                        != DeviceContextMode::First {
+                                            ctx.maybe_add_device_context(&path);
+                                        }
+                                }
+                        }
                         let config = ctx.config.lock().unwrap().to_owned();
-                        ctx.update_analysis();
-                        ctx.analysis.lock().unwrap().report_errors(
-                            &path, &self.output);
+                        ctx.report_errors(&path, &self.output);
                         for file in requests {
                             // A little bit of redundancy here, we need to
                             // pre-resolve this import into an absolute path
@@ -393,22 +410,20 @@ impl<O: Output> LsService<O> {
                             ctx.trigger_device_analysis(&path, &self.output);
                         }
                         ctx.maybe_trigger_lint_analysis(&path, &self.output);
+                        ctx.check_state_waits();
                     }
                 },
                 ServerToHandle::DeviceAnalysisDone(path) => {
                     debug!("Received device analysis of {:?}", path);
                     if let ActionContext::Init(ctx) = &mut self.ctx {
-                        ctx.update_analysis();
-                        ctx.analysis.try_lock().unwrap().report_errors(
-                            &path, &self.output);
+                        ctx.report_errors(&path, &self.output);
+                        ctx.check_state_waits();
                     }
                 },
                 ServerToHandle::LinterDone(path) => {
                     debug!("Received linter analysis of {:?}", path);
                     if let ActionContext::Init(ctx) = &mut self.ctx {
-                        ctx.update_analysis();
-                        ctx.analysis.try_lock().unwrap().report_errors(
-                            &path, &self.output);
+                        ctx.report_errors(&path, &self.output);
                     }
                 },
                 ServerToHandle::AnalysisRequest(importpath, context) => {
@@ -525,7 +540,8 @@ impl<O: Output> LsService<O> {
                 notifications::DidChangeConfiguration,
                 notifications::DidChangeWatchedFiles,
                 notifications::DidChangeWorkspaceFolders,
-                notifications::Cancel;
+                notifications::Cancel,
+                notifications::ChangeActiveContexts;
             blocking_requests:
                 ShutdownRequest,
                 InitializeRequest;
@@ -545,7 +561,8 @@ impl<O: Output> LsService<O> {
                 requests::GotoDeclaration,
                 requests::References,
                 requests::Completion,
-                requests::CodeLensRequest;
+                requests::CodeLensRequest,
+                requests::GetKnownContextsRequest;
         );
         Ok(())
     }
@@ -614,13 +631,25 @@ pub enum ServerStateChange {
     Break { exit_code: i32 },
 }
 
+#[derive(Eq, PartialEq, Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExperimentalFeatures {
+    context_control: bool,
+}
+
+fn experimental_caps() -> Value {
+    serde_json::to_value(ExperimentalFeatures {
+        context_control: true
+    }).unwrap()
+}
+
 fn server_caps(_ctx: &ActionContext) -> ServerCapabilities {
     ServerCapabilities {
         call_hierarchy_provider: None,
         declaration_provider: Some(DeclarationCapability::Simple(true)),
         diagnostic_provider: None,
         document_link_provider: None,
-        experimental: None,
+        experimental: Some(experimental_caps()),
         inlay_hint_provider: None,
         inline_value_provider: None,
         linked_editing_range_provider: None,

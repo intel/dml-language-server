@@ -3,14 +3,18 @@
 //! Requests that the DLS can respond to.
 
 use jsonrpc::error::{StandardError, standard_error};
-use log::{info, debug, error, trace};
+use log::{info, debug, error, trace, warn};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashSet;
+use std::path::Path;
 use std::sync::Arc;
 
 use crate::actions::hover;
-use crate::actions::InitActionContext;
+use crate::actions::{AnalysisProgressKind, AnalysisWaitKind,
+                     AnalysisCoverageSpec,
+                     ContextDefinition, InitActionContext};
+use crate::actions::notifications::ContextDefinitionKindParam;
 use crate::analysis::{ZeroSpan, ZeroFilePosition, SymbolRef};
 use crate::analysis::reference::ReferenceKind;
 use crate::analysis::symbols::SimpleSymbol;
@@ -51,33 +55,26 @@ use crate::server::{Ack, Output, Request, RequestAction,
 
 // Gives a slightly-better error message than the short-form one specified by
 // the error.
-// NOTE: The reason these are NOT affected by the show_warnings setting
-// (despite being sent as warnings) are that these indicate something wrong to
-// the user they can actually do something about, rather than pointing out
-// an inherent (current) limitation
-fn error_to_description(error: AnalysisLookupError, file: Option<&str>)
-                        -> String {
+fn warn_miss_lookup(error: AnalysisLookupError, file: Option<&str>) {
     match error {
         AnalysisLookupError::NoFile =>
-            format!(
+            error!(
                 "Could not find a real file corresponding to '{}'",
                 if let Some(f) = file { f.to_string() }
                 else { "the opened file".to_string() }),
         AnalysisLookupError::NoIsolatedAnalysis =>
-            format!(
-                "No syntactical analysis available{}, the server may not have \
-                 finished it yet.",
+            warn!(
+                "No syntactical analysis available{}",
                 if let Some(f) = file { format!(" for the file '{}'", f) }
                 else { "".to_string() }),
         AnalysisLookupError::NoLintAnalysis =>
-            format!(
-                "No linting analysis available{}, the server may not \
-                 have finished it yet.",
+            warn!(
+                "No linting analysis available{}",
                 if let Some(f) = file { format!(" for the file '{}'", f) }
                 else { "".to_string() }),
         AnalysisLookupError::NoDeviceAnalysis =>
-            format!(
-                "No semantic analysis available{}, you may need to open a file \
+            warn!(
+                "No semantic analysis available{}, may need to open a file \
                  with a 'device' declaration that imports{}, directly or \
                  indirectly.",
                 if let Some(f) = file { format!(" that includes the file '{}'", f) }
@@ -88,6 +85,7 @@ fn error_to_description(error: AnalysisLookupError, file: Option<&str>)
 }
 
 fn response_maybe_with_limitations<I, R>(
+    path: &Path,
     response: R,
     limitations: I,
     ctx: &InitActionContext)
@@ -101,11 +99,13 @@ where
             WarningFrequency::Never => vec![],
             WarningFrequency::Once => {
                 let filtered = limitations.into_iter()
-                    .filter(|lim|!ctx.sent_warnings.lock().unwrap()
-                            .contains(lim))
+                    .filter(|lim|
+                            !ctx.sent_warnings.lock().unwrap()
+                            .contains(&(lim.issue_num, path.to_path_buf())))
                     .collect::<Vec<_>>();
                 ctx.sent_warnings.lock().unwrap()
-                    .extend(filtered.iter().cloned());
+                    .extend(filtered.iter().map(
+                        |lim|(lim.issue_num, path.to_path_buf())));
                 filtered
             },
             _ => limitations.into_iter().collect(),
@@ -140,11 +140,14 @@ fn fp_to_symbol_refs(fp: &ZeroFilePosition,
     // but I keep it as separate here so that we could, perhaps,
     // returns different information for "no symbols found" and
     // "no info at pos"
-    info!("Looking up symbols/references at {:?}", fp);
+    debug!("Looking up symbols/references at {:?}", fp);
     let (context_sym, reference) = (analysis.context_symbol_at_pos(fp)?,
                                     analysis.reference_at_pos(fp)?);
-    info!("Got {:?} and {:?}", context_sym, reference);
-
+    debug!("Got {:?} and {:?}", context_sym, reference);
+    let canon_path = CanonPath::from_path_buf(fp.path()).unwrap();
+    // Rather than holding the lock throughout the request, clone
+    // the filter
+    let filter = Some(ctx.device_active_contexts.lock().unwrap().clone());
     let mut definitions = vec![];
     let analysises = analysis.all_device_analysises_containing_file(
         &CanonPath::from_path_buf(fp.path()).unwrap());
@@ -162,7 +165,9 @@ fn fp_to_symbol_refs(fp: &ZeroFilePosition,
                         (reference is {:?}), defaulted to symbol",
                        &fp, refer);
             }
-            for device in &analysises {
+            for device in analysis.filtered_device_analysises_containing_file(
+                &canon_path,
+                filter.as_ref()) {
                 definitions.extend(
                     device.lookup_symbols_by_contexted_symbol(
                         &sym, relevant_limitations)
@@ -179,7 +184,9 @@ fn fp_to_symbol_refs(fp: &ZeroFilePosition,
 
             let first_context = analysis.first_context_at_pos(fp).unwrap();
             let mut any_template_used = false;
-            for device in &analysises {
+            for device in analysis.filtered_device_analysises_containing_file(
+                &canon_path,
+                filter.as_ref()) {
                 debug!("reference info is {:?}", device.reference_info.keys());
                 // NOTE: This ends up being the correct place to warn users
                 // about references inside uninstantiated templates,
@@ -473,6 +480,10 @@ impl RequestAction for HoverRequest {
 impl RequestAction for GotoImplementation {
     type Response = ResponseWithMessage<Option<GotoImplementationResponse>>;
 
+    fn timeout() -> std::time::Duration {
+        crate::server::dispatch::DEFAULT_REQUEST_TIMEOUT * 5
+    }
+
     fn fallback_response() -> Result<Self::Response, ResponseError> {
         Ok(None.into())
     }
@@ -491,6 +502,12 @@ impl RequestAction for GotoImplementation {
             }
             maybe_fp.unwrap()
         };
+        ctx.wait_for_state(
+            AnalysisProgressKind::DeviceDependencies,
+            AnalysisWaitKind::Work,
+            AnalysisCoverageSpec::Paths(
+                std::iter::once(CanonPath::from_path_buf(fp.path()).unwrap())
+                    .collect())).ok();
 
         let mut limitations = HashSet::new();
         match fp_to_symbol_refs(&fp, &ctx, &mut limitations) {
@@ -507,16 +524,18 @@ impl RequestAction for GotoImplementation {
                     .collect();
                 info!("Requested implementations are {:?}", lsp_locations);
                 Ok(response_maybe_with_limitations(
+                    // NOTE: this ends up being the client-path, which is
+                    // actually what we want
+                    &fp.path(),
                     Some(GotoImplementationResponse::Array(lsp_locations)),
                     limitations,
                     &ctx))
             },
             Err(lookuperror) => {
                 let main_file_name = fp.path();
-                Ok(ResponseWithMessage::Warn(
-                    None,
-                    error_to_description(lookuperror,
-                                         main_file_name.to_str())))
+                warn_miss_lookup(lookuperror,
+                                 main_file_name.to_str());
+                Self::fallback_response()
             },
         }
     }
@@ -524,6 +543,10 @@ impl RequestAction for GotoImplementation {
 
 impl RequestAction for GotoDeclaration {
     type Response = ResponseWithMessage<Option<GotoDeclarationResponse>>;
+
+    fn timeout() -> std::time::Duration {
+        crate::server::dispatch::DEFAULT_REQUEST_TIMEOUT * 5
+    }
 
     fn fallback_response() -> Result<Self::Response, ResponseError> {
         Ok(None.into())
@@ -543,6 +566,13 @@ impl RequestAction for GotoDeclaration {
             }
             maybe_fp.unwrap()
         };
+        ctx.wait_for_state(
+            AnalysisProgressKind::DeviceDependencies,
+            AnalysisWaitKind::Work,
+            AnalysisCoverageSpec::Paths(
+                std::iter::once(CanonPath::from_path_buf(fp.path()).unwrap())
+                    .collect())).ok();
+
         let mut limitations = HashSet::new();
         match fp_to_symbol_refs(&fp, &ctx, &mut limitations) {
             Ok(symbols) => {
@@ -554,17 +584,16 @@ impl RequestAction for GotoDeclaration {
                     .collect();
                 info!("Requested declarations are {:?}", lsp_locations);
                 Ok(response_maybe_with_limitations(
+                    &fp.path(),
                     Some(GotoDefinitionResponse::Array(lsp_locations)),
                     limitations,
                     &ctx))
             },
             Err(lookuperror) => {
                 let main_file_name = fp.path();
-                Ok(ResponseWithMessage::Warn(
-                    None,
-                    error_to_description(lookuperror,
-                                         main_file_name.to_str())))
-
+                warn_miss_lookup(lookuperror,
+                                 main_file_name.to_str());
+                Self::fallback_response()
             },
         }
     }
@@ -572,6 +601,10 @@ impl RequestAction for GotoDeclaration {
 
 impl RequestAction for GotoDefinition {
     type Response = ResponseWithMessage<Option<GotoDefinitionResponse>>;
+
+    fn timeout() -> std::time::Duration {
+        crate::server::dispatch::DEFAULT_REQUEST_TIMEOUT * 5
+    }
 
     fn fallback_response() -> Result<Self::Response, ResponseError> {
         Ok(None.into())
@@ -591,6 +624,12 @@ impl RequestAction for GotoDefinition {
             }
             maybe_fp.unwrap()
         };
+        ctx.wait_for_state(
+            AnalysisProgressKind::DeviceDependencies,
+            AnalysisWaitKind::Work,
+            AnalysisCoverageSpec::Paths(
+                std::iter::once(CanonPath::from_path_buf(fp.path()).unwrap())
+                    .collect())).ok();
 
         let mut limitations = HashSet::new();
         match fp_to_symbol_refs(&fp, &ctx, &mut limitations) {
@@ -603,17 +642,16 @@ impl RequestAction for GotoDefinition {
                     .collect();
                 info!("Requested definitions are {:?}", lsp_locations);
                 Ok(response_maybe_with_limitations(
+                    &fp.path(),
                     Some(GotoDefinitionResponse::Array(lsp_locations)),
                     limitations,
                     &ctx))
             },
             Err(lookuperror) => {
                 let main_file_name = fp.path();
-                Ok(ResponseWithMessage::Warn(
-                    None,
-                    error_to_description(lookuperror,
-                                         main_file_name.to_str())))
-
+                warn_miss_lookup(lookuperror,
+                                 main_file_name.to_str());
+                Self::fallback_response()
             },
         }
     }
@@ -621,6 +659,10 @@ impl RequestAction for GotoDefinition {
 
 impl RequestAction for References {
     type Response = ResponseWithMessage<Vec<Location>>;
+
+    fn timeout() -> std::time::Duration {
+        crate::server::dispatch::DEFAULT_REQUEST_TIMEOUT * 5
+    }
 
     fn fallback_response() -> Result<Self::Response, ResponseError> {
         Ok(vec![].into())
@@ -640,6 +682,12 @@ impl RequestAction for References {
             }
             maybe_fp.unwrap()
         };
+        ctx.wait_for_state(
+            AnalysisProgressKind::DeviceDependencies,
+            AnalysisWaitKind::Work,
+            AnalysisCoverageSpec::Paths(
+                std::iter::once(CanonPath::from_path_buf(fp.path()).unwrap())
+                    .collect())).ok();
         let mut limitations = HashSet::new();
         match fp_to_symbol_refs(&fp, &ctx, &mut limitations) {
             Ok(symbols) => {
@@ -651,17 +699,16 @@ impl RequestAction for References {
                     .collect();
                 info!("Requested references are {:?}", lsp_locations);
                 Ok(response_maybe_with_limitations(
+                    &fp.path(),
                     lsp_locations,
                     limitations,
                     &ctx))
             },
             Err(lookuperror) => {
                 let main_file_name = fp.path();
-                Ok(ResponseWithMessage::Warn(
-                    vec![],
-                    error_to_description(lookuperror,
-                                         main_file_name.to_str())))
-
+                warn_miss_lookup(lookuperror,
+                                 main_file_name.to_str());
+                Self::fallback_response()
             },
         }
     }
@@ -847,5 +894,91 @@ impl RequestAction for CodeLensRequest {
     ) -> Result<Self::Response, ResponseError> {
         // TODO: figure out if we want to use this
         Self::fallback_response()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
+pub struct ContextDefinitionParam {
+    kind: ContextDefinitionKindParam,
+    active: bool,
+    ready: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct GetKnownContextsRequest;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GetKnownContextsParams {
+    // None or empty implies to get ALL contexts
+    pub paths: Option<Vec<lsp_types::Uri>>,
+}
+
+impl LSPRequest for GetKnownContextsRequest {
+    type Params = GetKnownContextsParams;
+    type Result = Option<Vec<(lsp_types::Uri, Vec<ContextDefinitionParam>)>>;
+
+    const METHOD: &'static str = "$/getKnownContexts";
+}
+
+impl RequestAction for GetKnownContextsRequest {
+    type Response = Vec<ContextDefinitionParam>;
+
+    fn timeout() -> std::time::Duration {
+        crate::server::dispatch::DEFAULT_REQUEST_TIMEOUT * 10
+    }
+
+    fn fallback_response() -> Result<Self::Response, ResponseError> {
+        Err(ResponseError::Empty)
+    }
+
+    fn handle(
+        ctx: InitActionContext,
+        params: Self::Params,
+    ) -> Result<Self::Response, ResponseError> {
+        let for_these_paths: Vec<CanonPath> =
+            if let Some(params) = params.paths {
+                params.iter().filter_map(
+                    |uri|parse_file_path!(&uri, "GetKnownContexts")
+                        .ok()
+                        .and_then(CanonPath::from_path_buf))
+                    .collect()
+            } else {
+                vec![]
+            };
+        ctx.wait_for_state(
+            AnalysisProgressKind::Isolated,
+            AnalysisWaitKind::Existence,
+            AnalysisCoverageSpec::Paths(for_these_paths.clone())).ok();
+
+        let contexts: HashSet<(ContextDefinition, bool, bool)>
+            = if for_these_paths.is_empty() {
+                ctx.get_all_context_info()
+            } else {
+                for_these_paths
+                    .into_iter()
+                    .flat_map(|canon|{
+                        let info = ctx.get_context_info(&canon);
+                        info.into_iter()
+                    })
+                    .collect()
+            };
+        Ok(contexts.into_iter().filter_map(
+            |(context, b, r)|
+            if let ContextDefinition::Device(dev) = context {
+                Some((dev, b, r))
+            } else {
+                None
+            })
+           .filter_map(
+               |(path, b, r)|
+               parse_uri(path.as_str()).ok()
+                   .map(|uri|
+                        ContextDefinitionParam {
+                            kind: ContextDefinitionKindParam::Device(uri),
+                            active: b,
+                            ready: r,
+                        }))
+           .collect()
+        )
     }
 }
