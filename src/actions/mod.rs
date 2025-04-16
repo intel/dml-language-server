@@ -10,6 +10,7 @@ use serde::Deserialize;
 use serde_json::json;
 
 use std::collections::{HashMap, HashSet};
+use std::cmp::Ordering;
 use std::path::{Path, PathBuf};
 use std::fs;
 use std::sync::atomic::AtomicBool;
@@ -17,7 +18,11 @@ use std::sync::{Arc, Mutex};
 
 use crate::actions::analysis_storage::AnalysisStorage;
 use crate::actions::analysis_queue::AnalysisQueue;
-use crate::actions::progress::{AnalysisProgressNotifier, ProgressNotifier};
+use crate::actions::progress::{AnalysisProgressNotifier,
+                               AnalysisDiagnosticsNotifier,
+                               DiagnosticsNotifier,
+                               ProgressNotifier};
+use crate::analysis::DMLError;
 use crate::analysis::IMPLICIT_IMPORTS;
 use crate::analysis::structure::expressions::Expression;
 use crate::concurrency::{Jobs, ConcurrentJob};
@@ -45,7 +50,7 @@ macro_rules! parse_file_path {
 macro_rules! ignore_non_file_uri {
     ($expr: expr, $uri: expr, $log_name: expr) => {
         $expr.map_err(|_| {
-            trace!("{}: Non-`file` URI scheme, ignoring: {:?}", $log_name, $uri);
+            log::trace!("{}: Non-`file` URI scheme, ignoring: {:?}", $log_name, $uri);
         })
     };
 }
@@ -235,6 +240,7 @@ pub struct InitActionContext {
     // maps files to the paths of device contexts they should be
     // analyzed under
     pub device_active_contexts: Arc<Mutex<ActiveDeviceContexts>>,
+    previously_checked_contexts: Arc<Mutex<ActiveDeviceContexts>>,
 
     prev_changes: Arc<Mutex<HashMap<PathBuf, i32>>>,
 
@@ -329,6 +335,7 @@ impl InitActionContext {
             compilation_info: Arc::default(),
             sent_warnings: Arc::default(),
             device_active_contexts: Arc::default(),
+            previously_checked_contexts: Arc::default(),
         }
     }
 
@@ -417,9 +424,54 @@ impl InitActionContext {
         }
     }
 
-    pub fn report_errors<O: Output>(&mut self, path: &CanonPath, output: &O) {
+    pub fn report_errors<O: Output>(&mut self, output: &O) {
         self.update_analysis();
-        self.analysis.try_lock().unwrap().report_errors(path, output);
+        let filter = Some(self.device_active_contexts.lock().unwrap().clone());
+        let (isolated, device, lint) =
+            self.analysis.try_lock().unwrap().gather_errors(filter.as_ref());
+        let notifier = AnalysisDiagnosticsNotifier::new("indexing".to_string(),
+                                                        output.clone());
+        notifier.notify_begin_diagnostics();
+        let files: HashSet<&PathBuf> =
+            isolated.keys()
+            .chain(device.keys())
+            .chain(lint.keys())
+            .collect();
+        let config = self.config.lock().unwrap();
+        let direct_opens = self.direct_opens.lock().unwrap();
+        for file in files {
+            let mut sorted_errors: Vec<DMLError> =
+                isolated.get(file).into_iter().flatten()
+                .chain(device.get(file).into_iter().flatten())
+                .chain(
+                    lint.get(file).into_iter().flatten()
+                        .filter(
+                            |_|!config.lint_direct_only
+                                || direct_opens.contains(
+                                    &file.clone().into())
+                        ))
+                .cloned()
+                .collect();
+            debug!("Reporting errors for {:?}", file);
+            // Sort by line
+            sorted_errors.sort_unstable_by(
+                |e1, e2|if e1.span.range > e2.span.range {
+                    Ordering::Greater
+                } else {
+                    Ordering::Less
+                });
+            match parse_uri(file.to_str().unwrap()) {
+                Ok(url) => notifier.notify_publish_diagnostics(
+                    PublishDiagnosticsParams::new(
+                        url,
+                        sorted_errors.iter()
+                            .map(DMLError::to_diagnostic).collect(),
+                        None)),
+                // The Url crate does not report interesting errors
+                Err(_) => error!("Could not convert {:?} to Url", file),
+            }
+        }
+        notifier.notify_end_diagnostics();
     }
 
     pub fn compilation_info_from_file(&self, path: &PathBuf) ->
@@ -654,6 +706,16 @@ impl InitActionContext {
     }
 
     pub fn maybe_add_device_context(&self, path: &CanonPath) {
+        {
+            let mut previous_checks =
+                self.previously_checked_contexts.lock().unwrap();
+            let context = ContextDefinition::Device(path.clone());
+            if previous_checks.contains(&context) {
+                return;
+            } else {
+                previous_checks.insert(context);
+            }
+        }
         if match self.config.lock().unwrap().new_device_context_mode {
             DeviceContextMode::Always => true,
             DeviceContextMode::AnyNew => {

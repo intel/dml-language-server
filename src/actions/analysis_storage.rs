@@ -2,11 +2,10 @@
 //  SPDX-License-Identifier: Apache-2.0 and MIT
 //! Stores currently completed analysis.
 
-use log::{debug, error, trace, info};
+use log::{debug, trace, info};
 
 use crossbeam::channel;
 
-use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::fmt;
@@ -15,8 +14,6 @@ use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
 
 use crate::actions::ContextDefinition;
-use crate::actions::progress::{DiagnosticsNotifier,
-                               AnalysisDiagnosticsNotifier};
 use crate::analysis::scope::{ContextedSymbol, ContextKey};
 use crate::analysis::structure::objects::Import;
 use crate::analysis::{IsolatedAnalysis, DeviceAnalysis, DMLError};
@@ -24,7 +21,7 @@ use crate::analysis::{IsolatedAnalysis, DeviceAnalysis, DMLError};
 use crate::lsp_data::*;
 use crate::analysis::parsing::tree::{ZeroSpan, ZeroFilePosition};
 use crate::analysis::reference::Reference;
-use crate::server::{Output, ServerToHandle};
+use crate::server::ServerToHandle;
 
 use crate::lint::LinterAnalysis;
 
@@ -155,6 +152,11 @@ impl std::fmt::Display for AnalysisLookupError {
 }
 
 impl Error for AnalysisLookupError {}
+
+// (IsolatedErrors, SemanticErrors, LintErrors)
+pub type FilteredErrors = (HashMap<PathBuf, HashSet<DMLError>>,
+                           HashMap<PathBuf, HashSet<DMLError>>,
+                           HashMap<PathBuf, HashSet<DMLError>>);
 
 impl AnalysisStorage {
     pub fn manipulate_isolated_analysises(&mut self) ->
@@ -691,82 +693,52 @@ impl AnalysisStorage {
         }
     }
 
-    pub fn report_errors<O: Output>(
-        &mut self,
-        path: &CanonPath,
-        output: &O) {
-        self.report_filtered_errors(path, output, None);
-    }
-
-    pub fn report_filtered_errors<O: Output>(
-        &mut self,
-        path: &CanonPath,
-        output: &O,
-        filter: Option<&HashSet<ContextDefinition>>) {
-        debug!("Reporting all errors for {:?}", path);
+    pub fn gather_errors(&mut self, filter: Option<&HashSet<ContextDefinition>>)
+                         -> FilteredErrors {
         // By this being a hashset, we will not double-report any errors
-        let mut dmlerrors:HashMap<PathBuf, HashSet<DMLError>>
+        let mut isolated_errors: HashMap<PathBuf, HashSet<DMLError>>
             = HashMap::default();
-        let all_files: HashSet<CanonPath> =
-            self.get_file_contexts(path).iter().flat_map(
-                |c|self.all_dependencies(path, c.as_ref())
-                    .into_iter()).collect();
+        let mut device_errors: HashMap<PathBuf, HashSet<DMLError>>
+            = HashMap::default();
+        let mut lint_errors: HashMap<PathBuf, HashSet<DMLError>>
+            = HashMap::default();
+        let all_files: HashSet<&CanonPath> =
+            self.device_analysis.keys()
+            .chain(self.isolated_analysis.keys())
+            .chain(self.lint_analysis.keys())
+            .collect();
         for file in all_files {
-            if let Some((file, errors))
-                = self.gather_local_errors(&file) {
-                    dmlerrors.entry(file)
-                        .or_default()
-                        .extend(errors.into_iter());
-                }
-            dmlerrors.entry(file.to_path_buf())
+            if let Some((ifile, ierrors)) = self.gather_local_errors(file) {
+                isolated_errors.entry(ifile)
+                    .or_default()
+                    .extend(ierrors.into_iter());
+            }
+
+            lint_errors.entry(file.clone().into())
                 .or_default()
-                .extend(self
-                    .gather_linter_errors(&file).into_iter());
-        }
-        // Only report device errors if this analysis context is active
-        if filter.map_or(true, |f|f.contains(&path.clone().into())) {
-            for (file, errors) in self.gather_device_errors(path) {
-                dmlerrors.entry(file.clone())
+                .extend(self.gather_linter_errors(file).into_iter());
+
+            // Only report device errors if this analysis context is active
+            if filter.map_or(true, |f|f.contains(&file.clone().into())) {
+                for (dfile, errors) in self.gather_device_errors(file) {
+                    device_errors.entry(file.clone().into())
                     .or_default()
                     .extend(errors.into_iter());
-                if !self.has_client_file(&PathBuf::from("dml-builtins.dml")) {
-                    dmlerrors.get_mut(&file).unwrap().insert(
-                        DMLError {
-                            span: ZeroSpan::invalid(&file),
-                            description: "Could not find required builtin \
-                                          file 'dml-builtins.dml'".to_string(),
-                            related: vec![],
-                            severity: Some(DiagnosticSeverity::ERROR),
-                        });
+                    if !self.has_client_file(&PathBuf::from("dml-builtins.dml")) {
+                        device_errors.entry(dfile.clone())
+                            .or_default().insert(
+                                DMLError {
+                                    span: ZeroSpan::invalid(dfile.clone()),
+                                    description: "Could not find required builtin \
+                                                  file 'dml-builtins.dml'".to_string(),
+                                    related: vec![],
+                                    severity: Some(DiagnosticSeverity::ERROR),
+                                });
+                    }
                 }
             }
         }
-
-        let notifier = AnalysisDiagnosticsNotifier::new("indexing".to_string(),
-                                                        output.clone());
-        notifier.notify_begin_diagnostics();
-        for (file, errors) in dmlerrors {
-            debug!("Reporting errors for {:?}", file);
-            let mut sorted_errors: Vec<DMLError> = errors.into_iter().collect();
-            // Sort by line
-            sorted_errors.sort_unstable_by(
-                |e1, e2|if e1.span.range > e2.span.range {
-                    Ordering::Greater
-                } else {
-                    Ordering::Less
-                });
-            match parse_uri(file.to_str().unwrap()) {
-                Ok(url) => notifier.notify_publish_diagnostics(
-                    PublishDiagnosticsParams::new(
-                        url,
-                        sorted_errors.iter()
-                            .map(DMLError::to_diagnostic).collect(),
-                        None)),
-                // The Url crate does not report interesting errors
-                Err(_) => error!("Could not convert {:?} to Url", file),
-            }
-        }
-        notifier.notify_end_diagnostics();
+        (isolated_errors, device_errors, lint_errors)
     }
 
     pub fn gather_linter_errors(&self, path: &CanonPath) -> Vec<DMLError> {
@@ -793,7 +765,7 @@ impl AnalysisStorage {
         // This is not a user-initiated request, so it's ok to drop
         // the error here
         self.get_device_analysis(path)
-            .ok().
-            map_or(HashMap::default(),|a|a.errors.clone())
+            .ok()
+            .map_or(HashMap::default(),|a|a.errors.clone())
     }
 }
