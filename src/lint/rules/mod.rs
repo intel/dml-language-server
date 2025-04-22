@@ -7,7 +7,7 @@ pub mod tests;
 use spacing::{SpBracesRule,
     SpPunctRule, NspFunparRule, NspInparenRule,
     NspUnaryRule, NspTrailingRule};
-use indentation::{LongLinesRule, IN2Rule, IN3Rule, IN4Rule, IN5Rule, IN9Rule, IN10Rule};
+use indentation::{LongLinesRule, IdentNoTabRule, IndentCodeBlockRule, IndentClosingBraceRule, IndentParenExprRule, IndentSwitchCaseRule, IndentEmptyLoopRule};
 use crate::lint::{LintCfg, DMLStyleError};
 use crate::analysis::{LocalDMLError, parsing::tree::ZeroRange};
 
@@ -19,12 +19,12 @@ pub struct CurrentRules {
     pub nsp_unary: NspUnaryRule,
     pub nsp_trailing: NspTrailingRule,
     pub long_lines: LongLinesRule,
-    pub in2: IN2Rule,
-    pub in3: IN3Rule,
-    pub in4: IN4Rule,
-    pub in5: IN5Rule,
-    pub in9: IN9Rule,
-    pub in10: IN10Rule
+    pub indent_no_tabs: IdentNoTabRule,
+    pub indent_code_block: IndentCodeBlockRule,
+    pub indent_closing_brace: IndentClosingBraceRule,
+    pub indent_paren_expr: IndentParenExprRule,
+    pub indent_switch_case: IndentSwitchCaseRule,
+    pub indent_empty_loop: IndentEmptyLoopRule
 }
 
 pub fn  instantiate_rules(cfg: &LintCfg) -> CurrentRules {
@@ -36,12 +36,12 @@ pub fn  instantiate_rules(cfg: &LintCfg) -> CurrentRules {
         nsp_unary: NspUnaryRule { enabled: cfg.nsp_unary.is_some() },
         nsp_trailing: NspTrailingRule { enabled: cfg.nsp_trailing.is_some() },
         long_lines: LongLinesRule::from_options(&cfg.long_lines),
-        in2: IN2Rule { enabled: cfg.in2.is_some() },
-        in3: IN3Rule::from_options(&cfg.in3),
-        in4: IN4Rule::from_options(&cfg.in4),
-        in5: IN5Rule { enabled: cfg.in5.is_some() },
-        in9: IN9Rule::from_options(&cfg.in9),
-        in10: IN10Rule::from_options(&cfg.in10)
+        indent_no_tabs: IdentNoTabRule { enabled: cfg.indent_no_tabs.is_some() },
+        indent_code_block: IndentCodeBlockRule::from_options(&cfg.indent_code_block),
+        indent_closing_brace: IndentClosingBraceRule::from_options(&cfg.indent_closing_brace),
+        indent_paren_expr: IndentParenExprRule { enabled: cfg.indent_paren_expr.is_some() },
+        indent_switch_case: IndentSwitchCaseRule::from_options(&cfg.indent_switch_case),
+        indent_empty_loop: IndentEmptyLoopRule::from_options(&cfg.indent_empty_loop)
     }
 }
 

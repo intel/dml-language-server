@@ -1,9 +1,9 @@
-mod in2;
-mod in3;
-mod in4;
-mod in5;
-mod in9;
-mod in10;
+mod no_tabs;
+mod code_block;
+mod closing_brace;
+mod paren_expr;
+mod switch_case;
+mod empty_loop;
 
 use crate::lint::rules::tests::common::assert_snippet;
 use crate::lint::LintCfg;

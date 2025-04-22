@@ -24,17 +24,17 @@ fn default_indentation_spaces() -> u32 {
 pub fn setup_indentation_size(cfg: &mut LintCfg) {
     let mut indentation_spaces = INDENTATION_LEVEL_DEFAULT;
 
-    if let Some(in1) = &cfg.in1 {
-        indentation_spaces = in1.indentation_spaces;
+    if let Some(size) = &cfg.indent_size {
+        indentation_spaces = size.indentation_spaces;
     }
-    if let Some(in3) = &mut cfg.in3 {
-        in3.indentation_spaces = indentation_spaces;
+    if let Some(indent_code_block) = &mut cfg.indent_code_block {
+        indent_code_block.indentation_spaces = indentation_spaces;
     }
-    if let Some(in9) = &mut cfg.in9 {
-        in9.indentation_spaces = indentation_spaces;
+    if let Some(indent_switch_case) = &mut cfg.indent_switch_case {
+        indent_switch_case.indentation_spaces = indentation_spaces;
     }
-    if let Some(in10) = &mut cfg.in10 {
-        in10.indentation_spaces = indentation_spaces;
+    if let Some(indent_empty_loop) = &mut cfg.indent_empty_loop {
+        indent_empty_loop.indentation_spaces = indentation_spaces;
     }
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -91,25 +91,25 @@ impl Rule for LongLinesRule {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct IN1Options {
+pub struct IndentSizeOptions {
     pub indentation_spaces: u32,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct IN2Options {}
+pub struct IdentNoTabOptions {}
 
-pub struct IN2Rule {
+pub struct IdentNoTabRule {
     pub enabled: bool,
 }
 
-impl IN2Rule {
+impl IdentNoTabRule {
     pub fn check(&self, acc: &mut Vec<DMLStyleError>, row: usize, line: &str) {
         if !self.enabled { return; }
         let rowu32 = row.try_into().unwrap();
 
         for (col, _) in line.match_indices('\t') {
             let colu32 = col.try_into().unwrap();
-            let msg = IN2Rule::description().to_owned();
+            let msg = IdentNoTabRule::description().to_owned();
             let dmlerror = DMLStyleError {
                 error: LocalDMLError {
                     range: Range::<ZeroIndexed>::from_u32(rowu32, rowu32, colu32, colu32 + 1),
@@ -121,9 +121,9 @@ impl IN2Rule {
         }
     }
 }
-impl Rule for IN2Rule {
+impl Rule for IdentNoTabRule {
     fn name() -> &'static str {
-        "IN2"
+        "INDENT_NO_TABS"
     }
     fn description() -> &'static str {
         "Tab characters (ASCII 9) should never be used to indent lines."
@@ -133,28 +133,28 @@ impl Rule for IN2Rule {
     }
 }
 
-pub struct IN3Rule {
+pub struct IndentCodeBlockRule {
     pub enabled: bool,
     indentation_spaces: u32
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct IN3Options {
+pub struct IndentCodeBlockOptions {
     #[serde(default = "default_indentation_spaces")]
     pub indentation_spaces: u32,
 }
 
-pub struct IN3Args {
+pub struct IndentCodeBlockArgs {
     members_ranges: Vec<ZeroRange>,
     lbrace: ZeroRange,
     rbrace: ZeroRange,
     expected_depth: u32,
 }
 
-impl IN3Args {
-    pub fn from_obj_stmts_content(node: &ObjectStatementsContent, depth: u32) -> Option<IN3Args> {
+impl IndentCodeBlockArgs {
+    pub fn from_obj_stmts_content(node: &ObjectStatementsContent, depth: u32) -> Option<IndentCodeBlockArgs> {
         if let ObjectStatementsContent::List(lbrace, stmnts, rbrace) = node {
-            Some(IN3Args {
+            Some(IndentCodeBlockArgs {
                 members_ranges: stmnts.iter().map(|s| s.range()).collect(),
                 lbrace: lbrace.range(),
                 rbrace: rbrace.range(),
@@ -164,32 +164,32 @@ impl IN3Args {
             None
         }
     }
-    pub fn from_struct_type_content(node: &StructTypeContent, depth: u32) -> Option<IN3Args> {
-        Some(IN3Args {
+    pub fn from_struct_type_content(node: &StructTypeContent, depth: u32) -> Option<IndentCodeBlockArgs> {
+        Some(IndentCodeBlockArgs {
             members_ranges: node.members.iter().map(|m| m.range()).collect(),
             lbrace: node.lbrace.range(),
             rbrace: node.rbrace.range(),
             expected_depth: depth,
         })
     }
-    pub fn from_compound_content(node: &CompoundContent, depth: u32) -> Option<IN3Args> {
-        Some(IN3Args {
+    pub fn from_compound_content(node: &CompoundContent, depth: u32) -> Option<IndentCodeBlockArgs> {
+        Some(IndentCodeBlockArgs {
             members_ranges: node.statements.iter().map(|s| s.range()).collect(),
             lbrace: node.lbrace.range(),
             rbrace: node.rbrace.range(),
             expected_depth: depth,
         })
     }
-    pub fn from_layout_content(node: &LayoutContent, depth: u32) -> Option<IN3Args> {
-        Some(IN3Args {
+    pub fn from_layout_content(node: &LayoutContent, depth: u32) -> Option<IndentCodeBlockArgs> {
+        Some(IndentCodeBlockArgs {
             members_ranges: node.fields.iter().map(|m| m.range()).collect(),
             lbrace: node.lbrace.range(),
             rbrace: node.rbrace.range(),
             expected_depth: depth,
         })
     }
-    pub fn from_bitfields_content(node: &BitfieldsContent, depth: u32) -> Option<IN3Args> {
-        Some(IN3Args {
+    pub fn from_bitfields_content(node: &BitfieldsContent, depth: u32) -> Option<IndentCodeBlockArgs> {
+        Some(IndentCodeBlockArgs {
             members_ranges: node.fields.iter().map(|m| m.range()).collect(),
             lbrace: node.lbrace.range(),
             rbrace: node.rbrace.range(),
@@ -198,21 +198,21 @@ impl IN3Args {
     }
 }
 
-impl IN3Rule {
-    pub fn from_options(options: &Option<IN3Options>) -> IN3Rule {
+impl IndentCodeBlockRule {
+    pub fn from_options(options: &Option<IndentCodeBlockOptions>) -> IndentCodeBlockRule {
         match options {
-            Some(options) => IN3Rule {
+            Some(options) => IndentCodeBlockRule {
                 enabled: true,
                 indentation_spaces: options.indentation_spaces
             },
-            None => IN3Rule {
+            None => IndentCodeBlockRule {
                 enabled: false,
                 indentation_spaces: 0
             }
         }
     }
     pub fn check(&self, acc: &mut Vec<DMLStyleError>,
-        args: Option<IN3Args>)
+        args: Option<IndentCodeBlockArgs>)
     {
         if !self.enabled { return; }
         let Some(args) = args else { return; };
@@ -239,9 +239,9 @@ impl IN3Rule {
     }
 }
 
-impl Rule for IN3Rule {
+impl Rule for IndentCodeBlockRule {
     fn name() -> &'static str {
-        "IN3"
+        "INDENT_CODE_BLOCK"
     }
     fn description() -> &'static str {
         "Previous line contains an openning brace and current line is not one\
@@ -252,20 +252,20 @@ impl Rule for IN3Rule {
     }
 }
 
-pub struct IN4Rule {
+pub struct IndentClosingBraceRule {
     pub enabled: bool,
     pub indentation_spaces: u32,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct IN4Options {
+pub struct IndentClosingBraceOptions {
     #[serde(default = "default_indentation_spaces")]
     pub indentation_spaces: u32,
 }
 
-impl Rule for IN4Rule {
+impl Rule for IndentClosingBraceRule {
     fn name() -> &'static str {
-        "IN4"
+        "INDENT_CLOSING_BRACE"
     }
     fn description() -> &'static str {
         "Closing braces at the beginning of a line should be aligned to the corresponding \
@@ -277,16 +277,16 @@ impl Rule for IN4Rule {
     }
 }
 
-pub struct IN4Args {
+pub struct IndentClosingBraceArgs {
     expected_depth: u32,
     lbrace: ZeroRange,
     last_member: ZeroRange,
     rbrace: ZeroRange,
 }
 
-impl IN4Args {
-    pub fn from_compound_content(node: &CompoundContent, depth: u32) -> Option<IN4Args> {
-        Some(IN4Args {
+impl IndentClosingBraceArgs {
+    pub fn from_compound_content(node: &CompoundContent, depth: u32) -> Option<IndentClosingBraceArgs> {
+        Some(IndentClosingBraceArgs {
             expected_depth: depth.saturating_sub(1),
             lbrace: node.lbrace.range(),
             last_member: node.statements.last()?.range(),
@@ -294,9 +294,9 @@ impl IN4Args {
         })
     }
 
-    pub fn from_obj_stmts_content(node: &ObjectStatementsContent, depth: u32) -> Option<IN4Args> {
+    pub fn from_obj_stmts_content(node: &ObjectStatementsContent, depth: u32) -> Option<IndentClosingBraceArgs> {
         if let ObjectStatementsContent::List(lbrace, stmnts, rbrace) = node {
-            Some(IN4Args {
+            Some(IndentClosingBraceArgs {
                 expected_depth: depth.saturating_sub(1),
                 lbrace: lbrace.range(),
                 last_member: stmnts.last()?.range(),
@@ -307,8 +307,8 @@ impl IN4Args {
         }
     }
 
-    pub fn from_switch_content(node: &SwitchContent, depth: u32) -> Option<IN4Args> {
-        Some(IN4Args {
+    pub fn from_switch_content(node: &SwitchContent, depth: u32) -> Option<IndentClosingBraceArgs> {
+        Some(IndentClosingBraceArgs {
             // Switch content does not increase indentation level before this call
             // so there is no need to reduce it
             expected_depth: depth,
@@ -318,8 +318,8 @@ impl IN4Args {
         })
     }
 
-    pub fn from_struct_type_content(node: &StructTypeContent, depth: u32) -> Option<IN4Args> {
-        Some(IN4Args {
+    pub fn from_struct_type_content(node: &StructTypeContent, depth: u32) -> Option<IndentClosingBraceArgs> {
+        Some(IndentClosingBraceArgs {
             expected_depth: depth.saturating_sub(1),
             lbrace: node.lbrace.range(),
             last_member: node.members.last()?.range(),
@@ -327,8 +327,8 @@ impl IN4Args {
         })
     }
 
-    pub fn from_layout_content(node: &LayoutContent, depth: u32) -> Option<IN4Args> {
-        Some(IN4Args {
+    pub fn from_layout_content(node: &LayoutContent, depth: u32) -> Option<IndentClosingBraceArgs> {
+        Some(IndentClosingBraceArgs {
             expected_depth: depth.saturating_sub(1),
             lbrace: node.lbrace.range(),
             last_member: node.fields.last()?.range(),
@@ -336,8 +336,8 @@ impl IN4Args {
         })
     }
 
-    pub fn from_bitfields_content(node: &BitfieldsContent, depth: u32) -> Option<IN4Args> {
-        Some(IN4Args {
+    pub fn from_bitfields_content(node: &BitfieldsContent, depth: u32) -> Option<IndentClosingBraceArgs> {
+        Some(IndentClosingBraceArgs {
             expected_depth: depth.saturating_sub(1),
             lbrace: node.lbrace.range(),
             last_member: node.fields.last()?.range(),
@@ -347,21 +347,21 @@ impl IN4Args {
 
 }
 
-impl IN4Rule {
-    pub fn from_options(options: &Option<IN4Options>) -> IN4Rule {
+impl IndentClosingBraceRule {
+    pub fn from_options(options: &Option<IndentClosingBraceOptions>) -> IndentClosingBraceRule {
         match options {
-            Some(options) => IN4Rule {
+            Some(options) => IndentClosingBraceRule {
                 enabled: true,
                 indentation_spaces: options.indentation_spaces,
             },
-            None => IN4Rule {
+            None => IndentClosingBraceRule {
                 enabled: false,
                 indentation_spaces: 0,
             },
         }
     }
 
-    pub fn check(&self, acc: &mut Vec<DMLStyleError>, args: Option<IN4Args>) {
+    pub fn check(&self, acc: &mut Vec<DMLStyleError>, args: Option<IndentClosingBraceArgs>) {
         if !self.enabled { return; }
         let Some(args) = args else { return; };
 
@@ -384,26 +384,26 @@ impl IN4Rule {
 }
 
 
-pub struct IN5Rule {
+pub struct IndentParenExprRule {
     pub enabled: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct IN5Options {}
+pub struct IndentParenExprOptions {}
 
-pub struct IN5Args {
+pub struct IndentParenExprArgs {
     members_ranges: Vec<ZeroRange>,
     lparen: ZeroRange,
 }
 
-impl IN5Args {
+impl IndentParenExprArgs {
     fn filter_out_parenthesized_ranges(expression_tokens: TreeElementTokenIterator) -> Vec<ZeroRange> {
         let mut token_ranges: Vec<ZeroRange> = vec![];
         let mut paren_depth = 0;
         // paren_depth is used to identify nested
         // parenthesized expressions within other expressions
         // and avoid double checking this type, given
-        // ParenExpressionContent already checks in5 on its own
+        // ParenExpressionContent already checks indent_paren_expr on its own
         for token in expression_tokens {
             match token.kind {
                 TokenKind::LParen => {
@@ -418,7 +418,7 @@ impl IN5Args {
         token_ranges
     }
 
-    pub fn from_for(node: &ForContent) -> Option<IN5Args> {
+    pub fn from_for(node: &ForContent) -> Option<IndentParenExprArgs> {
         // For loop has three parts within parentheses: pre, cond, and post
         let mut filtered_member_ranges: Vec<ZeroRange> = vec![];
         filtered_member_ranges.append(&mut Self::filter_out_parenthesized_ranges(node.pre.tokens()));
@@ -427,90 +427,90 @@ impl IN5Args {
         filtered_member_ranges.push(node.rsemi.range());
         filtered_member_ranges.append(&mut Self::filter_out_parenthesized_ranges(node.post.tokens()));
 
-        Some(IN5Args {
+        Some(IndentParenExprArgs {
             members_ranges: filtered_member_ranges,
             lparen: node.lparen.range(),
         })
     }
 
-    pub fn from_foreach(node: &ForeachContent) -> Option<IN5Args> {
-        Some(IN5Args {
+    pub fn from_foreach(node: &ForeachContent) -> Option<IndentParenExprArgs> {
+        Some(IndentParenExprArgs {
             members_ranges: Self::filter_out_parenthesized_ranges(node.expression.tokens()),
             lparen: node.lparen.range(),
         })
     }
 
-    pub fn from_function_call(node: &FunctionCallContent) -> Option<IN5Args> {
+    pub fn from_function_call(node: &FunctionCallContent) -> Option<IndentParenExprArgs> {
         let mut filtered_member_ranges: Vec<ZeroRange> = vec![];
         for (arg, _comma) in node.arguments.iter() {
             filtered_member_ranges.append(&mut Self::filter_out_parenthesized_ranges(arg.tokens()));
         }
-        Some(IN5Args {
+        Some(IndentParenExprArgs {
             members_ranges: filtered_member_ranges,
             lparen: node.lparen.range(),
         })
     }
 
     pub fn from_paren_expression(node: &ParenExpressionContent)
-            -> Option<IN5Args> {
-        Some(IN5Args {
+            -> Option<IndentParenExprArgs> {
+        Some(IndentParenExprArgs {
             members_ranges: Self::filter_out_parenthesized_ranges(node.expr.tokens()),
             lparen: node.lparen.range(),
         })
     }
 
-    pub fn from_method(node: &MethodContent) -> Option<IN5Args> {
+    pub fn from_method(node: &MethodContent) -> Option<IndentParenExprArgs> {
         let mut filtered_member_ranges: Vec<ZeroRange> = vec![];
         for (arg, _comma) in node.arguments.iter() {
             filtered_member_ranges.append(&mut Self::filter_out_parenthesized_ranges(arg.tokens()));
         }
-        Some(IN5Args {
+        Some(IndentParenExprArgs {
             members_ranges: filtered_member_ranges,
             lparen: node.lparen.range(),
         })
     }
 
-    pub fn from_while(node: &WhileContent) -> Option<IN5Args> {
-        Some(IN5Args {
+    pub fn from_while(node: &WhileContent) -> Option<IndentParenExprArgs> {
+        Some(IndentParenExprArgs {
             members_ranges: Self::filter_out_parenthesized_ranges(node.cond.tokens()),
             lparen: node.lparen.range(),
         })
     }
 
-    pub fn from_do_while(node: &DoContent) -> Option<IN5Args> {
-        Some(IN5Args {
+    pub fn from_do_while(node: &DoContent) -> Option<IndentParenExprArgs> {
+        Some(IndentParenExprArgs {
             members_ranges: Self::filter_out_parenthesized_ranges(node.cond.tokens()),
             lparen: node.lparen.range(),
         })
     }
 
-    pub fn from_if(node: &IfContent) -> Option<IN5Args>  {
-        Some(IN5Args {
+    pub fn from_if(node: &IfContent) -> Option<IndentParenExprArgs>  {
+        Some(IndentParenExprArgs {
             members_ranges: Self::filter_out_parenthesized_ranges(node.cond.tokens()),
             lparen: node.lparen.range(),
         })
     }
 
-    pub fn from_cast(node: &CastContent) -> Option<IN5Args> {
+    pub fn from_cast(node: &CastContent) -> Option<IndentParenExprArgs> {
         let mut cast_member_tokens = node.from.tokens();
         cast_member_tokens.append(&mut node.to.tokens());
-        Some(IN5Args {
+        Some(IndentParenExprArgs {
             members_ranges: Self::filter_out_parenthesized_ranges(cast_member_tokens),
             lparen: node.lparen.range(),
         })
     }
 
-    pub fn from_switch(node: &SwitchContent) -> Option<IN5Args> {
-        Some(IN5Args {
+    pub fn from_switch(node: &SwitchContent) -> Option<IndentParenExprArgs> {
+        Some(IndentParenExprArgs {
             members_ranges: Self::filter_out_parenthesized_ranges(node.expr.tokens()),
             lparen: node.lparen.range(),
         })
     }
 }
 
-impl IN5Rule {
+impl IndentParenExprRule {
     pub fn check<'a> (&self, acc: &mut Vec<DMLStyleError>,
-        args: Option<IN5Args>) {
+        args: Option<IndentParenExprArgs>) {
         if !self.enabled { return; }
         let Some(args) = args else { return; };
         let expected_line_start = args.lparen.col_start.0 + 1;
@@ -527,9 +527,9 @@ impl IN5Rule {
     }
 }
 
-impl Rule for IN5Rule {
+impl Rule for IndentParenExprRule {
     fn name() -> &'static str {
-        "IN5"
+        "INDENT_PAREN_EXPR"
     }
     fn description() -> &'static str {
         "Continuation line broken inside a parenthesized expression not\
@@ -541,24 +541,24 @@ impl Rule for IN5Rule {
 }
 
 
-pub struct IN9Rule {
+pub struct IndentSwitchCaseRule {
     pub enabled: bool,
     indentation_spaces: u32
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct IN9Options {
+pub struct IndentSwitchCaseOptions {
     #[serde(default = "default_indentation_spaces")]
     pub indentation_spaces: u32,
 }
 
-pub struct IN9Args {
+pub struct IndentSwitchCaseArgs {
     case_range: ZeroRange,
     expected_depth: u32,
 }
 
-impl IN9Args {
-    pub fn from_switch_case(node: &SwitchCase, depth: u32) -> Option<IN9Args> {
+impl IndentSwitchCaseArgs {
+    pub fn from_switch_case(node: &SwitchCase, depth: u32) -> Option<IndentSwitchCaseArgs> {
         match node {
             SwitchCase::Case(_, _, _) |
             SwitchCase::Default(_, _) => {},
@@ -572,7 +572,7 @@ impl IN9Args {
             }
         }
 
-        Some(IN9Args {
+        Some(IndentSwitchCaseArgs {
             case_range: node.range(),
             expected_depth: depth
         })
@@ -580,21 +580,21 @@ impl IN9Args {
     }
 }
 
-impl IN9Rule {
-    pub fn from_options(options: &Option<IN9Options>) -> IN9Rule {
+impl IndentSwitchCaseRule {
+    pub fn from_options(options: &Option<IndentSwitchCaseOptions>) -> IndentSwitchCaseRule {
         match options {
-            Some(options) => IN9Rule {
+            Some(options) => IndentSwitchCaseRule {
                 enabled: true,
                 indentation_spaces: options.indentation_spaces
             },
-            None => IN9Rule {
+            None => IndentSwitchCaseRule {
                 enabled: false,
                 indentation_spaces: 0
             }
         }
     }
     pub fn check(&self, acc: &mut Vec<DMLStyleError>,
-        args: Option<IN9Args>)
+        args: Option<IndentSwitchCaseArgs>)
     {
         if !self.enabled { return; }
         let Some(args) = args else { return; };
@@ -616,9 +616,9 @@ impl IN9Rule {
     }
 }
 
-impl Rule for IN9Rule {
+impl Rule for IndentSwitchCaseRule {
     fn name() -> &'static str {
-        "IN9"
+        "IndentSwitchCase"
     }
     fn description() -> &'static str {
         "Case labels should be indented at the same level as the switch keyword, \
@@ -629,28 +629,28 @@ impl Rule for IN9Rule {
     }
 }
 
-// IN10: Indentation in empty loop
-pub struct IN10Rule {
+// IndentEmptyLoop: Indentation in empty loop
+pub struct IndentEmptyLoopRule {
     pub enabled: bool,
     indentation_spaces: u32
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct IN10Options {
+pub struct IndentEmptyLoopOptions {
     #[serde(default = "default_indentation_spaces")]
     pub indentation_spaces: u32,
 }
 
-pub struct IN10Args {
+pub struct IndentEmptyLoopArgs {
     loop_keyword_range: ZeroRange,
     semicolon_range: ZeroRange,
     expected_depth: u32,
 }
 
-impl IN10Args {
-    pub fn from_for_content(node: &ForContent, depth: u32) -> Option<IN10Args> {
+impl IndentEmptyLoopArgs {
+    pub fn from_for_content(node: &ForContent, depth: u32) -> Option<IndentEmptyLoopArgs> {
         if let Content::Some(statement::StatementContent::Empty(semicolon)) = node.statement.content.as_ref() {
-            return Some(IN10Args {
+            return Some(IndentEmptyLoopArgs {
                 loop_keyword_range: node.fortok.range(),
                 semicolon_range: semicolon.range(),
                 expected_depth: depth + 1
@@ -660,9 +660,9 @@ impl IN10Args {
         None
     }
 
-    pub fn from_while_content(node: &WhileContent, depth: u32) -> Option<IN10Args> {
+    pub fn from_while_content(node: &WhileContent, depth: u32) -> Option<IndentEmptyLoopArgs> {
         if let Content::Some(statement::StatementContent::Empty(semicolon)) = node.statement.content.as_ref() {
-            return Some(IN10Args {
+            return Some(IndentEmptyLoopArgs {
                 loop_keyword_range: node.whiletok.range(),
                 semicolon_range: semicolon.range(),
                 expected_depth: depth + 1
@@ -673,21 +673,21 @@ impl IN10Args {
     }
 }
 
-impl IN10Rule {
-    pub fn from_options(options: &Option<IN10Options>) -> IN10Rule {
+impl IndentEmptyLoopRule {
+    pub fn from_options(options: &Option<IndentEmptyLoopOptions>) -> IndentEmptyLoopRule {
         match options {
-            Some(options) => IN10Rule {
+            Some(options) => IndentEmptyLoopRule {
                 enabled: true,
                 indentation_spaces: options.indentation_spaces
             },
-            None => IN10Rule {
+            None => IndentEmptyLoopRule {
                 enabled: false,
                 indentation_spaces: 0
             }
         }
     }
     pub fn check(&self, acc: &mut Vec<DMLStyleError>,
-        args: Option<IN10Args>)
+        args: Option<IndentEmptyLoopArgs>)
     {
         if !self.enabled { return; }
         let Some(args) = args else { return; };
@@ -709,7 +709,7 @@ impl IN10Rule {
     }
 }
 
-impl Rule for IN10Rule {
+impl Rule for IndentEmptyLoopRule {
     fn name() -> &'static str {
         "IN10_INDENTATION_EMPTY_LOOP"
     }

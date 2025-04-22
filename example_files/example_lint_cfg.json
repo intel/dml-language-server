@@ -6,11 +6,11 @@
     "nsp_unary": {},
     "nsp_trailing": {},
     "long_lines": { "max_length": 80 },
-    "in1": { "indentation_spaces": 4 },
-    "in2": {},
-    "in3": {},
-    "in4": {},
-    "in5": {},
-    "in9": {},
-    "in10": {}
+    "indent_size": { "indentation_spaces": 4 },
+    "indent_no_tabs": {},
+    "indent_code_block": {},
+    "indent_closing_brace": {},
+    "indent_paren_expr": {},
+    "indent_switch_case": {},
+    "indent_empty_loop": {}
 }
