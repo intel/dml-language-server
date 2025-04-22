@@ -10,7 +10,7 @@ use crate::span::{Span};
 use crate::vfs::{Change, VfsSpan};
 use crate::lsp_data::*;
 
-use log::{trace, warn, error, debug};
+use log::{debug, error, warn};
 use serde::{Serialize, Deserialize};
 
 use lsp_types::notification::ShowMessage;
@@ -64,7 +64,7 @@ impl BlockingNotificationAction for DidOpenTextDocument {
         ctx: &mut InitActionContext,
         out: O,
     ) -> Result<(), ResponseError> {
-        trace!("on_open: {:?}", params.text_document.uri);
+        debug!("on_open: {:?}", params.text_document.uri);
         let file_path = parse_file_path!(&params.text_document.uri, "on_open")?;
         ctx.reset_change_version(&file_path);
         ctx.vfs.set_file(&file_path, &params.text_document.text);
@@ -72,6 +72,7 @@ impl BlockingNotificationAction for DidOpenTextDocument {
         if !ctx.config.lock().unwrap().analyse_on_save {
             ctx.isolated_analyze(&file_path, None, &out);
         }
+        ctx.report_errors(&out);
         Ok(())
     }
 }
@@ -80,11 +81,12 @@ impl BlockingNotificationAction for DidCloseTextDocument {
     fn handle<O: Output>(
         params: Self::Params,
         ctx: &mut InitActionContext,
-        _out: O,
+        out: O,
     ) -> Result<(), ResponseError> {
-        trace!("on_close: {:?}", params.text_document.uri);
+        debug!("on_close: {:?}", params.text_document.uri);
         let file_path = parse_file_path!(&params.text_document.uri, "on_close")?;
         ctx.remove_direct_open(file_path.to_path_buf());
+        ctx.report_errors(&out);
         Ok(())
     }
 }
@@ -95,7 +97,7 @@ impl BlockingNotificationAction for DidChangeTextDocument {
         ctx: &mut InitActionContext,
         out: O,
     ) -> Result<(), ResponseError> {
-        trace!("on_change: {:?}, thread: {:?}", params, thread::current().id());
+        debug!("on_change: {:?}, thread: {:?}", params, thread::current().id());
         if params.content_changes.is_empty() {
             return Ok(());
         }
@@ -164,7 +166,7 @@ impl BlockingNotificationAction for DidChangeConfiguration {
         ctx: &mut InitActionContext,
         out: O,
     ) -> Result<(), ResponseError> {
-        trace!("config change: {:?}", params.settings);
+        debug!("config change: {:?}", params.settings);
         use std::collections::HashMap;
         let mut dups = HashMap::new();
         let mut unknowns = vec![];
@@ -285,7 +287,7 @@ impl BlockingNotificationAction for ChangeActiveContexts {
     fn handle<O: Output>(
         params: ChangeActiveContextsParams,
         ctx: &mut InitActionContext,
-        _out: O) -> Result<(), ResponseError> {
+        out: O) -> Result<(), ResponseError> {
         debug!("ChangeActiveContexts: {:?}", params);
         let contexts: Vec<ContextDefinition> = params.active_contexts
             .iter()
@@ -316,6 +318,8 @@ impl BlockingNotificationAction for ChangeActiveContexts {
             *ctx.device_active_contexts.lock().unwrap()
                 = devices;
         }
+        // Re-report errors, since what we report for might have changed
+        ctx.report_errors(&out);
         Ok(())
     }
 }
