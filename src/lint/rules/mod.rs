@@ -70,7 +70,7 @@ pub enum RuleType {
     NspInparen,
     NspUnary,
     NspTrailing,
-    LongLines,
+    LL1,
     IN2,
     IN3,
     IN4,

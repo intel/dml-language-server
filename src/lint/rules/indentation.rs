@@ -76,7 +76,7 @@ impl Rule for LongLinesRule {
         "Line length is above the threshold"
     }
     fn get_rule_type() -> RuleType {
-        RuleType::LongLines
+        RuleType::LL1
     }
 }
 
