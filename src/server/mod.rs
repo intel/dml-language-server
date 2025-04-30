@@ -17,7 +17,7 @@ use crate::server::dispatch::Dispatcher;
 pub use crate::server::dispatch::{RequestAction, DEFAULT_REQUEST_TIMEOUT};
 pub use crate::server::io::{MessageReader, Output};
 use crate::server::io::{StdioMsgReader, StdioOutput};
-use crate::server::message::RawMessage;
+use crate::server::message::{RawMessage, RawMessageOrResponse};
 pub use crate::server::message::{
     Ack, BlockingNotificationAction, BlockingRequestAction,
     NoResponse, Notification, Request,
@@ -326,12 +326,15 @@ impl<O: Output> LsService<O> {
                     }
                 };
                 trace!("Read a message `{}`", msg_string);
-                match RawMessage::try_parse(&msg_string) {
-                    Ok(Some(rm)) => {
+                match RawMessageOrResponse::try_parse(&msg_string) {
+                    Ok(RawMessageOrResponse::Message(rm)) => {
                         debug!("Parsed a message: {}", rm.method);
                         send.send(ServerToHandle::ClientMessage(rm)).ok();
                     },
-                    Ok(None) => (),
+                    Ok(RawMessageOrResponse::Response(rr)) => {
+                        // TODO
+                        debug!("Parsed a response: {}", rr.id);
+                    },
                     Err(e) => {
                         error!("parsing error, {:?}", e);
                         output.custom_failure(
@@ -797,12 +800,9 @@ mod test {
     /// Some clients send empty object params for void params requests (see issue #1038).
     #[test]
     fn parse_shutdown_object_params() {
-        let raw = RawMessage::try_parse(
+        let raw = RawMessageOrResponse::try_parse(
             r#"{"jsonrpc": "2.0", "id": 2, "method": "shutdown", "params": {}}"#,
-        )
-        .ok()
-        .and_then(|x| x)
-        .expect("raw parse failed");
+        ).unwrap().as_message().unwrap();
 
         let _request: Request<ShutdownRequest> =
             raw.parse_as_request().expect("Boring validation is happening");

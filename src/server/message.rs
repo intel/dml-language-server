@@ -357,24 +357,15 @@ impl RawMessage {
         Ok(Notification { params, _action: PhantomData })
     }
 
-    pub(crate) fn try_parse(msg: &str)
-    -> Result<Option<RawMessage>, jsonrpc::Error> {
-        // Parse the message.
-        let ls_command: serde_json::Value =
-            serde_json::from_str(msg)
-                .map_err(|e| rpc_error(ParseError, e))?;
-
+    pub(crate) fn try_parse(ls_command: serde_json::Value)
+    -> Result<RawMessage, jsonrpc::Error> {
         // Per JSON-RPC/LSP spec, Requests must have ID, whereas Notifications cannot.
         let id = ls_command
             .get("id")
             .map_or(Value::Null, |id| serde_json::from_value(id.to_owned()).unwrap());
 
-        let method = match ls_command.get("method") {
-            Some(method) => method,
-            // No method means this is a response to one of our requests.
-            // FIXME: we should confirm these, but currently just ignore them.
-            None => return Ok(None),
-        };
+        // Guaranteed by caller
+        let method = ls_command.get("method").unwrap();
 
         let method = method.as_str().ok_or_else(||
             rpc_error(InvalidRequest, "Method is not a string"))?
@@ -394,7 +385,7 @@ impl RawMessage {
                 format!("Unsupported parameter type: {v}"))),
         };
 
-        Ok(Some(RawMessage { method, id, params }))
+        Ok(RawMessage { method, id, params })
     }
 }
 
@@ -417,6 +408,99 @@ impl Serialize for RawMessage {
             msg.serialize_field("params", &self.params)?;
         }
         msg.end()
+    }
+}
+
+#[derive(Debug, PartialEq, Deserialize)]
+pub struct ErrorResponse {
+    code: i32,
+    message: String,
+    data: Option<Value>,
+}
+
+#[derive(Debug, PartialEq)]
+pub enum ResultOrError {
+    Result(Value),
+    Error(ErrorResponse),
+}
+
+#[derive(Debug, PartialEq)]
+pub struct RawResponse {
+    pub id: Value,
+    pub result: ResultOrError,
+}
+
+impl RawResponse {
+    pub(crate) fn try_parse(mut ls_command: serde_json::Value)
+                 -> Result<RawResponse, jsonrpc::Error> {
+        // Get the ID (required in responses)
+        let id = ls_command.get("id")
+            .ok_or_else(||rpc_error(InvalidRequest, "No ID in response"))?
+            .to_owned();
+
+        let result = ls_command.get_mut("result").map(
+            |r|r.take());
+        let error = ls_command.get_mut("error").map(
+            |val|ErrorResponse::deserialize(val.take()));
+        let resultorerror = match (result, error) {
+            (Some(_), Some(_)) =>
+                return Err(rpc_error(InvalidRequest,
+                                     "Both 'result' and 'error' \
+                                      specified in response")),
+            (None, None) =>
+                return Err(rpc_error(InvalidRequest,
+                                     "Neither 'result' and 'error' \
+                                      specified in response")),
+            (Some(result), None) =>
+                ResultOrError::Result(result),
+            (None, Some(error)) =>
+                ResultOrError::Error(error.map_err(
+                |e|rpc_error(ParseError, e))?),
+        };
+
+        Ok(RawResponse { id, result: resultorerror })
+    }
+}
+
+pub enum RawMessageOrResponse {
+    Message(RawMessage),
+    Response(RawResponse),
+}
+
+impl RawMessageOrResponse {
+    pub(crate) fn try_parse(msg: &str) ->
+        Result<RawMessageOrResponse, jsonrpc::Error> {
+            let ls_command: serde_json::Value =
+                serde_json::from_str(msg)
+                .map_err(|e| rpc_error(ParseError, e))?;
+            if ls_command.get("method").is_some() {
+                RawMessage::try_parse(ls_command)
+                    .map(|raw|RawMessageOrResponse::Message(raw))
+            } else {
+                RawResponse::try_parse(ls_command)
+                    .map(|raw|RawMessageOrResponse::Response(raw))
+            }
+        }
+
+    pub fn is_message(&self) -> bool {
+        matches!(self, RawMessageOrResponse::Message(_))
+    }
+
+    pub fn is_response(&self) -> bool {
+        matches!(self, RawMessageOrResponse::Response(_))
+    }
+
+    pub(crate) fn as_message(self) -> Option<RawMessage> {
+        match self {
+            RawMessageOrResponse::Message(mess) => Some(mess),
+            _ => None,
+        }
+    }
+    pub(crate) fn as_response(self) -> Option<RawResponse> {
+        match self {
+            RawMessageOrResponse::Response(resp) => Some(resp),
+            _ => None,
+        }
     }
 }
 
@@ -459,7 +543,10 @@ mod test {
             // Missing parameters are represented internally as Null.
             params: serde_json::Value::Null,
         };
-        assert_eq!(expected_msg, RawMessage::try_parse(&raw_json).unwrap().unwrap());
+
+        let parsed = RawMessageOrResponse::try_parse(&raw_json)
+            .unwrap().as_message().unwrap();
+        assert_eq!(expected_msg, parsed);
     }
 
     #[test]
@@ -477,7 +564,9 @@ mod test {
             // Missing parameters are represented internally as Null.
             params: serde_json::Value::Null,
         };
-        assert_eq!(expected_msg, RawMessage::try_parse(&raw_json).unwrap().unwrap());
+        let parsed = RawMessageOrResponse::try_parse(&raw_json)
+            .unwrap().as_message().unwrap();
+        assert_eq!(expected_msg, parsed);
     }
 
     #[test]
@@ -546,7 +635,62 @@ mod test {
     #[test]
     fn deserialize_message_empty_params() {
         let msg = r#"{"jsonrpc":"2.0","method":"initialized","params":{}}"#;
-        let parsed = RawMessage::try_parse(msg).unwrap().unwrap();
+        let parsed = RawMessageOrResponse::try_parse(msg)
+            .unwrap().as_message().unwrap();
         parsed.parse_as_notification::<notifications::Initialized>().unwrap();
+    }
+
+    #[test]
+    fn simple_request_response() {
+        let raw_json = json!({
+            "jsonrpc": "2.0",
+            "id": "abc",
+            "result": {
+                "this" : 0,
+                "really" : "could",
+                "be" : ["anything"]
+            }
+        })
+        .to_string();
+
+        let expected_resp = RawResponse {
+            id: Value::from("abc"),
+            result: ResultOrError::Result(json!({
+                "this" : 0,
+                "really" : "could",
+                "be" : ["anything"]
+            }))
+        };
+
+        let parsed = RawMessageOrResponse::try_parse(&raw_json)
+            .unwrap().as_response().unwrap();
+        assert_eq!(expected_resp, parsed);
+    }
+    #[test]
+    fn simple_request_error() {
+        let raw_json = json!({
+            "jsonrpc": "2.0",
+            "id": "abc",
+            "error": {
+                "code" : 0,
+                "message" : "oh no!",
+            }
+        })
+        .to_string();
+
+        let expected_resp = RawResponse {
+            id: Value::from("abc"),
+            result: ResultOrError::Error(
+                ErrorResponse {
+                    code: 0,
+                    message: "oh no!".to_string(),
+                    data: None,
+                }
+            ),
+        };
+
+        let parsed = RawMessageOrResponse::try_parse(&raw_json)
+            .unwrap().as_response().unwrap();
+        assert_eq!(expected_resp, parsed);
     }
 }
