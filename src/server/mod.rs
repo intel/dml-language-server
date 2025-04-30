@@ -14,10 +14,11 @@ use crate::lsp_data::{
     ShowMessageParams, Workspace,
 };
 use crate::server::dispatch::Dispatcher;
-pub use crate::server::dispatch::{RequestAction, DEFAULT_REQUEST_TIMEOUT};
+pub use crate::server::dispatch::{RequestAction, SentRequest,
+                                  DEFAULT_REQUEST_TIMEOUT};
 pub use crate::server::io::{MessageReader, Output};
 use crate::server::io::{StdioMsgReader, StdioOutput};
-use crate::server::message::{RawMessage, RawMessageOrResponse};
+use crate::server::message::{RawMessage, RawMessageOrResponse, RawResponse};
 pub use crate::server::message::{
     Ack, BlockingNotificationAction, BlockingRequestAction,
     NoResponse, Notification, Request,
@@ -88,7 +89,7 @@ impl BlockingRequestAction for ShutdownRequest {
     fn handle<O: Output>(
         _id: RequestId,
         _params: Self::Params,
-         ctx: &mut ActionContext,
+         ctx: &mut ActionContext<O>,
         _out: O,
     ) -> Result<Self::Response, ResponseError> {
         if let Ok(ctx) = ctx.inited() {
@@ -192,7 +193,7 @@ impl BlockingRequestAction for InitializeRequest {
     fn handle<O: Output>(
         id: RequestId,
         mut params: Self::Params,
-        ctx: &mut ActionContext,
+        ctx: &mut ActionContext<O>,
         out: O,
     ) -> Result<NoResponse, ResponseError> {
         let mut dups = std::collections::HashMap::new();
@@ -276,8 +277,8 @@ pub struct LsService<O: Output> {
     output: O,
     server_send: channel::Sender<ServerToHandle>,
     server_receive: channel::Receiver<ServerToHandle>,
-    ctx: ActionContext,
-    dispatcher: Dispatcher,
+    ctx: ActionContext<O>,
+    dispatcher: Dispatcher<O>,
 }
 
 impl<O: Output> LsService<O> {
@@ -332,8 +333,8 @@ impl<O: Output> LsService<O> {
                         send.send(ServerToHandle::ClientMessage(rm)).ok();
                     },
                     Ok(RawMessageOrResponse::Response(rr)) => {
-                        // TODO
                         debug!("Parsed a response: {}", rr.id);
+                        send.send(ServerToHandle::ClientResponse(rr)).ok();
                     },
                     Err(e) => {
                         error!("parsing error, {:?}", e);
@@ -368,6 +369,11 @@ impl<O: Output> LsService<O> {
                         ServerStateChange::Break { exit_code }
                         => return exit_code,
                     },
+                ServerToHandle::ClientResponse(resp) => {
+                    if let ActionContext::Init(ctx) = &mut self.ctx {
+                        ctx.handle_request_response(resp, &self.output);
+                    }
+                },
                 ServerToHandle::ExitCode(code) => return code,
                 ServerToHandle::IsolatedAnalysisDone(path, context,
                                                      requests) => {
@@ -622,6 +628,7 @@ impl<O: Output> LsService<O> {
 #[derive(PartialEq, Debug)]
 pub enum ServerToHandle {
     ClientMessage(RawMessage),
+    ClientResponse(RawResponse),
     ExitCode(i32),
     IsolatedAnalysisDone(CanonPath, Option<CanonPath>, Vec<PathBuf>),
     DeviceAnalysisDone(CanonPath),
@@ -650,7 +657,7 @@ fn experimental_caps() -> Value {
     }).unwrap()
 }
 
-fn server_caps(_ctx: &ActionContext) -> ServerCapabilities {
+fn server_caps<O: Output>(_ctx: &ActionContext<O>) -> ServerCapabilities {
     ServerCapabilities {
         call_hierarchy_provider: None,
         declaration_provider: Some(DeclarationCapability::Simple(true)),
@@ -802,9 +809,10 @@ mod test {
     fn parse_shutdown_object_params() {
         let raw = RawMessageOrResponse::try_parse(
             r#"{"jsonrpc": "2.0", "id": 2, "method": "shutdown", "params": {}}"#,
-        ).unwrap().as_message().unwrap();
+        ).unwrap();
+        let parsed = raw.as_message().unwrap();
 
         let _request: Request<ShutdownRequest> =
-            raw.parse_as_request().expect("Boring validation is happening");
+            parsed.parse_as_request().expect("Boring validation is happening");
     }
 }

@@ -30,7 +30,11 @@ Once you have this basic support in place, the hard work begins:
 * Implement [extensions to the protocol](clients.md#extensions-to-the-language-server-protocol)
 * Client-side configuration.
   - You'll need to send the `workspace/didChangeConfiguration` notification when
-    configuration changes.
+    configuration changes. You can either send the entire configuration in the
+    notification, or send "null" if your client supports pull-style configuration updates
+    (note that you need to support dynamic registration of
+    "didChangeConfiguration" and support the "workspace/configuration" request on the client
+    for pull-style updates)
   - For the config options, see [config.rs](./src/config.rs#L99-L111)
 * Check for and install the DLS
   - Download the latest [binary](https://github.com/intel/dml-language-server/actions/workflows/rust.yml).
@@ -90,6 +94,7 @@ From Server to client:
 * `client/registerCapability`
 * `client/unregisterCapability`
 * `textDocument/publishDiagnostics`
+* `workspace/configuration` (if using pull-style configuration updates)
 
 ### Extensions to the Language Server Protocol
 
@@ -165,6 +170,14 @@ From Server to Client, these notifcations have a specified data value:
   with the title "Analysing" when it starts on any long-term work, and a
   'WorkDoneProgressEnd' with the corresponding id when it finishes all such
   work.
+* `workspace/configuration`
+  The server sends a single ConfigurationItem with no scope and a
+  "simics-modeling.dls" section. The client response value should be the
+  an array containing one element which is an object with the full
+  configuration structure for the server.
+* `client/registerCapability`
+  The server may try to register on 'DidChangeWatchedFiles' or 'DidChangeConfiguration',
+  the latter being required for pull-style configuration updates.
 
 ## Resources
 

@@ -316,7 +316,7 @@ impl InitializationOptions {
 #[serde(default)]
 pub struct ClientCapabilities {
     pub root: Option<PathBuf>,
-    pub workspace_folders: bool,
+    pub capabilities: lsp_types::ClientCapabilities,
 }
 
 impl ClientCapabilities {
@@ -327,11 +327,29 @@ impl ClientCapabilities {
             root: params.root_uri.as_ref().and_then(
                 |uri|parse_file_path!(uri,
                                       "decode root").ok()),
-            workspace_folders: params.capabilities.workspace.as_ref().and_then(
-                |workspace|workspace.workspace_folders.and_then(
-                    |folders|if folders { Some(folders)} else { None })
-            ).is_some(),
+            capabilities: params.capabilities.clone(),
         }
+    }
+}
+
+// Fast-access to fields we care about
+impl ClientCapabilities {
+    pub fn workspace_folder_support(&self) -> bool {
+        self.capabilities.workspace.as_ref()
+            .map_or(false, |w|w.workspace_folders.unwrap_or(false))
+    }
+    // (supported, dynamic registration supported)
+    pub fn did_change_configuration_support(&self) -> (bool, bool) {
+        if let Some(dcc) = self.capabilities.workspace.as_ref()
+            .and_then(|w|w.did_change_configuration) {
+                (true, dcc.dynamic_registration.unwrap_or(false))
+            } else {
+                (false, false)
+            }
+    }
+    pub fn configuration_support(&self) -> bool {
+        self.capabilities.workspace.as_ref()
+            .map_or(false, |w|w.configuration.unwrap_or(false))
     }
 }
 

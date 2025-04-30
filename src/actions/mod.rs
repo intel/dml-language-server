@@ -3,7 +3,7 @@
 //! Actions that the DLS can perform: responding to requests, watching files,
 //! etc.
 
-use log::{debug, trace, error, warn};
+use log::{debug, info, trace, error, warn};
 use thiserror::Error;
 use crossbeam::channel;
 use serde::Deserialize;
@@ -31,7 +31,10 @@ use crate::file_management::{PathResolver, CanonPath};
 use crate::lint::{LintCfg, maybe_parse_lint_cfg};
 use crate::lsp_data;
 use crate::lsp_data::*;
-use crate::server::{Output, ServerToHandle, error_message};
+use crate::server::{Output, ServerToHandle, error_message,
+                    Request, RequestId, SentRequest};
+use crate::server::message::RawResponse;
+use crate::server::dispatch::HandleResponseType;
 use crate::Span;
 use crate::span;
 use crate::span::{ZeroIndexed, FilePosition};
@@ -64,9 +67,9 @@ pub mod progress;
 pub mod work_pool;
 
 /// Persistent context shared across all requests and notifications.
-pub enum ActionContext {
+pub enum ActionContext<O: Output> {
     /// Context after server initialization.
-    Init(InitActionContext),
+    Init(InitActionContext<O>),
     /// Context before initialization.
     Uninit(UninitActionContext),
 }
@@ -81,20 +84,20 @@ impl From<()> for InitError {
     }
 }
 
-impl ActionContext {
+impl <O: Output> ActionContext<O> {
     /// Construct a new, uninitialized context.
     pub fn new(
         vfs: Arc<Vfs>,
         config: Arc<Mutex<Config>>,
         notify: channel::Sender<ServerToHandle>,
-    ) -> ActionContext {
+    ) -> ActionContext<O> {
         ActionContext::Uninit(UninitActionContext::new(
             Arc::new(Mutex::new(AnalysisStorage::init(notify))),
             vfs, config))
     }
 
     /// Initialize this context, returns `Err(())` if it has already been initialized.
-    pub fn init<O: Output>(
+    pub fn init(
         &mut self,
         init_options: InitializationOptions,
         client_capabilities: lsp_data::ClientCapabilities,
@@ -130,7 +133,7 @@ impl ActionContext {
 
     /// Returns an initialiased wrapped context,
     /// or `Err(())` if not initialised.
-    pub fn inited(&self) -> Result<InitActionContext, InitError> {
+    pub fn inited(&self) -> Result<InitActionContext<O>, InitError> {
         match *self {
             ActionContext::Uninit(_) => Err(().into()),
             ActionContext::Init(ref ctx) => Ok(ctx.clone()),
@@ -218,7 +221,7 @@ pub struct AnalysisStateWaitDefinition {
 // (not concurrent), so make sure shared info is behind Arcs, and that no overly
 // large data structures are stored.
 #[derive(Clone)]
-pub struct InitActionContext {
+pub struct InitActionContext<O: Output> {
     pub analysis: Arc<Mutex<AnalysisStorage>>,
     vfs: Arc<Vfs>,
     // Queues analysis jobs so that we don't over-use the CPU.
@@ -245,6 +248,9 @@ pub struct InitActionContext {
     prev_changes: Arc<Mutex<HashMap<PathBuf, i32>>>,
 
     active_waits: Arc<Mutex<Vec<AnalysisStateWaitDefinition>>>,
+
+    outstanding_requests: Arc<Mutex<HashMap<RequestId,
+                                            Box<HandleResponseType<O>>>>>,
 
     pub config: Arc<Mutex<Config>>,
     pub lint_config: Arc<Mutex<LintCfg>>,
@@ -301,7 +307,7 @@ impl ContextDefinition {
 
 pub type ActiveDeviceContexts = HashSet<ContextDefinition>;
 
-impl InitActionContext {
+impl <O: Output> InitActionContext<O> {
     fn new(
         analysis: Arc<Mutex<AnalysisStorage>>,
         vfs: Arc<Vfs>,
@@ -309,7 +315,7 @@ impl InitActionContext {
         client_capabilities: lsp_data::ClientCapabilities,
         pid: u32,
         _client_supports_cmd_run: bool,
-    ) -> InitActionContext {
+    ) -> InitActionContext<O> {
         let lint_config = Arc::new(Mutex::new(
             config.lock().unwrap().lint_cfg_path.clone()
                 .and_then(maybe_parse_lint_cfg)
@@ -329,6 +335,7 @@ impl InitActionContext {
             has_notified_missing_builtins: false,
             //client_supports_cmd_run,
             active_waits: Arc::default(),
+            outstanding_requests: Arc::default(),
             shut_down: Arc::new(AtomicBool::new(false)),
             pid,
             workspace_roots: Arc::default(),
@@ -352,9 +359,9 @@ impl InitActionContext {
         }
     }
 
-    fn init<O: Output>(&mut self,
-                       _init_options: InitializationOptions,
-                       out: O) {
+    fn init(&mut self,
+            _init_options: InitializationOptions,
+            out: O) {
         self.update_compilation_info(&out)
     }
 
@@ -368,7 +375,7 @@ impl InitActionContext {
         }
     }
 
-    fn update_linter_config<O: Output>(&mut self, _out: &O) {
+    fn update_linter_config(&mut self, _out: &O) {
         trace!("Updating linter config");
         if let Ok(config) = self.config.lock() {
             *self.lint_config.lock().unwrap() =
@@ -378,7 +385,7 @@ impl InitActionContext {
         }
     }
 
-    pub fn update_compilation_info<O: Output>(&mut self, out: &O) {
+    pub fn update_compilation_info(&mut self, out: &O) {
         trace!("Updating compile info");
         if let Ok(config) = self.config.lock() {
             if let Some(compile_info) = &config.compile_info_path {
@@ -424,7 +431,7 @@ impl InitActionContext {
         }
     }
 
-    pub fn report_errors<O: Output>(&mut self, output: &O) {
+    pub fn report_errors(&mut self, output: &O) {
         self.update_analysis();
         let filter = Some(self.device_active_contexts.lock().unwrap().clone());
         let (isolated, device, lint) =
@@ -528,9 +535,7 @@ impl InitActionContext {
             .update_analysis(&self.construct_resolver());
     }
 
-    pub fn trigger_device_analysis<O: Output>(&mut self,
-                                              file: &Path,
-                                              out: &O) {
+    pub fn trigger_device_analysis(&mut self, file: &Path, out: &O) {
         let canon_path: CanonPath = file.to_path_buf().into();
         debug!("triggering devices dependant on {}", canon_path.as_str());
         self.update_analysis();
@@ -561,14 +566,14 @@ impl InitActionContext {
 
     // Called when config might have changed, re-update include paths
     // and similar
-    pub fn maybe_changed_config<O: Output>(&mut self, out: &O) {
+    pub fn maybe_changed_config(&mut self, out: &O) {
         trace!("Compilation info might have changed");
         self.update_compilation_info(out);
         self.update_linter_config(out);
     }
 
     // Call before adding new analysis
-    pub fn maybe_start_progress<O: Output>(&mut self, out: &O) {
+    pub fn maybe_start_progress(&mut self, out: &O) {
 
         let mut notifier = self.current_notifier.lock().unwrap();
 
@@ -580,7 +585,7 @@ impl InitActionContext {
             new_notifier.notify_begin_progress();
         }
     }
-    pub fn maybe_end_progress<O: Output>(&mut self, out: &O) {
+    pub fn maybe_end_progress(&mut self, out: &O) {
         if !self.analysis_queue.has_work() {
             // Need the scope here to succesfully drop the guard lock before
             // going into maybe_warn_missing_builtins below
@@ -598,7 +603,7 @@ impl InitActionContext {
         }
     }
 
-    fn maybe_warn_missing_builtins<O: Output>(&mut self, out: &O) {
+    fn maybe_warn_missing_builtins(&mut self, out: &O) {
         if !self.has_notified_missing_builtins &&
             !self.analysis.lock().unwrap().has_client_file(
                 &PathBuf::from("dml-builtins.dml")) {
@@ -628,10 +633,10 @@ impl InitActionContext {
         toret
     }
 
-    pub fn isolated_analyze<O: Output>(&mut self,
-                                       client_path: &Path,
-                                       context: Option<CanonPath>,
-                                       out: &O) {
+    pub fn isolated_analyze(&mut self,
+                            client_path: &Path,
+                            context: Option<CanonPath>,
+                            out: &O) {
         debug!("Wants isolated analysis of {:?}{}",
                client_path,
                context.as_ref().map(|s|format!(" under context {}", s.as_str()))
@@ -657,7 +662,7 @@ impl InitActionContext {
             &self.vfs, context, path, client_path.to_path_buf(), token);
     }
 
-    fn device_analyze<O: Output>(&mut self, device: &CanonPath, out: &O) {
+    fn device_analyze(&mut self, device: &CanonPath, out: &O) {
         debug!("Wants device analysis of {:?}", device);
         self.maybe_start_progress(out);
         self.maybe_add_device_context(device);
@@ -839,9 +844,7 @@ impl InitActionContext {
         }
     }
 
-    pub fn maybe_trigger_lint_analysis<O: Output>(&mut self,
-                                                  file: &Path,
-                                                  out: &O) {
+    pub fn maybe_trigger_lint_analysis(&mut self, file: &Path, out: &O) {
         if !self.config.lock().unwrap().linting_enabled {
             return;
         }
@@ -860,11 +863,11 @@ impl InitActionContext {
                           out);
     }
 
-    fn lint_analyze<O: Output>(&mut self,
-                                   file: &Path,
-                                   context: Option<CanonPath>,
-                                   cfg: LintCfg,
-                                   out: &O) {
+    fn lint_analyze(&mut self,
+                    file: &Path,
+                    context: Option<CanonPath>,
+                    cfg: LintCfg,
+                    out: &O) {
         debug!("Wants to lint {:?}", file);
         self.maybe_start_progress(out);
         let path = if let Some(p) =
@@ -1117,6 +1120,33 @@ impl InitActionContext {
                 true
             });
     }
+
+    pub fn send_request<R>(&self, params: R::Params, out: &O)
+    where
+        R: SentRequest,
+        <R as LSPRequest>::Params: std::fmt::Debug
+    {
+        let id = out.provide_id();
+        info!("Sending a request {} with params {:?} and id {}",
+               <R as LSPRequest>::METHOD, params, id);
+        let request = Request::<R>::new(id.clone(), params);
+        self.outstanding_requests.lock().unwrap().insert(
+            id, Box::new(<R as SentRequest>::handle_response));
+        out.request(request);
+    }
+
+    pub fn handle_request_response(&mut self, resp: RawResponse, out: &O) {
+        info!("Got a response to some request: {:?}", resp);
+        let maybe_req_fn = { self.outstanding_requests
+                             .lock().unwrap().remove(&resp.id) };
+        if let Some(request_fn) = maybe_req_fn {
+                request_fn(self, resp, out);
+            } else {
+                info!("Got response for request id {:?} but it was not tracked\
+                       (either timed out or was never sent)",
+                      resp.id);
+            }
+    }
 }
 
 /// Some notifications come with sequence numbers, we check that these are in
@@ -1177,7 +1207,7 @@ pub struct FileWatch {
 
 impl FileWatch {
     /// Construct a new `FileWatch`.
-    pub fn new(ctx: &InitActionContext) -> Option<Self> {
+    pub fn new<O: Output>(ctx: &InitActionContext<O>) -> Option<Self> {
         match ctx.config.lock() {
             Ok(config) => {
                 config.compile_info_path.as_ref().map(

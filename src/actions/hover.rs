@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::actions::InitActionContext;
 use crate::lsp_data::*;
-use crate::server::ResponseError;
+use crate::server::{Output, ResponseError};
 
 #[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct Tooltip {
@@ -16,8 +16,8 @@ pub struct Tooltip {
 }
 
 // Build a hover tooltip
-pub fn tooltip(
-    ctx: &mut InitActionContext,
+pub fn tooltip<O: Output>(
+    ctx: &mut InitActionContext<O>,
     params: &TextDocumentPositionParams,
 ) -> Result<Tooltip, ResponseError> {
     let hover_file_path = parse_file_path!(&params.text_document.uri, "hover")?;

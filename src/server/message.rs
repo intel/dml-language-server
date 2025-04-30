@@ -106,7 +106,7 @@ where R: Response + std::fmt::Debug + serde::Serialize {
 /// Blocks stdin whilst being handled.
 pub trait BlockingNotificationAction: LSPNotification {
     /// Handles this notification.
-    fn handle<O: Output>(_: Self::Params, _: &mut InitActionContext, _: O)
+    fn handle<O: Output>(_: Self::Params, _: &mut InitActionContext<O>, _: O)
                          -> Result<(), ResponseError>;
 }
 
@@ -118,7 +118,7 @@ pub trait BlockingRequestAction: LSPRequest {
     fn handle<O: Output>(
         id: RequestId,
         params: Self::Params,
-        ctx: &mut ActionContext,
+        ctx: &mut ActionContext<O>,
         out: O,
     ) -> Result<Self::Response, ResponseError>;
 }
@@ -175,6 +175,12 @@ impl From<Value> for RequestId {
     }
 }
 
+impl From<String> for RequestId {
+    fn from(value: String) -> Self {
+        RequestId::Str(value)
+    }
+}
+
 /// A request that gets JSON serialized in the language server protocol.
 pub struct Request<A: LSPRequest> {
     /// The unique request ID.
@@ -184,13 +190,13 @@ pub struct Request<A: LSPRequest> {
     /// The extra action-specific parameters.
     pub params: A::Params,
     /// This request's handler action.
-    pub _action: PhantomData<A>,
+    pub action: PhantomData<A>,
 }
 
 impl<A: LSPRequest> Request<A> {
     /// Creates a server `Request` structure with given `params`.
     pub fn new(id: RequestId, params: A::Params) -> Request<A> {
-        Request { id, received: Instant::now(), params, _action: PhantomData }
+        Request { id, received: Instant::now(), params, action: PhantomData }
     }
 }
 
@@ -253,7 +259,7 @@ where
 impl<A: BlockingRequestAction> Request<A> {
     pub fn blocking_dispatch<O: Output>(
         self,
-        ctx: &mut ActionContext,
+        ctx: &mut ActionContext<O>,
         out: &O,
     ) -> Result<A::Response, ResponseError> {
         A::handle(self.id, self.params, ctx, out.clone())
@@ -261,7 +267,7 @@ impl<A: BlockingRequestAction> Request<A> {
 }
 
 impl<A: BlockingNotificationAction> Notification<A> {
-    pub fn dispatch<O: Output>(self, ctx: &mut InitActionContext, out: O)
+    pub fn dispatch<O: Output>(self, ctx: &mut InitActionContext<O>, out: O)
                                -> Result<(), ResponseError> {
         A::handle(self.params, ctx, out)?;
         Ok(())
@@ -335,9 +341,9 @@ impl RawMessage {
                 Value::String(ref s) => Some(RequestId::Str(s.to_string())),
                 _ => None,
             };
-    
-            match parsed_id {
-            Some(id) => Ok(Request { id, params, received: Instant::now(), _action: PhantomData }),
+
+        match parsed_id {
+            Some(id) => Ok(Request { id, params, received: Instant::now(), action: PhantomData }),
             None => Err(rpc_error(InvalidRequest, "Failed to parse Id")),
         }
     }
@@ -418,15 +424,11 @@ pub struct ErrorResponse {
     data: Option<Value>,
 }
 
-#[derive(Debug, PartialEq)]
-pub enum ResultOrError {
-    Result(Value),
-    Error(ErrorResponse),
-}
+pub type ResultOrError = Result<Value, ErrorResponse>;
 
 #[derive(Debug, PartialEq)]
 pub struct RawResponse {
-    pub id: Value,
+    pub id: RequestId,
     pub result: ResultOrError,
 }
 
@@ -437,6 +439,18 @@ impl RawResponse {
         let id = ls_command.get("id")
             .ok_or_else(||rpc_error(InvalidRequest, "No ID in response"))?
             .to_owned();
+
+        let parsed_id = match id {
+            Value::Number(n) if n.is_u64() =>
+                Some(RequestId::Num(n.as_u64().unwrap())),
+            Value::String(ref s) => Some(RequestId::Str(s.to_string())),
+            _ => None,
+        };
+
+        let parsed_id = match parsed_id {
+            Some(id) => id,
+            None => return Err(rpc_error(InvalidRequest, "Failed to parse Id")),
+        };
 
         let result = ls_command.get_mut("result").map(
             |r|r.take());
@@ -452,13 +466,12 @@ impl RawResponse {
                                      "Neither 'result' and 'error' \
                                       specified in response")),
             (Some(result), None) =>
-                ResultOrError::Result(result),
+                Ok(result),
             (None, Some(error)) =>
-                ResultOrError::Error(error.map_err(
-                |e|rpc_error(ParseError, e))?),
+                Err(error.map_err(|e|rpc_error(ParseError, e))?),
         };
 
-        Ok(RawResponse { id, result: resultorerror })
+        Ok(RawResponse { id: parsed_id, result: resultorerror })
     }
 }
 
@@ -490,13 +503,15 @@ impl RawMessageOrResponse {
         matches!(self, RawMessageOrResponse::Response(_))
     }
 
-    pub(crate) fn as_message(self) -> Option<RawMessage> {
+    #[allow(dead_code)]
+    pub(crate) fn as_message(&self) -> Option<&RawMessage> {
         match self {
             RawMessageOrResponse::Message(mess) => Some(mess),
             _ => None,
         }
     }
-    pub(crate) fn as_response(self) -> Option<RawResponse> {
+    #[allow(dead_code)]
+    pub(crate) fn as_response(&self) -> Option<&RawResponse> {
         match self {
             RawMessageOrResponse::Response(resp) => Some(resp),
             _ => None,
@@ -544,9 +559,9 @@ mod test {
             params: serde_json::Value::Null,
         };
 
-        let parsed = RawMessageOrResponse::try_parse(&raw_json)
-            .unwrap().as_message().unwrap();
-        assert_eq!(expected_msg, parsed);
+        let raw = RawMessageOrResponse::try_parse(&raw_json).unwrap();
+        let parsed = raw.as_message().unwrap();
+        assert_eq!(&expected_msg, parsed);
     }
 
     #[test]
@@ -564,9 +579,9 @@ mod test {
             // Missing parameters are represented internally as Null.
             params: serde_json::Value::Null,
         };
-        let parsed = RawMessageOrResponse::try_parse(&raw_json)
-            .unwrap().as_message().unwrap();
-        assert_eq!(expected_msg, parsed);
+        let raw = RawMessageOrResponse::try_parse(&raw_json).unwrap();
+        let parsed = raw.as_message().unwrap();
+        assert_eq!(&expected_msg, parsed);
     }
 
     #[test]
@@ -635,8 +650,8 @@ mod test {
     #[test]
     fn deserialize_message_empty_params() {
         let msg = r#"{"jsonrpc":"2.0","method":"initialized","params":{}}"#;
-        let parsed = RawMessageOrResponse::try_parse(msg)
-            .unwrap().as_message().unwrap();
+        let raw = RawMessageOrResponse::try_parse(msg).unwrap();
+        let parsed = raw.as_message().unwrap();
         parsed.parse_as_notification::<notifications::Initialized>().unwrap();
     }
 
@@ -654,17 +669,17 @@ mod test {
         .to_string();
 
         let expected_resp = RawResponse {
-            id: Value::from("abc"),
-            result: ResultOrError::Result(json!({
+            id: RequestId::from("abc".to_string()),
+            result: ResultOrError::Ok(json!({
                 "this" : 0,
                 "really" : "could",
                 "be" : ["anything"]
             }))
         };
 
-        let parsed = RawMessageOrResponse::try_parse(&raw_json)
-            .unwrap().as_response().unwrap();
-        assert_eq!(expected_resp, parsed);
+        let raw = RawMessageOrResponse::try_parse(&raw_json).unwrap();
+        let parsed = raw.as_response().unwrap();
+        assert_eq!(&expected_resp, parsed);
     }
     #[test]
     fn simple_request_error() {
@@ -679,8 +694,8 @@ mod test {
         .to_string();
 
         let expected_resp = RawResponse {
-            id: Value::from("abc"),
-            result: ResultOrError::Error(
+            id: RequestId::from("abc".to_string()),
+            result: ResultOrError::Err(
                 ErrorResponse {
                     code: 0,
                     message: "oh no!".to_string(),
@@ -689,8 +704,8 @@ mod test {
             ),
         };
 
-        let parsed = RawMessageOrResponse::try_parse(&raw_json)
-            .unwrap().as_response().unwrap();
-        assert_eq!(expected_resp, parsed);
+        let raw = RawMessageOrResponse::try_parse(&raw_json).unwrap();
+        let parsed = raw.as_response().unwrap();
+        assert_eq!(&expected_resp, parsed);
     }
 }

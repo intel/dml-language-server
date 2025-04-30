@@ -5,7 +5,7 @@ use std::thread;
 use std::time::Duration;
 
 use jsonrpc::error::StandardError::InternalError;
-use log::debug;
+use log::{info, error, debug};
 
 use crate::actions::work_pool;
 use crate::actions::work_pool::WorkDescription;
@@ -14,7 +14,7 @@ use crate::concurrency::{ConcurrentJob, JobToken};
 use crate::lsp_data::LSPRequest;
 use crate::server;
 use crate::server::io::Output;
-use crate::server::message::ResponseError;
+use crate::server::message::{RawResponse, ResponseError};
 use crate::server::{Request, Response};
 
 use crate::actions::requests::*;
@@ -48,7 +48,7 @@ macro_rules! define_dispatch_request_enum {
         )*
 
         impl DispatchRequest {
-            fn handle<O: Output>(self, ctx: InitActionContext, out: &O) {
+            fn handle<O: Output>(self, ctx: InitActionContext<O>, out: &O) {
                 match self {
                 $(
                     DispatchRequest::$request_type(req) => {
@@ -110,14 +110,14 @@ define_dispatch_request_enum!(
 /// handle the requests sequentially, without blocking stdin.
 /// Requests dispatched this way are automatically timed out & avoid
 /// processing if have already timed out before starting.
-pub(crate) struct Dispatcher {
-    sender: mpsc::Sender<(DispatchRequest, InitActionContext, JobToken)>,
+pub(crate) struct Dispatcher<O: Output> {
+    sender: mpsc::Sender<(DispatchRequest, InitActionContext<O>, JobToken)>,
 }
 
-impl Dispatcher {
+impl <O: Output> Dispatcher<O> {
     /// Creates a new `Dispatcher` starting a new thread and channel.
-    pub(crate) fn new<O: Output>(out: O) -> Self {
-        let (sender, receiver) = mpsc::channel::<(DispatchRequest, InitActionContext, JobToken)>();
+    pub(crate) fn new(out: O) -> Self {
+        let (sender, receiver) = mpsc::channel::<(DispatchRequest, InitActionContext<O>, JobToken)>();
 
         thread::Builder::new()
             .name("dispatch-worker".into())
@@ -136,7 +136,7 @@ impl Dispatcher {
     pub(crate) fn dispatch<R: Into<DispatchRequest>>(
         &mut self,
         request: R,
-        ctx: InitActionContext,
+        ctx: InitActionContext<O>,
     ) {
         let (job, token) = ConcurrentJob::new();
         ctx.add_job(job);
@@ -161,8 +161,45 @@ pub trait RequestAction: LSPRequest {
     fn fallback_response() -> Result<Self::Response, ResponseError>;
 
     /// Request processing logic.
-    fn handle(
-        ctx: InitActionContext,
+    fn handle<O: Output>(
+        ctx: InitActionContext<O>,
         params: Self::Params,
     ) -> Result<Self::Response, ResponseError>;
+}
+
+pub type HandleResponseType<O> = fn (&mut InitActionContext<O>,
+                                     RawResponse,
+                                     &O);
+// Request sent from server to client
+pub trait SentRequest: LSPRequest {
+    /// Expected deserializable response type
+    type Response: for <'a> serde::Deserialize<'a>;
+
+    /// Max duration this request should finish within
+    fn timeout() -> Duration {
+        DEFAULT_REQUEST_TIMEOUT
+    }
+
+    fn handle_response<O: Output>
+        (ctx: &mut InitActionContext<O>, response: RawResponse, out: &O)
+    {
+        match response.result {
+            Ok(val) => {
+                match serde_json::from_value(val) {
+                    Ok(response_value) => Self::on_response(
+                        ctx, response_value, out),
+                    Err(response_err) =>
+                        error!("Unexpected response value to request: {:?} \
+                                (wanted {})",
+                               response_err,
+                               std::any::type_name::<Self::Response>()),
+                }
+            },
+            Err(error) => {
+                info!("Received an error to request on client: {:?}", error);
+            }
+        }
+    }
+    fn on_response<O: Output>
+        (ctx: &mut InitActionContext<O>, response: Self::Response, out: &O);
 }

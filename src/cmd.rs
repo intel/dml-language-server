@@ -156,7 +156,7 @@ fn def(file_name: &str, row: &str, col: &str)
             partial_result_token: None,
         },
     };
-    Request { id: next_id(), params, received: Instant::now(), _action: PhantomData }
+    Request { id: next_id(), params, received: Instant::now(), action: PhantomData }
 }
 
 fn workspace_symbol(query: &str) -> Request<requests::WorkspaceSymbolRequest> {
@@ -169,7 +169,7 @@ fn workspace_symbol(query: &str) -> Request<requests::WorkspaceSymbolRequest> {
             work_done_token: None,
         },
     };
-    Request { id: next_id(), params, received: Instant::now(), _action: PhantomData }
+    Request { id: next_id(), params, received: Instant::now(), action: PhantomData }
 }
 
 fn document_symbol(file_name: &str)
@@ -183,11 +183,11 @@ fn document_symbol(file_name: &str)
             work_done_token: None,
         },
     };
-    Request { id: next_id(), params, received: Instant::now(), _action: PhantomData }
+    Request { id: next_id(), params, received: Instant::now(), action: PhantomData }
 }
 
 pub fn shutdown() -> Request<server::ShutdownRequest> {
-    Request { id: next_id(), params: (), received: Instant::now(), _action: PhantomData }
+    Request { id: next_id(), params: (), received: Instant::now(), action: PhantomData }
 }
 
 pub fn exit() -> Notification<server::ExitNotification> {
@@ -224,7 +224,7 @@ pub fn initialize(root_path: String) -> Request<server::InitializeRequest> {
             work_done_token: None,
         },
     };
-    Request { id: next_id(), params, received: Instant::now(), _action: PhantomData }
+    Request { id: next_id(), params, received: Instant::now(), action: PhantomData }
 }
 
 fn open(file_name: &str)
@@ -303,7 +303,7 @@ pub fn get_contexts(paths: Vec<String>) -> Request<requests::GetKnownContextsReq
                 .map(|p|parse_uri(&p).unwrap())
                 .collect()),
         },
-        _action: PhantomData,
+        action: PhantomData,
         id: next_id(),
         received: Instant::now(),
     }

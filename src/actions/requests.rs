@@ -3,7 +3,7 @@
 //! Requests that the DLS can respond to.
 
 use jsonrpc::error::{StandardError, standard_error};
-use log::{debug, error, trace, warn};
+use log::{debug, error, info, trace, warn};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashSet;
@@ -18,6 +18,7 @@ use crate::actions::notifications::ContextDefinitionKindParam;
 use crate::analysis::{ZeroSpan, ZeroFilePosition, SymbolRef};
 use crate::analysis::reference::ReferenceKind;
 use crate::analysis::symbols::SimpleSymbol;
+use crate::config::Config;
 
 pub use crate::lsp_data::request::{
     ApplyWorkspaceEdit,
@@ -34,8 +35,10 @@ pub use crate::lsp_data::request::{
     HoverRequest,
     RangeFormatting,
     References,
+    RegisterCapability,
     Rename,
     ResolveCompletionItem as ResolveCompletion,
+    WorkspaceConfiguration,
     WorkspaceSymbolRequest,
 };
 
@@ -50,7 +53,7 @@ use crate::actions::analysis_storage::AnalysisLookupError;
 use crate::config::WarningFrequency;
 use crate::file_management::CanonPath;
 use crate::server;
-use crate::server::{Ack, Output, Request, RequestAction,
+use crate::server::{Ack, Output, Request, RequestAction, SentRequest,
                     Response, ResponseError, ResponseWithMessage};
 
 // Gives a slightly-better error message than the short-form one specified by
@@ -84,11 +87,11 @@ fn warn_miss_lookup(error: AnalysisLookupError, file: Option<&str>) {
     }
 }
 
-fn response_maybe_with_limitations<I, R>(
+fn response_maybe_with_limitations<I, R, O: Output>(
     path: &Path,
     response: R,
     limitations: I,
-    ctx: &InitActionContext)
+    ctx: &InitActionContext<O>)
     -> ResponseWithMessage<R>
 where
      I: IntoIterator<Item = DLSLimitation>,
@@ -131,10 +134,12 @@ pub const TYPE_SEMANTIC_LIMITATION: DLSLimitation = DLSLimitation {
 };
 
 // TODO: This function is getting bloated, refactor into several smaller ones
-fn fp_to_symbol_refs(fp: &ZeroFilePosition,
-                     ctx: &InitActionContext,
-                     relevant_limitations: &mut HashSet<DLSLimitation>)
-                     -> Result<Vec<SymbolRef>, AnalysisLookupError> {
+fn fp_to_symbol_refs<O: Output>
+    (fp: &ZeroFilePosition,
+     ctx: &InitActionContext<O>,
+     relevant_limitations: &mut HashSet<DLSLimitation>)
+     -> Result<Vec<SymbolRef>, AnalysisLookupError>
+{
     let analysis = ctx.analysis.lock().unwrap();
     // This step-by-step approach could be folded into analysis_storage,
     // but I keep it as separate here so that we could, perhaps,
@@ -218,9 +223,11 @@ fn fp_to_symbol_refs(fp: &ZeroFilePosition,
     Ok(definitions)
 }
 
-fn handle_default_remapping(ctx: &InitActionContext,
-                            symbols: Vec<SymbolRef>,
-                            fp: &ZeroFilePosition) -> HashSet<ZeroSpan> {
+fn handle_default_remapping<O: Output>
+    (ctx: &InitActionContext<O>,
+     symbols: Vec<SymbolRef>,
+     fp: &ZeroFilePosition) -> HashSet<ZeroSpan>
+{
     let analysis = ctx.analysis.lock().unwrap();
     let refr_opt = analysis.reference_at_pos(fp);
     // NOTE: Because the call to this is preceded by a symbol lookup,
@@ -403,8 +410,8 @@ impl RequestAction for WorkspaceSymbolRequest {
         Ok(None)
     }
 
-    fn handle(
-        ctx: InitActionContext,
+    fn handle<O: Output>(
+        ctx: InitActionContext<O>,
         params: Self::Params,
     ) -> Result<Self::Response, ResponseError> {
         let analysis = ctx.analysis.lock().unwrap();
@@ -428,8 +435,8 @@ impl RequestAction for DocumentSymbolRequest {
         Ok(None)
     }
 
-    fn handle(
-        ctx: InitActionContext,
+    fn handle<O: Output>(
+        ctx: InitActionContext<O>,
         params: Self::Params,
     ) -> Result<Self::Response, ResponseError> {
         debug!("Handing doc symbol request {:?}", params);
@@ -463,7 +470,7 @@ impl RequestAction for HoverRequest {
                              range: None })
     }
 
-    fn handle(mut ctx: InitActionContext,
+    fn handle<O: Output>(mut ctx: InitActionContext<O>,
               params: Self::Params,
     ) -> Result<Self::Response, ResponseError> {
         debug!("handling hover ({:?})", params);
@@ -488,8 +495,8 @@ impl RequestAction for GotoImplementation {
         Ok(None.into())
     }
 
-    fn handle(
-        ctx: InitActionContext,
+    fn handle<O: Output>(
+        ctx: InitActionContext<O>,
         params: Self::Params,
     ) -> Result<Self::Response, ResponseError> {
         debug!("Requesting implementations with params {:?}", params);
@@ -552,8 +559,8 @@ impl RequestAction for GotoDeclaration {
         Ok(None.into())
     }
 
-    fn handle(
-        ctx: InitActionContext,
+    fn handle<O: Output>(
+        ctx: InitActionContext<O>,
         params: Self::Params,
     ) -> Result<Self::Response, ResponseError> {
         debug!("Requesting declarations with params {:?}", params);
@@ -610,8 +617,8 @@ impl RequestAction for GotoDefinition {
         Ok(None.into())
     }
 
-    fn handle(
-        ctx: InitActionContext,
+    fn handle<O: Output>(
+        ctx: InitActionContext<O>,
         params: Self::Params,
     ) -> Result<Self::Response, ResponseError> {
         debug!("Requesting definitions with params {:?}", params);
@@ -668,8 +675,8 @@ impl RequestAction for References {
         Ok(vec![].into())
     }
 
-    fn handle(
-        ctx: InitActionContext,
+    fn handle<O: Output>(
+        ctx: InitActionContext<O>,
         params: Self::Params,
     ) -> Result<Self::Response, ResponseError> {
         debug!("Requesting references with params {:?}", params);
@@ -721,8 +728,8 @@ impl RequestAction for Completion {
         Ok(vec![])
     }
 
-    fn handle(
-        _ctx: InitActionContext,
+    fn handle<O: Output>(
+        _ctx: InitActionContext<O>,
         _params: Self::Params,
     ) -> Result<Self::Response, ResponseError> {
         // TODO: Acquire completions for location
@@ -737,8 +744,8 @@ impl RequestAction for DocumentHighlightRequest {
         Ok(vec![])
     }
 
-    fn handle(
-        _ctx: InitActionContext,
+    fn handle<O: Output>(
+        _ctx: InitActionContext<O>,
         _params: Self::Params,
     ) -> Result<Self::Response, ResponseError> {
         // TODO: Acquire highlighting info for file and span
@@ -756,8 +763,8 @@ impl RequestAction for Rename {
                             change_annotations: None }))
     }
 
-    fn handle(
-        _ctx: InitActionContext,
+    fn handle<O: Output>(
+        _ctx: InitActionContext<O>,
         _params: Self::Params,
     ) -> Result<Self::Response, ResponseError> {
         // TODO: Perform a rename
@@ -800,8 +807,8 @@ impl RequestAction for ExecuteCommand {
     }
 
     /// Currently, no support for this
-    fn handle(
-        _ctx: InitActionContext,
+    fn handle<O: Output>(
+        _ctx: InitActionContext<O>,
         _params: ExecuteCommandParams,
     ) -> Result<Self::Response, ResponseError> {
         // TODO: handle specialized commands. or if no such commands, remove
@@ -820,8 +827,8 @@ impl RequestAction for CodeActionRequest {
         Ok(vec![])
     }
 
-    fn handle(
-        _ctx: InitActionContext,
+    fn handle<O: Output>(
+        _ctx: InitActionContext<O>,
         _params: Self::Params,
     ) -> Result<Self::Response, ResponseError> {
         // TODO: figure out if we want to use this
@@ -840,8 +847,8 @@ impl RequestAction for Formatting {
         ))
     }
 
-    fn handle(
-        _ctx: InitActionContext,
+    fn handle<O: Output>(
+        _ctx: InitActionContext<O>,
         _params: Self::Params,
     ) -> Result<Self::Response, ResponseError> {
         // TODO: format document
@@ -859,8 +866,8 @@ impl RequestAction for RangeFormatting {
         ))
     }
 
-    fn handle(
-        _ctx: InitActionContext,
+    fn handle<O: Output>(
+        _ctx: InitActionContext<O>,
         _params: Self::Params,
     ) -> Result<Self::Response, ResponseError> {
         // TODO: format range
@@ -875,7 +882,7 @@ impl RequestAction for ResolveCompletion {
         Err(ResponseError::Empty)
     }
 
-    fn handle(_: InitActionContext, _params: Self::Params) -> Result<Self::Response, ResponseError> {
+    fn handle<O: Output>(_: InitActionContext<O>, _params: Self::Params) -> Result<Self::Response, ResponseError> {
         // TODO: figure out if we want to use this
         Self::fallback_response()
     }
@@ -888,8 +895,8 @@ impl RequestAction for CodeLensRequest {
         Err(ResponseError::Empty)
     }
 
-    fn handle(
-        _ctx: InitActionContext,
+    fn handle<O: Output>(
+        _ctx: InitActionContext<O>,
         _params: Self::Params,
     ) -> Result<Self::Response, ResponseError> {
         // TODO: figure out if we want to use this
@@ -931,8 +938,8 @@ impl RequestAction for GetKnownContextsRequest {
         Err(ResponseError::Empty)
     }
 
-    fn handle(
-        ctx: InitActionContext,
+    fn handle<O: Output>(
+        ctx: InitActionContext<O>,
         params: Self::Params,
     ) -> Result<Self::Response, ResponseError> {
         let for_these_paths: Vec<CanonPath> =
@@ -980,5 +987,59 @@ impl RequestAction for GetKnownContextsRequest {
                         }))
            .collect()
         )
+    }
+}
+
+/// Server-to-client requests
+impl SentRequest for RegisterCapability {
+    type Response = <Self as lsp_data::request::Request>::Result;
+    fn on_response<O: Output>
+        (_ctx: &mut InitActionContext<O>, _response: Self::Response, _out: &O) {
+            info!("Successful registration on some capability");
+        }
+}
+
+impl SentRequest for WorkspaceConfiguration {
+    type Response = <Self as lsp_data::request::Request>::Result;
+    fn on_response<O: Output>
+        (ctx: &mut InitActionContext<O>, response: Self::Response, out: &O)
+    {
+        info!("Acquired configuration updates {:?}", response);
+
+        let dml_object = if response.len() == 1 {
+            &response[0]
+        } else {
+            error!("Received incorrectly formatted response to \
+                    'workspace/configuration' from client (array length \
+                    should be 1)\
+                    : {:?}",
+                   response);
+            return;
+        };
+        use std::collections::HashMap;
+        let mut dups = HashMap::new();
+        let mut unknowns = vec![];
+        let mut deprecated = vec![];
+        let settings = Config::try_deserialize(
+            dml_object,
+            &mut dups,
+            &mut unknowns,
+            &mut deprecated,
+        );
+        crate::server::maybe_notify_unknown_configs(out, &unknowns);
+        crate::server::maybe_notify_deprecated_configs(out, &deprecated);
+        crate::server::maybe_notify_duplicated_configs(out, &dups);
+
+        let new_config = match settings {
+            Ok(value) => value,
+            Err(err) => {
+                warn!("Received unactionable config: {:?} (error: {:?})",
+                      &response, err);
+                return;
+            }
+        };
+
+        ctx.config.lock().unwrap().update(new_config);
+        ctx.maybe_changed_config(out);
     }
 }
