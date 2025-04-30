@@ -8,7 +8,6 @@ use crate::analysis::parsing::{expression::{CastContent, FunctionCallContent, Pa
                                tree::TreeElementTokenIterator,
                                types::{BitfieldsContent, LayoutContent, StructTypeContent}};
 use crate::span::{Range, ZeroIndexed};
-use crate::analysis::LocalDMLError;
 use crate::analysis::parsing::tree::{ZeroRange, Content, TreeElement};
 use serde::{Deserialize, Serialize};
 use super::Rule;
@@ -65,16 +64,7 @@ impl LongLinesRule {
         let len = line.len().try_into().unwrap();
         if len > self.max_length {
             let rowu32 = row.try_into().unwrap();
-            let msg = LongLinesRule::description().to_owned()
-                + format!(" of {} characters", self.max_length).as_str();
-            let dmlerror = DMLStyleError {
-                error: LocalDMLError {
-                    range: Range::<ZeroIndexed>::from_u32(rowu32, rowu32, self.max_length, len),
-                    description: msg,
-                },
-                rule_type: Self::get_rule_type(),
-            };
-            acc.push(dmlerror);
+            self.push_err(acc, Range::<ZeroIndexed>::from_u32(rowu32,rowu32, self.max_length, len));
         }
     }
 }
@@ -109,15 +99,7 @@ impl IdentNoTabRule {
 
         for (col, _) in line.match_indices('\t') {
             let colu32 = col.try_into().unwrap();
-            let msg = IdentNoTabRule::description().to_owned();
-            let dmlerror = DMLStyleError {
-                error: LocalDMLError {
-                    range: Range::<ZeroIndexed>::from_u32(rowu32, rowu32, colu32, colu32 + 1),
-                    description: msg,
-                },
-                rule_type: Self::get_rule_type(),
-            };
-            acc.push(dmlerror);
+            self.push_err(acc, Range::<ZeroIndexed>::from_u32(rowu32, rowu32, colu32, colu32 + 1));
         }
     }
 }
@@ -221,14 +203,7 @@ impl IndentCodeBlockRule {
             args.lbrace.row_start == args.members_ranges[0].row_start { return; }
         for member_range in args.members_ranges {
             if self.indentation_is_not_aligned(member_range, args.expected_depth) {
-                let dmlerror = DMLStyleError {
-                    error: LocalDMLError {
-                        range: member_range,
-                        description: Self::description().to_string(),
-                    },
-                    rule_type: Self::get_rule_type(),
-                };
-                acc.push(dmlerror);
+                self.push_err(acc, member_range);
             }
         }
     }
@@ -599,14 +574,7 @@ impl IndentSwitchCaseRule {
         if !self.enabled { return; }
         let Some(args) = args else { return; };
         if self.indentation_is_not_aligned(args.case_range, args.expected_depth) {
-            let dmlerror = DMLStyleError {
-                error: LocalDMLError {
-                    range: args.case_range,
-                    description: Self::description().to_string(),
-                },
-                rule_type: Self::get_rule_type(),
-            };
-            acc.push(dmlerror);
+            self.push_err(acc, args.case_range);
         }
     }
     fn indentation_is_not_aligned(&self, member_range: ZeroRange, depth: u32) -> bool {
@@ -693,14 +661,7 @@ impl IndentEmptyLoopRule {
         let Some(args) = args else { return; };
         if self.indentation_is_not_aligned(args.semicolon_range, args.expected_depth) ||
             args.loop_keyword_range.row_start == args.semicolon_range.row_start {
-            let dmlerror = DMLStyleError {
-                error: LocalDMLError {
-                    range: Range::combine(args.loop_keyword_range, args.semicolon_range),
-                    description: Self::description().to_string(),
-                },
-                rule_type: Self::get_rule_type(),
-            };
-            acc.push(dmlerror);
+            self.push_err(acc, Range::combine(args.loop_keyword_range, args.semicolon_range))
         }
     }
     fn indentation_is_not_aligned(&self, member_range: ZeroRange, depth: u32) -> bool {

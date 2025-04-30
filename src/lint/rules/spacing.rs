@@ -5,7 +5,6 @@ use crate::analysis::parsing::types::{BitfieldsContent, LayoutContent,
                                       StructTypeContent};
 use crate::lint::{rules::{Rule, RuleType},
                   DMLStyleError};
-use crate::analysis::LocalDMLError;
 use crate::analysis::parsing::tree::{TreeElement, ZeroRange};
 use crate::analysis::parsing::expression::{FunctionCallContent, IndexContent,
                                            PostUnaryExpressionContent,
@@ -104,25 +103,11 @@ impl SpBracesRule {
         if let Some(location) = ranges {
             if (location.lbrace.row_end == location.body_start.row_start)
                 && (location.lbrace.col_end == location.body_start.col_start) {
-                let dmlerror = DMLStyleError {
-                    error: LocalDMLError {
-                        range: location.lbrace,
-                        description: Self::description().to_string(),
-                    },
-                    rule_type: Self::get_rule_type(),
-                };
-                acc.push(dmlerror);
+                self.push_err(acc, location.lbrace);
             }
             if (location.rbrace.row_start == location.body_end.row_end)
                 && (location.rbrace.col_start == location.body_end.col_end) {
-                let dmlerror = DMLStyleError {
-                    error: LocalDMLError {
-                        range: location.rbrace,
-                        description: Self::description().to_string(),
-                    },
-                    rule_type: Self::get_rule_type(),
-                };
-                acc.push(dmlerror);
+                self.push_err(acc, location.rbrace);
             }
         }
     }
@@ -254,14 +239,7 @@ impl SpPunctRule {
                         before_range.row_end, punct_range.row_start,
                         before_range.col_end, punct_range.col_start
                     );
-                    let dmlerror = DMLStyleError {
-                        error: LocalDMLError {
-                            range: error_range,
-                            description: Self::description().to_string(),
-                        },
-                        rule_type: Self::get_rule_type(),
-                    };
-                    acc.push(dmlerror);
+                    self.push_err(acc, error_range);
                 }
 
                 if after_range.is_none() {continue;}
@@ -272,14 +250,7 @@ impl SpPunctRule {
                         punct_range.row_start, after_range.unwrap().row_end,
                         punct_range.col_start, after_range.unwrap().col_end,
                     );
-                    let dmlerror = DMLStyleError {
-                        error: LocalDMLError {
-                            range: error_range,
-                            description: Self::description().to_string(),
-                        },
-                        rule_type: Self::get_rule_type(),
-                    };
-                    acc.push(dmlerror);
+                    self.push_err(acc, error_range);
                 }
             }
         }
@@ -332,14 +303,7 @@ impl NspFunparRule {
                  range: Option<NspFunparArgs>) {
         if !self.enabled { return; }
         if let Some(gap) = range {
-            let dmlerror = DMLStyleError {
-                error: LocalDMLError {
-                    range: gap,
-                    description: Self::description().to_string(),
-                },
-                rule_type: Self::get_rule_type(),
-            };
-            acc.push(dmlerror);
+            self.push_err(acc, gap);
         }
     }
 }
@@ -432,28 +396,14 @@ impl NspInparenRule {
                 let mut gap = location.opening;
                 gap.col_start = location.opening.col_end;
                 gap.col_end = location.content_start.col_start;
-                let dmlerror = DMLStyleError {
-                    error: LocalDMLError {
-                        range: gap,
-                        description: Self::description().to_string(),
-                    },
-                    rule_type: Self::get_rule_type(),
-                };
-                acc.push(dmlerror);
+                self.push_err(acc, gap);
             }
             if (location.closing.row_start == location.content_end.row_end)
                 && (location.closing.col_start != location.content_end.col_end) { 
                 let mut gap = location.closing;
                 gap.col_end = location.closing.col_start;
                 gap.col_start = location.content_end.col_end;
-                let dmlerror = DMLStyleError {
-                    error: LocalDMLError {
-                        range: gap,
-                        description: Self::description().to_string(),
-                    },
-                    rule_type: Self::get_rule_type(),
-                };
-                acc.push(dmlerror);
+                self.push_err(acc, gap);
             }
         }
     }
@@ -504,14 +454,7 @@ impl NspUnaryRule {
                  range: Option<NspUnaryArgs>) {
         if !self.enabled { return; }
         if let Some(gap) = range {
-            let dmlerror = DMLStyleError {
-                error: LocalDMLError {
-                    range: gap,
-                    description: Self::description().to_string(),
-                },
-                rule_type: Self::get_rule_type(),
-            };
-            acc.push(dmlerror);
+            self.push_err(acc, gap);
         }
     }
 }
@@ -540,17 +483,10 @@ impl NspTrailingRule {
         let row_u32 = row.try_into().unwrap();
         let tokens_end = line.trim_end().len().try_into().unwrap();
         if tokens_end < len {
-            let dmlerror = DMLStyleError {
-                error: LocalDMLError {
-                    range: Range::<ZeroIndexed>::from_u32(row_u32,
+            self.push_err(acc, Range::<ZeroIndexed>::from_u32(row_u32,
                                                         row_u32,
                                                         tokens_end,
-                                                        len),
-                    description: Self::description().to_string(),
-                },
-                rule_type: Self::get_rule_type(),
-            };
-            acc.push(dmlerror);
+                                                        len));
         }
     }
 }
