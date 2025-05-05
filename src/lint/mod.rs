@@ -96,6 +96,7 @@ impl Default for LintCfg {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct DMLStyleError {
     pub error: LocalDMLError,
     pub rule_type: RuleType,
@@ -124,8 +125,8 @@ impl LinterAnalysis {
         let rules =  instantiate_rules(&cfg);
         let local_lint_errors = begin_style_check(original_analysis.ast, file.text, &rules)?;
         let mut lint_errors = vec![];
-        for error in local_lint_errors {
-            lint_errors.push(error.warning_with_file(path));
+        for entry in local_lint_errors {
+            lint_errors.push(entry.error.warning_with_file(path));
         }
 
         let res = LinterAnalysis {
@@ -137,7 +138,7 @@ impl LinterAnalysis {
     }
 }
 
-pub fn begin_style_check(ast: TopAst, file: String, rules: &CurrentRules) -> Result<Vec<LocalDMLError>, Error> {
+pub fn begin_style_check(ast: TopAst, file: String, rules: &CurrentRules) -> Result<Vec<DMLStyleError>, Error> {
     let mut linting_errors: Vec<DMLStyleError> = vec![];
     ast.style_check(&mut linting_errors, rules, AuxParams { depth: 0 });      
 
@@ -151,7 +152,7 @@ pub fn begin_style_check(ast: TopAst, file: String, rules: &CurrentRules) -> Res
 
     post_process_linting_errors(&mut linting_errors);
 
-    Ok(linting_errors.into_iter().map(|e| e.error).collect())
+    Ok(linting_errors)
 }
 
 fn post_process_linting_errors(errors: &mut Vec<DMLStyleError>) {

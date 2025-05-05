@@ -1,5 +1,5 @@
-use crate::lint::rules::tests::common::set_up;
-use crate::lint::rules::tests::indentation::assert_snippet;
+use crate::lint::rules::tests::common::{set_up, robust_assert_snippet as assert_snippet};
+use crate::lint::rules::RuleType;
 
 static FUNCTION_CONTENTS_INDENT_CORRECT: &str = "
 method some_function(int a) {
@@ -9,7 +9,7 @@ method some_function(int a) {
 #[test]
 fn function_contents_indent_correct() {
     let rules = set_up();
-    assert_snippet(FUNCTION_CONTENTS_INDENT_CORRECT, 0, &rules);
+    assert_snippet(FUNCTION_CONTENTS_INDENT_CORRECT, vec![], &rules);
 }
 
 static ONE_LINE_NO_INDENT_CORRECT: &str = "
@@ -18,7 +18,7 @@ method some_function(int a) { return 0; }
 #[test]
 fn one_line_no_indent_correct() {
     let rules = set_up();
-    assert_snippet(ONE_LINE_NO_INDENT_CORRECT, 0, &rules);
+    assert_snippet(ONE_LINE_NO_INDENT_CORRECT, vec![], &rules);
 }
 
 static FUNCTION_CONTENTS_INDENT_INCORRECT: &str = "
@@ -29,22 +29,30 @@ return a;
 #[test]
 fn function_contents_indent_incorrect() {
     let rules = set_up();
-    assert_snippet(FUNCTION_CONTENTS_INDENT_INCORRECT, 1, &rules);
+    let expected_errors = define_expected_errors!(
+        RuleType::IN3,
+        (2, 2, 0, 9),
+    );
+    assert_snippet(FUNCTION_CONTENTS_INDENT_INCORRECT, expected_errors, &rules);
 }
 
-static FUNCTION_PARAMS_BREAKED_AND_NO_INDENT: &str = "
+static FUNCTION_PARAMS_BROKEN_AND_NO_INDENT: &str = "
 method some_function(int a,
                      int b) {
 return a;
 }
 ";
 #[test]
-fn function_params_breaked_and_no_indent() {
+fn function_params_broken_and_no_indent() {
     let rules = set_up();
-    assert_snippet(FUNCTION_PARAMS_BREAKED_AND_NO_INDENT, 1, &rules);
+    let expected_errors = define_expected_errors!(
+        RuleType::IN3,
+        (3, 3, 0, 9),
+    );
+    assert_snippet(FUNCTION_PARAMS_BROKEN_AND_NO_INDENT, expected_errors, &rules);
 }
 
-static FUNCTION_PARAMS_BADLY_BREAKED_AND_NO_INDENT: &str = "
+static FUNCTION_PARAMS_BADLY_BROKEN_AND_NO_INDENT: &str = "
 method some_function(int a,
                      int b)
 {
@@ -52,12 +60,16 @@ return a;
 }
 ";
 #[test]
-fn function_params_badly_breaked_and_no_indent() {
+fn function_params_badly_broken_and_no_indent() {
     let rules = set_up();
-    assert_snippet(FUNCTION_PARAMS_BADLY_BREAKED_AND_NO_INDENT, 1, &rules);
+    let expected_errors = define_expected_errors!(
+        RuleType::IN3,
+        (4, 4, 0, 9),
+    );
+    assert_snippet(FUNCTION_PARAMS_BADLY_BROKEN_AND_NO_INDENT, expected_errors, &rules);
 }
 
-static INLINE_FUNCTION_PARAMS_BADLY_BREAKED_AND_NO_INDENT: &str = "
+static INLINE_FUNCTION_PARAMS_BADLY_BROKEN_AND_NO_INDENT: &str = "
 inline method some_function(int a,
                             int b)
 {
@@ -65,9 +77,13 @@ return a;
 }
 ";
 #[test]
-fn inline_function_params_badly_breaked_and_no_indent() {
+fn inline_function_params_badly_broken_and_no_indent() {
     let rules = set_up();
-    assert_snippet(INLINE_FUNCTION_PARAMS_BADLY_BREAKED_AND_NO_INDENT, 1, &rules);
+    let expected_errors = define_expected_errors!(
+        RuleType::IN3,
+        (4, 4, 0, 9),
+    );
+    assert_snippet(INLINE_FUNCTION_PARAMS_BADLY_BROKEN_AND_NO_INDENT, expected_errors, &rules);
 }
 
 static FULL_BANK_INDENT_CORRECT: &str = "
@@ -97,7 +113,7 @@ bank BankA {
 #[test]
 fn full_bank_indent_correct() {
     let rules = set_up();
-    assert_snippet(FULL_BANK_INDENT_CORRECT, 0, &rules);
+    assert_snippet(FULL_BANK_INDENT_CORRECT, vec![], &rules);
 }
 
 static STRUCTS_INDENT_CORRECT: &str = "
@@ -122,7 +138,7 @@ typedef layout \"little-endian\" {
 #[test]
 fn structs_indent_correct() {
     let rules = set_up();
-    assert_snippet(STRUCTS_INDENT_CORRECT, 0, &rules);
+    assert_snippet(STRUCTS_INDENT_CORRECT, vec![], &rules);
 }
 
 static STRUCTS_INDENT_INCORRECT: &str = "
@@ -147,7 +163,15 @@ typedef layout \"little-endian\" {
 #[test]
 fn structs_bad_indent() {
     let rules = set_up();
-    assert_snippet(STRUCTS_INDENT_INCORRECT, 5, &rules);
+    let expected_errors = define_expected_errors!(
+        RuleType::IN3,
+        (2, 2, 5, 16),
+        (3, 3, 7, 20),
+        (8, 16, 5, 11),
+        (11, 11, 10, 39),
+        (12, 12, 10, 39),
+    );
+    assert_snippet(STRUCTS_INDENT_INCORRECT, expected_errors, &rules);
 }
 
 static COND_STRUCTURE_INDENT_INCORRECT: &str = "
@@ -167,7 +191,14 @@ method control_device() {
 #[test]
 fn cond_structure_indent_incorrect() {
     let rules = set_up();
-    assert_snippet(COND_STRUCTURE_INDENT_INCORRECT, 4, &rules);
+    let expected_errors = define_expected_errors!(
+        RuleType::IN3,
+        (3, 3, 4, 39),
+        (4, 4, 12, 31),
+        (6, 6, 16, 51),
+        (9, 9, 4, 43),
+    );
+    assert_snippet(COND_STRUCTURE_INDENT_INCORRECT, expected_errors, &rules);
 }
 
 static EMBEDDED_INDENT_CORRECT: &str = "
@@ -189,7 +220,7 @@ bank pcie_config {
 #[test]
 fn embedded_indent_correct() {
     let rules = set_up();
-    assert_snippet(EMBEDDED_INDENT_CORRECT, 0, &rules);
+    assert_snippet(EMBEDDED_INDENT_CORRECT, vec![], &rules);
 }
 
 static EMBEDDED_INDENT_INCORRECT: &str = "
@@ -211,7 +242,13 @@ bank pcie_config {
 #[test]
 fn embedded_indent_incorrect() {
     let rules = set_up();
-    assert_snippet(EMBEDDED_INDENT_INCORRECT, 3, &rules);
+    let expected_errors = define_expected_errors!(
+        RuleType::IN3,
+        (3, 12, 10, 9),
+        (9, 9, 14, 29),
+        (6, 6, 16, 34),
+    );
+    assert_snippet(EMBEDDED_INDENT_INCORRECT, expected_errors, &rules);
 }
 
 static TEMPLATE_CORRECT: &str = "
@@ -231,7 +268,7 @@ template template_name {
 #[test]
 fn template_correct() {
     let rules = set_up();
-    assert_snippet(TEMPLATE_CORRECT, 0, &rules);
+    assert_snippet(TEMPLATE_CORRECT, vec![], &rules);
 }
 
 static TEMPLATE_INCORRECT: &str = "
@@ -251,5 +288,12 @@ template template_name {
 #[test]
 fn template_incorrect() {
     let rules = set_up();
-    assert_snippet(TEMPLATE_INCORRECT, 4, &rules);
+    let expected_errors = define_expected_errors!(
+        RuleType::IN3,
+        (2, 2, 6, 29),
+        (4, 11, 3, 5),
+        (6, 6, 9, 42),
+        (8, 8, 13, 36),
+    );
+    assert_snippet(TEMPLATE_INCORRECT, expected_errors, &rules);
 }

@@ -1,4 +1,5 @@
-use crate::lint::rules::tests::common::{set_up, assert_snippet};
+use crate::lint::rules::tests::common::{set_up, robust_assert_snippet as assert_snippet};
+use crate::lint::rules::RuleType;
 
 // A continuation line that is broken inside a parenthesized expression 
 // is indented to line up inside the corresponding parenthesis on the previous line
@@ -11,7 +12,7 @@ param result = (((reg0.val * reg1.enable.val)
 #[test]
 fn operation_paren_correct() {
     let rules = set_up();
-    assert_snippet(OPERATION_PAREN_CORRECT, 0, &rules);
+    assert_snippet(OPERATION_PAREN_CORRECT, vec![], &rules);
 }
 
 static OPERATION_PAREN_INCORRECT: &str = "
@@ -22,7 +23,12 @@ param result = (((reg0.val * reg1.enable.val)
 #[test]
 fn operation_paren_incorrect() {
     let rules = set_up();
-    assert_snippet(OPERATION_PAREN_INCORRECT, 2, &rules);
+    let expected_errors = define_expected_errors!(
+        RuleType::IN5,
+        (3, 3, 17, 18),
+        (2, 2, 16, 17),
+    );
+    assert_snippet(OPERATION_PAREN_INCORRECT, expected_errors, &rules);
 }
 
 static METHODARGS_PAREN_CORRECT: &str = "
@@ -34,7 +40,7 @@ method some_method(int a,
 #[test]
 fn methodargs_paren_correct() {
     let rules = set_up();
-    assert_snippet(METHODARGS_PAREN_CORRECT, 0, &rules);
+    assert_snippet(METHODARGS_PAREN_CORRECT, vec![], &rules);
 }
 
 static METHODARGS_PAREN_INCORRECT: &str = "
@@ -46,7 +52,11 @@ method some_method(int a,
 #[test]
 fn methodargs_paren_incorrect() {
     let rules = set_up();
-    assert_snippet(METHODARGS_PAREN_INCORRECT, 1, &rules);
+    let expected_errors = define_expected_errors!(
+        RuleType::IN5,
+        (2, 2, 4, 7),
+    );
+    assert_snippet(METHODARGS_PAREN_INCORRECT, expected_errors, &rules);
 }
 
 static FUNCALL_PAREN_CORRECT: &str = "
@@ -59,7 +69,7 @@ method effect() {
 #[test]
 fn funcall_paren_correct() {
     let rules = set_up();
-    assert_snippet(FUNCALL_PAREN_CORRECT, 0, &rules);
+    assert_snippet(FUNCALL_PAREN_CORRECT, vec![], &rules);
 }
 
 static FUNCALL_PAREN_INCORRECT: &str = "
@@ -72,7 +82,12 @@ method effect() {
 #[test]
 fn funcall_paren_incorrect() {
     let rules = set_up();
-    assert_snippet(FUNCALL_PAREN_INCORRECT, 2, &rules);
+    let expected_errors = define_expected_errors!(
+        RuleType::IN5,
+        (3, 3, 8, 18),
+        (4, 4, 8, 13),
+    );
+    assert_snippet(FUNCALL_PAREN_INCORRECT, expected_errors, &rules);
 }
 
 static FUNCALL_NESTED_PAREN_CORRECT: &str = "
@@ -88,7 +103,7 @@ method effect() {
 fn funcall_nested_paren_correct() {
     // This test checks that nested parentheses are correctly indented
     let rules = set_up();
-    assert_snippet(FUNCALL_NESTED_PAREN_CORRECT, 0, &rules);
+    assert_snippet(FUNCALL_NESTED_PAREN_CORRECT, vec![], &rules);
 }
 
 static FUNCALL_NESTED_PAREN_INCORRECT: &str = "
@@ -104,7 +119,13 @@ method effect() {
 fn funcall_nested_paren_incorrect() {
     // This test checks that nested parentheses are incorrectly indented
     let rules = set_up();
-    assert_snippet(FUNCALL_NESTED_PAREN_INCORRECT, 3, &rules);
+    let expected_errors = define_expected_errors!(
+        RuleType::IN5,
+        (4, 4, 8, 9),
+        (6, 6, 8, 13),
+        (3, 3, 20, 25),
+    );
+    assert_snippet(FUNCALL_NESTED_PAREN_INCORRECT, expected_errors, &rules);
 }
 
 static IF_PAREN_CORRECT: &str = "
@@ -119,7 +140,7 @@ method callback() {
 #[test]
 fn if_paren_correct() {
     let rules = set_up();
-    assert_snippet(IF_PAREN_CORRECT, 0, &rules);
+    assert_snippet(IF_PAREN_CORRECT, vec![], &rules);
 }
 
 static IF_PAREN_INCORRECT: &str = "
@@ -133,7 +154,11 @@ method callback() {
 #[test]
 fn if_paren_incorrect() {
     let rules = set_up();
-    assert_snippet(IF_PAREN_INCORRECT, 1, &rules);
+    let expected_errors = define_expected_errors!(
+        RuleType::IN5,
+        (3, 3, 10, 20),
+    );
+    assert_snippet(IF_PAREN_INCORRECT, expected_errors, &rules);
 }
 
 static WHILE_PAREN_CORRECT: &str = "
@@ -147,7 +172,7 @@ method callback() {
 #[test]
 fn while_paren_correct() {
     let rules = set_up();
-    assert_snippet(WHILE_PAREN_CORRECT, 0, &rules);
+    assert_snippet(WHILE_PAREN_CORRECT, vec![], &rules);
 }
 
 static WHILE_PAREN_INCORRECT: &str = "
@@ -162,7 +187,11 @@ method callback() {
 #[test]
 fn while_paren_incorrect() {
     let rules = set_up();
-    assert_snippet(WHILE_PAREN_INCORRECT, 1, &rules);
+    let expected_errors = define_expected_errors!(
+        RuleType::IN5,
+        (3, 3, 8, 9),
+    );
+    assert_snippet(WHILE_PAREN_INCORRECT, expected_errors, &rules);
 }
 
 static DO_WHILE_PAREN_CORRECT: &str = "
@@ -176,7 +205,7 @@ method callback() {
 #[test]
 fn do_while_paren_correct() {
     let rules = set_up();
-    assert_snippet(DO_WHILE_PAREN_CORRECT, 0, &rules);
+    assert_snippet(DO_WHILE_PAREN_CORRECT, vec![], &rules);
 }
 
 static DO_WHILE_PAREN_INCORRECT: &str = "
@@ -190,7 +219,11 @@ method callback() {
 #[test]
 fn do_while_paren_incorrect() {
     let rules = set_up();
-    assert_snippet(DO_WHILE_PAREN_INCORRECT, 1, &rules);
+    let expected_errors = define_expected_errors!(
+        RuleType::IN5,
+        (5, 5, 12, 14),
+    );
+    assert_snippet(DO_WHILE_PAREN_INCORRECT, expected_errors, &rules);
 }
 
 static FOR_PAREN_CORRECT: &str = "
@@ -205,7 +238,7 @@ method callback() {
 #[test]
 fn for_paren_correct() {
     let rules = set_up();
-    assert_snippet(FOR_PAREN_CORRECT, 0, &rules);
+    assert_snippet(FOR_PAREN_CORRECT, vec![], &rules);
 }
 
 static FOR_PAREN_INCORRECT: &str = "
@@ -220,7 +253,12 @@ method callback() {
 #[test]
 fn for_paren_incorrect() {
     let rules = set_up();
-    assert_snippet(FOR_PAREN_INCORRECT, 2, &rules);
+    let expected_errors = define_expected_errors!(
+        RuleType::IN5,
+        (3, 3, 11, 12),
+        (4, 4, 13, 14),
+    );
+    assert_snippet(FOR_PAREN_INCORRECT, expected_errors, &rules);
 }
 
 static FOREACH_PAREN_CORRECT: &str = "
@@ -234,7 +272,7 @@ method handle() {
 #[test]
 fn foreach_paren_correct() {
     let rules = set_up();
-    assert_snippet(FOREACH_PAREN_CORRECT, 0, &rules);
+    assert_snippet(FOREACH_PAREN_CORRECT, vec![], &rules);
 }
 
 static FOREACH_PAREN_INCORRECT: &str = "
@@ -250,7 +288,13 @@ method handle() {
 #[test]
 fn foreach_paren_incorrect() {
     let rules = set_up();
-    assert_snippet(FOREACH_PAREN_INCORRECT, 3, &rules);
+    let expected_errors = define_expected_errors!(
+        RuleType::IN5,
+        (3, 3, 12, 16),
+        (4, 4, 16, 20),
+        (5, 5, 20, 24),
+    );
+    assert_snippet(FOREACH_PAREN_INCORRECT, expected_errors, &rules);
 }
 
 static SWITCH_PAREN_CORRECT: &str = "
@@ -272,7 +316,7 @@ method select_from_result() {
 #[test]
 fn switch_paren_correct() {
     let rules = set_up();
-    assert_snippet(SWITCH_PAREN_CORRECT, 0, &rules);
+    assert_snippet(SWITCH_PAREN_CORRECT, vec![], &rules);
 }
 
 static SWITCH_PAREN_INCORRECT: &str = "
@@ -294,7 +338,12 @@ method select_from_result() {
 #[test]
 fn switch_paren_incorrect() {
     let rules = set_up();
-    assert_snippet(SWITCH_PAREN_INCORRECT, 2, &rules);
+    let expected_errors = define_expected_errors!(
+        RuleType::IN5,
+        (3, 3, 14, 15),
+        (4, 4, 16, 17),
+    );
+    assert_snippet(SWITCH_PAREN_INCORRECT, expected_errors, &rules);
 }
 
 static NESTED_PAREN_EXPR_CORRECT: &str = "
@@ -310,7 +359,7 @@ param result = (
 #[test]
 fn nested_paren_expr_correct(){
     let rules = set_up();
-    assert_snippet(NESTED_PAREN_EXPR_CORRECT, 0, &rules);
+    assert_snippet(NESTED_PAREN_EXPR_CORRECT, vec![], &rules);
 }
 
 static NESTED_PAREN_EXPR_INCORRECT: &str = "
@@ -326,5 +375,10 @@ param result = (
 #[test]
 fn nested_paren_expr_incorrect(){
     let rules = set_up();
-    assert_snippet(NESTED_PAREN_EXPR_INCORRECT, 2, &rules);
+    let expected_errors = define_expected_errors!(
+        RuleType::IN5,
+        (2, 2, 4, 5),
+        (5, 5, 17, 25),
+    );
+    assert_snippet(NESTED_PAREN_EXPR_INCORRECT, expected_errors, &rules);
 }

@@ -62,7 +62,7 @@ pub trait Rule {
     }
 }
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Debug, Clone)]
 pub enum RuleType {
     SpBraces,
     SpPunct,
