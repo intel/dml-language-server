@@ -86,13 +86,13 @@ pub struct IndentSizeOptions {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct IdentNoTabOptions {}
+pub struct IndentNoTabOptions {}
 
-pub struct IdentNoTabRule {
+pub struct IndentNoTabRule {
     pub enabled: bool,
 }
 
-impl IdentNoTabRule {
+impl IndentNoTabRule {
     pub fn check(&self, acc: &mut Vec<DMLStyleError>, row: usize, line: &str) {
         if !self.enabled { return; }
         let rowu32 = row.try_into().unwrap();
@@ -103,7 +103,7 @@ impl IdentNoTabRule {
         }
     }
 }
-impl Rule for IdentNoTabRule {
+impl Rule for IndentNoTabRule {
     fn name() -> &'static str {
         "INDENT_NO_TABS"
     }
