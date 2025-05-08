@@ -37,14 +37,7 @@ pub fn run_linter(source_code: &str, rules: &CurrentRules)
     begin_style_check(ast, source_code.to_string(), rules)
 }
 
-pub fn assert_snippet(source_code: &str, expected_errors: usize, rules: &CurrentRules) {
-    let lint_errors = run_linter(source_code, rules);
-    assert!(lint_errors.is_ok());
-    assert_eq!(lint_errors.clone().unwrap().len(), expected_errors,
-               "{:#?}", lint_errors);
-}
-
-pub fn robust_assert_snippet(source_code: &str, expected_errors: Vec<ExpectedDMLStyleError>, rules: &CurrentRules) {
+pub fn assert_snippet(source_code: &str, expected_errors: Vec<ExpectedDMLStyleError>, rules: &CurrentRules) {
     let lint_errors = run_linter(source_code, rules).unwrap();
     assert_eq!(lint_errors.len(), expected_errors.len(), "{:#?}", lint_errors);
 
