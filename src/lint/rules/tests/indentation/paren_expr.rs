@@ -1,4 +1,4 @@
-use crate::lint::rules::tests::common::{set_up, robust_assert_snippet as assert_snippet};
+use crate::lint::rules::tests::common::{set_up, assert_snippet};
 use crate::lint::rules::RuleType;
 
 // A continuation line that is broken inside a parenthesized expression 
