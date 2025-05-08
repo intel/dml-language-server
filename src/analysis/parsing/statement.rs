@@ -1120,6 +1120,7 @@ impl TreeElement for SwitchContent {
     {
         rules.indent_closing_brace.check(IndentClosingBraceArgs::from_switch_content(self, aux.depth), acc);
         rules.indent_paren_expr.check(IndentParenExprArgs::from_switch(self), acc);
+        rules.sp_brace.check(SpBracesArgs::from_switch(self), acc);
     }
 }
 
