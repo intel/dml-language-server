@@ -26,7 +26,7 @@ use crate::lint::{DMLStyleError,
                                     SpPunctArgs},
                                     CurrentRules},
                                     AuxParams};
-use crate::lint::rules::indentation::{IndentParenExprArgs};
+use crate::lint::rules::indentation::IndentParenExprArgs;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct UnaryExpressionContent {

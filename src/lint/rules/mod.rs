@@ -15,7 +15,14 @@ use spacing::{NspFunparRule,
               NspPtrDeclRule,
               SpPunctRule,
               SpReservedRule};
-use indentation::{LongLinesRule, IndentNoTabRule, IndentCodeBlockRule, IndentClosingBraceRule, IndentParenExprRule, IndentSwitchCaseRule, IndentEmptyLoopRule};
+use indentation::{LongLinesRule,
+    IndentNoTabRule,
+    IndentCodeBlockRule,
+    IndentClosingBraceRule,
+    IndentParenExprRule,
+    IndentSwitchCaseRule,
+    IndentEmptyLoopRule,
+    IndentContinuationLineRule};
 use crate::lint::{LintCfg, DMLStyleError};
 use crate::analysis::{LocalDMLError, parsing::tree::ZeroRange};
 
@@ -37,7 +44,8 @@ pub struct CurrentRules {
     pub indent_closing_brace: IndentClosingBraceRule,
     pub indent_paren_expr: IndentParenExprRule,
     pub indent_switch_case: IndentSwitchCaseRule,
-    pub indent_empty_loop: IndentEmptyLoopRule
+    pub indent_empty_loop: IndentEmptyLoopRule,
+    pub indent_continuation_line: IndentContinuationLineRule,
 }
 
 pub fn  instantiate_rules(cfg: &LintCfg) -> CurrentRules {
@@ -59,7 +67,8 @@ pub fn  instantiate_rules(cfg: &LintCfg) -> CurrentRules {
         indent_closing_brace: IndentClosingBraceRule::from_options(&cfg.indent_closing_brace),
         indent_paren_expr: IndentParenExprRule { enabled: cfg.indent_paren_expr.is_some() },
         indent_switch_case: IndentSwitchCaseRule::from_options(&cfg.indent_switch_case),
-        indent_empty_loop: IndentEmptyLoopRule::from_options(&cfg.indent_empty_loop)
+        indent_empty_loop: IndentEmptyLoopRule::from_options(&cfg.indent_empty_loop),
+        indent_continuation_line: IndentContinuationLineRule::from_options(&cfg.indent_continuation_line),
     }
 }
 

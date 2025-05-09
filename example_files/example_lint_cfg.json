@@ -18,5 +18,6 @@
     "indent_paren_expr": {},
     "indent_switch_case": {},
     "indent_empty_loop": {},
+    "indent_continuation_line": {},
     "annotate_lints": true
 }

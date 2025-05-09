@@ -1,12 +1,6 @@
 use std::convert::TryInto;
 
-use crate::analysis::parsing::{expression::{CastContent, FunctionCallContent, ParenExpressionContent},
-                               lexer::TokenKind,
-                               statement::{self, CompoundContent, DoContent, ForContent, ForeachContent,
-                                           IfContent, SwitchCase, SwitchContent, WhileContent},
-                               structure::{MethodContent, ObjectStatementsContent},
-                               tree::TreeElementTokenIterator,
-                               types::{BitfieldsContent, LayoutContent, StructTypeContent}};
+use crate::analysis::parsing::{expression::{CastContent, FunctionCallContent, ParenExpressionContent}, lexer::TokenKind, parser::Token, statement::{self, CompoundContent, DoContent, ForContent, ForeachContent, IfContent, StatementContent, SwitchCase, SwitchContent, WhileContent}, structure::{DMLObjectContent, MethodContent, ObjectStatementsContent}, tree::TreeElementTokenIterator, types::{BitfieldsContent, LayoutContent, StructTypeContent}};
 use crate::span::{Range, ZeroIndexed};
 use crate::analysis::parsing::tree::{ZeroRange, Content, TreeElement};
 use serde::{Deserialize, Serialize};
@@ -34,6 +28,9 @@ pub fn setup_indentation_size(cfg: &mut LintCfg) {
     }
     if let Some(indent_empty_loop) = &mut cfg.indent_empty_loop {
         indent_empty_loop.indentation_spaces = indentation_spaces;
+    }
+    if let Some(indent_continuation_line) = &mut cfg.indent_continuation_line {
+        indent_continuation_line.indentation_spaces = indentation_spaces;
     }
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -379,8 +376,8 @@ pub struct IndentParenExprArgs {
 }
 
 impl IndentParenExprArgs {
-    fn filter_out_parenthesized_ranges(expression_tokens: TreeElementTokenIterator) -> Vec<ZeroRange> {
-        let mut token_ranges: Vec<ZeroRange> = vec![];
+    pub fn filter_out_parenthesized_tokens(expression_tokens: TreeElementTokenIterator) -> Vec<Token> {
+        let mut token_list: Vec<Token> = vec![];
         let mut paren_depth = 0;
         // paren_depth is used to identify nested
         // parenthesized expressions within other expressions
@@ -389,25 +386,32 @@ impl IndentParenExprArgs {
         for token in expression_tokens {
             match token.kind {
                 TokenKind::LParen => {
+                    if paren_depth == 0 { token_list.push(token); }
                     paren_depth += 1;
-                    token_ranges.push(token.range);
                 },
-                TokenKind::RParen => paren_depth-=1,
-                _ => { if paren_depth == 0 { token_ranges.push(token.range); }
+                TokenKind::RParen => {
+                    paren_depth-=1;
+                    if paren_depth == 0 { token_list.push(token); }
+                },
+                TokenKind::LBrace => {
+                    break;
+                },
+                _ => { 
+                    if paren_depth == 0 { token_list.push(token); }
                 }
             }
         }
-        token_ranges
+        token_list
     }
 
     pub fn from_for(node: &ForContent) -> Option<IndentParenExprArgs> {
         // For loop has three parts within parentheses: pre, cond, and post
         let mut filtered_member_ranges: Vec<ZeroRange> = vec![];
-        filtered_member_ranges.append(&mut Self::filter_out_parenthesized_ranges(node.pre.tokens()));
+        filtered_member_ranges.extend(&mut Self::filter_out_parenthesized_tokens(node.pre.tokens()).iter().filter(|t| t.kind != TokenKind::RParen).map(|t| t.range));
         filtered_member_ranges.push(node.lsemi.range());
-        filtered_member_ranges.append(&mut Self::filter_out_parenthesized_ranges(node.cond.tokens()));
+        filtered_member_ranges.extend(&mut Self::filter_out_parenthesized_tokens(node.cond.tokens()).iter().filter(|t| t.kind != TokenKind::RParen).map(|t| t.range));
         filtered_member_ranges.push(node.rsemi.range());
-        filtered_member_ranges.append(&mut Self::filter_out_parenthesized_ranges(node.post.tokens()));
+        filtered_member_ranges.extend(&mut Self::filter_out_parenthesized_tokens(node.post.tokens()).iter().filter(|t| t.kind != TokenKind::RParen).map(|t| t.range));
 
         Some(IndentParenExprArgs {
             members_ranges: filtered_member_ranges,
@@ -417,7 +421,7 @@ impl IndentParenExprArgs {
 
     pub fn from_foreach(node: &ForeachContent) -> Option<IndentParenExprArgs> {
         Some(IndentParenExprArgs {
-            members_ranges: Self::filter_out_parenthesized_ranges(node.expression.tokens()),
+            members_ranges: Self::filter_out_parenthesized_tokens(node.expression.tokens()).iter().filter(|t| t.kind != TokenKind::RParen).map(|t| t.range).collect(),
             lparen: node.lparen.range(),
         })
     }
@@ -425,7 +429,7 @@ impl IndentParenExprArgs {
     pub fn from_function_call(node: &FunctionCallContent) -> Option<IndentParenExprArgs> {
         let mut filtered_member_ranges: Vec<ZeroRange> = vec![];
         for (arg, _comma) in node.arguments.iter() {
-            filtered_member_ranges.append(&mut Self::filter_out_parenthesized_ranges(arg.tokens()));
+            filtered_member_ranges.extend(Self::filter_out_parenthesized_tokens(arg.tokens()).iter().filter(|t| t.kind != TokenKind::RParen).map(|t| t.range));
         }
         Some(IndentParenExprArgs {
             members_ranges: filtered_member_ranges,
@@ -436,7 +440,7 @@ impl IndentParenExprArgs {
     pub fn from_paren_expression(node: &ParenExpressionContent)
             -> Option<IndentParenExprArgs> {
         Some(IndentParenExprArgs {
-            members_ranges: Self::filter_out_parenthesized_ranges(node.expr.tokens()),
+            members_ranges: Self::filter_out_parenthesized_tokens(node.expr.tokens()).iter().filter(|t| t.kind != TokenKind::RParen).map(|t| t.range).collect(),
             lparen: node.lparen.range(),
         })
     }
@@ -444,7 +448,7 @@ impl IndentParenExprArgs {
     pub fn from_method(node: &MethodContent) -> Option<IndentParenExprArgs> {
         let mut filtered_member_ranges: Vec<ZeroRange> = vec![];
         for (arg, _comma) in node.arguments.iter() {
-            filtered_member_ranges.append(&mut Self::filter_out_parenthesized_ranges(arg.tokens()));
+            filtered_member_ranges.extend(Self::filter_out_parenthesized_tokens(arg.tokens()).iter().filter(|t| t.kind != TokenKind::RParen).map(|t| t.range));
         }
         Some(IndentParenExprArgs {
             members_ranges: filtered_member_ranges,
@@ -454,21 +458,21 @@ impl IndentParenExprArgs {
 
     pub fn from_while(node: &WhileContent) -> Option<IndentParenExprArgs> {
         Some(IndentParenExprArgs {
-            members_ranges: Self::filter_out_parenthesized_ranges(node.cond.tokens()),
+            members_ranges: Self::filter_out_parenthesized_tokens(node.cond.tokens()).iter().filter(|t| t.kind != TokenKind::RParen).map(|t| t.range).collect(),
             lparen: node.lparen.range(),
         })
     }
 
     pub fn from_do_while(node: &DoContent) -> Option<IndentParenExprArgs> {
         Some(IndentParenExprArgs {
-            members_ranges: Self::filter_out_parenthesized_ranges(node.cond.tokens()),
+            members_ranges: Self::filter_out_parenthesized_tokens(node.cond.tokens()).iter().filter(|t| t.kind != TokenKind::RParen).map(|t| t.range).collect(),
             lparen: node.lparen.range(),
         })
     }
 
     pub fn from_if(node: &IfContent) -> Option<IndentParenExprArgs>  {
         Some(IndentParenExprArgs {
-            members_ranges: Self::filter_out_parenthesized_ranges(node.cond.tokens()),
+            members_ranges: Self::filter_out_parenthesized_tokens(node.cond.tokens()).iter().filter(|t| t.kind != TokenKind::RParen).map(|t| t.range).collect(),
             lparen: node.lparen.range(),
         })
     }
@@ -477,14 +481,14 @@ impl IndentParenExprArgs {
         let mut cast_member_tokens = node.from.tokens();
         cast_member_tokens.append(&mut node.to.tokens());
         Some(IndentParenExprArgs {
-            members_ranges: Self::filter_out_parenthesized_ranges(cast_member_tokens),
+            members_ranges: Self::filter_out_parenthesized_tokens(cast_member_tokens).iter().filter(|t| t.kind != TokenKind::RParen).map(|t| t.range).collect(),
             lparen: node.lparen.range(),
         })
     }
 
     pub fn from_switch(node: &SwitchContent) -> Option<IndentParenExprArgs> {
         Some(IndentParenExprArgs {
-            members_ranges: Self::filter_out_parenthesized_ranges(node.expr.tokens()),
+            members_ranges: Self::filter_out_parenthesized_tokens(node.expr.tokens()).iter().filter(|t| t.kind != TokenKind::RParen).map(|t| t.range).collect(),
             lparen: node.lparen.range(),
         })
     }
@@ -690,5 +694,124 @@ impl Rule for IndentEmptyLoopRule {
     }
     fn get_rule_type() -> RuleType {
         RuleType::IN10
+    }
+}
+
+// in6
+pub struct IndentContinuationLineRule {
+    pub enabled: bool,
+    indentation_spaces: u32
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct IndentContinuationLineOptions {
+    #[serde(default = "default_indentation_spaces")]
+    pub indentation_spaces: u32,
+}
+
+pub struct IndentContinuationLineArgs {
+    token_list: Vec<Token>,
+    expected_depth: u32,
+}
+
+impl IndentContinuationLineArgs {
+    pub fn filter_out_last_semi_ranges(expression_tokens: &mut TreeElementTokenIterator) {
+        // This function filters out the last semicolon in a list of tokens
+        // as it is not part of the continuation line check.
+        expression_tokens.pop_if(|token| token.kind == TokenKind::SemiColon);
+    }
+
+    pub fn from_statement_content(node: &StatementContent, depth: u32) -> Option<IndentContinuationLineArgs> {
+        match node {
+            StatementContent::Compound(_) |
+            StatementContent::If(_) |
+            StatementContent::While(_) |
+            StatementContent::Do(_) |
+            StatementContent::For(_) |
+            StatementContent::Try(_) |
+            StatementContent::Foreach(_) |
+            StatementContent::Throw(_) |
+            StatementContent::Switch(_) => return None,
+            _ => {}
+        };
+        let mut tokens = node.tokens();
+        Self::filter_out_last_semi_ranges(&mut tokens);
+
+        Some(IndentContinuationLineArgs {
+            token_list: IndentParenExprArgs::filter_out_parenthesized_tokens(tokens),
+            expected_depth: depth,
+        })
+    }
+
+    pub fn from_dml_object_content(node: &DMLObjectContent, depth: u32) -> Option<IndentContinuationLineArgs> {
+        match node {
+            DMLObjectContent::Parameter(_) |
+            DMLObjectContent::Hook(_) |
+            DMLObjectContent::Import(_) |
+            DMLObjectContent::InEach(_) |
+            DMLObjectContent::Session(_) |
+            DMLObjectContent::Typedef(_) => {
+                let mut tokens = node.tokens();
+                Self::filter_out_last_semi_ranges(&mut tokens);
+                return Some(IndentContinuationLineArgs {
+                token_list: IndentParenExprArgs::filter_out_parenthesized_tokens(tokens),
+                expected_depth: depth,
+            })},
+            _ => return None,
+        }
+    }
+}
+
+impl IndentContinuationLineRule {
+    pub fn from_options(options: &Option<IndentContinuationLineOptions>) -> IndentContinuationLineRule {
+        match options {
+            Some(options) => IndentContinuationLineRule {
+                enabled: true,
+                indentation_spaces: options.indentation_spaces
+            },
+            None => IndentContinuationLineRule {
+                enabled: false,
+                indentation_spaces: 0
+            }
+        }
+    }
+
+    pub fn check<'a> (&self, acc: &mut Vec<DMLStyleError>,
+        args: Option<IndentContinuationLineArgs>) {
+        if !self.enabled { return; }
+        let Some(args) = args else { return; };
+        if args.token_list.is_empty() { return; }
+        let expected_line_start = self.indentation_spaces * (args.expected_depth + 1);
+        let mut last_row = args.token_list.first().unwrap().range.row_start.0;
+
+        for token in args.token_list {
+            match token.kind {
+                TokenKind::RParen => {
+                    if token.range.row_start.0 != last_row {
+                        last_row = token.range.row_start.0;
+                    }
+                }
+                _ => {
+                    if token.range.row_start.0 != last_row {
+                        last_row = token.range.row_start.0;
+                        if token.range.col_start.0 != expected_line_start {
+                            acc.push(self.create_err(token.range))
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+impl Rule for IndentContinuationLineRule {
+    fn name() -> &'static str {
+        "INDENT_CONTINUATION_LINE"
+    }
+    fn description() -> &'static str {
+        "A continuation line not broken inside a parenthesized expression is indented one level."
+    }
+    fn get_rule_type() -> RuleType {
+        RuleType::IN6
     }
 }
