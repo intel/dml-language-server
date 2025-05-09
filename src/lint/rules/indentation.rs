@@ -2,8 +2,7 @@ use std::convert::TryInto;
 
 use crate::analysis::parsing::{expression::{CastContent, FunctionCallContent, ParenExpressionContent},
                                lexer::TokenKind,
-                               statement::{self, CompoundContent, DoContent, ForContent, ForeachContent,
-                                           IfContent, SwitchCase, SwitchContent, WhileContent},
+                               statement::{self, CompoundContent, DoContent, ForContent, ForeachContent, IfContent, StatementContent, SwitchCase, SwitchContent, WhileContent},
                                structure::{MethodContent, ObjectStatementsContent},
                                tree::TreeElementTokenIterator,
                                types::{BitfieldsContent, LayoutContent, StructTypeContent}};
@@ -34,6 +33,9 @@ pub fn setup_indentation_size(cfg: &mut LintCfg) {
     }
     if let Some(indent_empty_loop) = &mut cfg.indent_empty_loop {
         indent_empty_loop.indentation_spaces = indentation_spaces;
+    }
+    if let Some(indent_continuation_line) = &mut cfg.indent_continuation_line {
+        indent_continuation_line.indentation_spaces = indentation_spaces;
     }
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -372,7 +374,7 @@ pub struct IndentParenExprArgs {
 }
 
 impl IndentParenExprArgs {
-    fn filter_out_parenthesized_ranges(expression_tokens: TreeElementTokenIterator) -> Vec<ZeroRange> {
+    pub fn filter_out_parenthesized_ranges(expression_tokens: TreeElementTokenIterator) -> Vec<ZeroRange> {
         let mut token_ranges: Vec<ZeroRange> = vec![];
         let mut paren_depth = 0;
         // paren_depth is used to identify nested
@@ -680,5 +682,88 @@ impl Rule for IndentEmptyLoopRule {
     }
     fn get_rule_type() -> RuleType {
         RuleType::IN10
+    }
+}
+
+// in6
+pub struct IndentContinuationLineRule {
+    pub enabled: bool,
+    indentation_spaces: u32
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct IndentContinuationLineOptions {
+    #[serde(default = "default_indentation_spaces")]
+    pub indentation_spaces: u32,
+}
+
+pub struct IndentContinuationLineArgs {
+    members_ranges: Vec<ZeroRange>,
+    expected_depth: u32,
+}
+
+impl IndentContinuationLineArgs {
+    pub fn from_statement_content(node: &StatementContent, depth: u32) -> Option<IndentContinuationLineArgs> {
+        match node {
+            StatementContent::Compound(_) |
+            StatementContent::If(_) |
+            StatementContent::While(_) |
+            StatementContent::Do(_) |
+            StatementContent::For(_) |
+            StatementContent::Try(_) |
+            StatementContent::Foreach(_) |
+            StatementContent::Throw(_) |
+            StatementContent::Switch(_) => return None,
+            _ => {}
+        };
+
+        Some(IndentContinuationLineArgs {
+            members_ranges: IndentParenExprArgs::filter_out_parenthesized_ranges(node.tokens()),
+            expected_depth: depth,
+        })
+    }
+}
+
+impl IndentContinuationLineRule {
+    pub fn from_options(options: &Option<IndentContinuationLineOptions>) -> IndentContinuationLineRule {
+        match options {
+            Some(options) => IndentContinuationLineRule {
+                enabled: true,
+                indentation_spaces: options.indentation_spaces
+            },
+            None => IndentContinuationLineRule {
+                enabled: false,
+                indentation_spaces: 0
+            }
+        }
+    }
+    pub fn check<'a> (&self, acc: &mut Vec<DMLStyleError>,
+        args: Option<IndentContinuationLineArgs>) {
+        if !self.enabled { return; }
+        let Some(args) = args else { return; };
+        if args.members_ranges.is_empty() { return; }
+        let expected_line_start = self.indentation_spaces * (args.expected_depth + 1);
+        let mut last_row = args.members_ranges.first().unwrap().row_start.0;
+
+        for member_range in args.members_ranges {
+            if member_range.row_start.0 != last_row {
+                last_row = member_range.row_start.0;
+                if member_range.col_start.0 != expected_line_start {
+                    self.push_err(acc, member_range);
+                }
+            }
+        }
+    }
+}
+
+impl Rule for IndentContinuationLineRule {
+    fn name() -> &'static str {
+        "INDENT_CONTINUATION_LINE"
+    }
+    fn description() -> &'static str {
+        "A continuation line not broken inside a parenthesized expression is indented one level."
+    }
+    fn get_rule_type() -> RuleType {
+        RuleType::IN6
     }
 }
