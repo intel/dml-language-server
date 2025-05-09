@@ -20,7 +20,7 @@ use crate::lint::rules::spacing::{SpBracesArgs,
                                   NspInparenArgs,
                                   NspFunparArgs,
                                   SpPunctArgs};
-use crate::lint::rules::indentation::{IndentCodeBlockArgs, IndentClosingBraceArgs, IndentParenExprArgs};
+use crate::lint::rules::indentation::{IndentCodeBlockArgs, IndentClosingBraceArgs, IndentParenExprArgs, IndentContinuationLineArgs};
 use crate::lint::{rules::CurrentRules, AuxParams, DMLStyleError};
 use crate::analysis::reference::{Reference, ReferenceKind};
 use crate::analysis::FileSpec;
@@ -1904,6 +1904,9 @@ impl TreeElement for DMLObjectContent {
             Self::Subdevice(content) => create_subs![content],
             Self::Template(content) => create_subs![content],
         }
+    }
+    fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, aux: AuxParams) {
+        rules.indent_continuation_line.check(acc, IndentContinuationLineArgs::from_dml_object_content(self, aux.depth));
     }
 }
 

@@ -2,7 +2,7 @@
 //  SPDX-License-Identifier: Apache-2.0 and MIT
 use log::error;
 
-use crate::lint::rules::indentation::IndentEmptyLoopArgs;
+use crate::lint::rules::indentation::{IndentContinuationLineArgs, IndentEmptyLoopArgs};
 use crate::span::Range;
 use crate::analysis::parsing::lexer::TokenKind;
 use crate::analysis::parsing::statement;
@@ -1838,6 +1838,9 @@ impl TreeElement for StatementContent {
             Self::Break(content) => create_subs![content],
             Self::Return(content) => create_subs![content],
         }
+    }
+    fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, aux: AuxParams) {
+        rules.indent_continuation_line.check(acc, IndentContinuationLineArgs::from_statement_content(self, aux.depth));
     }
 }
 
