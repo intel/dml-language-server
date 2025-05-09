@@ -41,7 +41,7 @@ jobs:
         if: ${{ success() || failure() }}
         run: |
           rm Cargo.lock
-          cargo install cargo-outdated
+          cargo install --locked cargo-outdated
           cargo outdated --version
           set -o pipefail
           cargo outdated  --exit-code 1 2>&1 | tee -a ${{ inputs.log-dir }}/outdated-log

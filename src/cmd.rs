@@ -5,7 +5,8 @@
 //! the DLS as usual and prints the JSON result back on the command line.
 
 use crate::actions::requests;
-use crate::config::Config;
+use crate::actions::notifications;
+use crate::config::{Config, DeviceContextMode};
 use crate::lsp_data::parse_uri;
 use crate::file_management::CanonPath;
 use crate::server::{self, LsService, Notification, Request, RequestId};
@@ -38,6 +39,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use serde_json;
+use lazy_static::lazy_static;
 
 use log::debug;
 
@@ -68,22 +70,22 @@ pub fn run(compile_info_path: Option<PathBuf>,
                 let file_name = bits.next().expect("Expected file name");
                 let row = bits.next().expect("Expected line number");
                 let col = bits.next().expect("Expected column number");
-                (def(file_name, row, col).to_string(), 100)
+                (Some(def(file_name, row, col).to_string()), 100)
             }
             "symbol" => {
                 let query = bits.next().expect("Expected a query");
-                (workspace_symbol(query).to_string(), 100)
+                (Some(workspace_symbol(query).to_string()), 100)
             }
             "document" => {
                 let query = bits.next().expect("Expected file name");
-                (document_symbol(query).to_string(), 100)
+                (Some(document_symbol(query).to_string()), 100)
             }
             "open" => {
                 let file = bits.next().expect("Expected file name");
                 // NOTE: Opening a DML file can cause the server to chain-open
                 // several other files, there's no real good heuristic for how
                 // long until it is done, so we wait for quite a bit here
-                (open(file).to_string(), 10000)
+                (Some(open(file).to_string()), 10000)
             }
             "workspace" => {
                 let dirs: Vec<String> = bits.map(str::to_string).collect();
@@ -91,7 +93,24 @@ pub fn run(compile_info_path: Option<PathBuf>,
                 if dirs.is_empty() {
                     panic!("Expected directory name");
                 }
-                (add_workspaces(dirs).to_string(), 100)
+                (Some(add_workspaces(dirs).to_string()), 100)
+            }
+            "context-mode" => {
+                let mode = bits.next().expect("expected context mode");
+                (Some(set_context_mode(mode.to_string()).to_string()), 100)
+            }
+            "contexts" => {
+                let dirs: Vec<String> = bits.map(str::to_string).collect();
+                (Some(get_contexts(dirs).to_string()), 100)
+            }
+            "set-contexts" => {
+                let dirs: Vec<String> = bits.map(str::to_string).collect();
+                (Some(set_contexts(dirs).to_string()), 100)
+            }
+            "wait" => {
+                let time = bits.next().unwrap();
+                let time_u64 = u64::from_str(time).unwrap();
+                (None, time_u64)
             }
             "h" | "help" => {
                 help();
@@ -110,9 +129,11 @@ pub fn run(compile_info_path: Option<PathBuf>,
             }
         };
 
-        // Send the message to the server.
-        debug!("message: {:?}", msg);
-        sender.send(msg).expect("Error sending on channel");
+        if let Some(msg) = msg {
+            // Send the message to the server
+            debug!("message: {:?}", msg);
+            sender.send(msg).expect("Error sending on channel");
+        }
         // Give the result time to print before printing the prompt again.
         thread::sleep(Duration::from_millis(wait));
     }
@@ -252,6 +273,19 @@ pub fn remove_workspaces(workspaces: Vec<String>)
     }, _action: PhantomData }
 }
 
+fn set_context_mode(mode: String) -> Notification<DidChangeConfiguration> {
+    let new_mode = match mode.to_lowercase().as_str() {
+        "always" => DeviceContextMode::Always,
+        "anynew" => DeviceContextMode::AnyNew,
+        "first" => DeviceContextMode::First,
+        "samemodule" => DeviceContextMode::SameModule,
+        "never" => DeviceContextMode::Never,
+        _ => panic!("Expected valid context mode."),
+    };
+    active_config.lock().unwrap().new_device_context_mode = new_mode;
+    update_config(active_config.lock().unwrap().clone())
+}
+
 pub fn update_config(config: Config)
                      -> Notification<DidChangeConfiguration> {
     Notification {
@@ -259,6 +293,32 @@ pub fn update_config(config: Config)
             settings: serde_json::json!({"dml": config}),
         },
         _action: PhantomData
+    }
+}
+
+pub fn get_contexts(paths: Vec<String>) -> Request<requests::GetKnownContextsRequest> {
+    Request {
+        params: requests::GetKnownContextsParams {
+            paths: Some(paths.into_iter()
+                .map(|p|parse_uri(&p).unwrap())
+                .collect()),
+        },
+        _action: PhantomData,
+        id: next_id(),
+        received: Instant::now(),
+    }
+}
+
+pub fn set_contexts(paths: Vec<String>) -> Notification<notifications::ChangeActiveContexts> {
+    Notification {
+        params: notifications::ChangeActiveContextsParams {
+            active_contexts: paths.into_iter()
+                .map(|p|parse_uri(&p).unwrap())
+                .map(|u|notifications::ContextDefinitionKindParam::Device(u))
+                .collect(),
+            uri: None,
+        },
+        _action: PhantomData,
     }
 }
 
@@ -304,6 +364,10 @@ impl server::MessageReader for ChannelMsgReader {
     }
 }
 
+lazy_static! {
+static ref active_config: Mutex<Config> = Mutex::default();
+}
+
 // Initialize a server, returns the sender end of a channel for posting messages.
 // The initialized server will live on its own thread and look after the receiver.
 fn init(compile_info_path: Option<PathBuf>,
@@ -318,6 +382,7 @@ fn init(compile_info_path: Option<PathBuf>,
         lint_cfg_path,
         .. Default::default()
     };
+    *active_config.lock().unwrap() = config.clone();
     let service = LsService::new(
         vfs,
         Arc::new(Mutex::new(config)),
@@ -348,6 +413,10 @@ Supported commands:
     help          display this message
     quit          exit
 
+    wait          milliseconds
+                  makes the cmd thread sleep for milliseconds, useful
+                  to wait for the server to finish work
+
     open          file_name
                   opens a file to perform initial analysis
     workspace     [directory_name ...]
@@ -361,7 +430,15 @@ Supported commands:
                   workspace/symbol
 
     document      file_name
-                  textDocument/documentSymbol"
+                  textDocument/documentSymbol
+    context-mode  mode
+                  Set the device context mode
+    contexts      [paths ...]
+                  Obtain active device contexts
+                  for paths
+    set-contexts  [paths ...]
+                  Sets the active device contexts
+                  to paths"
     );
 }
 

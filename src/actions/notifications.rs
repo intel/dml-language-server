@@ -2,17 +2,21 @@
 //  SPDX-License-Identifier: Apache-2.0 and MIT
 //! One-way notifications that the DLS receives from the client.
 
-use crate::actions::{FileWatch, InitActionContext, VersionOrdering};
+use crate::actions::{FileWatch, InitActionContext, VersionOrdering,
+                     ContextDefinition};
+use crate::file_management::CanonPath;
 use crate::server::message::Request;
 use crate::span::{Span};
 use crate::vfs::{Change, VfsSpan};
 use crate::lsp_data::*;
 
-use log::{trace, warn};
+use log::{debug, error, warn};
+use serde::{Serialize, Deserialize};
 
 use lsp_types::notification::ShowMessage;
 use lsp_types::request::RegisterCapability;
 
+use std::collections::HashSet;
 use std::sync::atomic::Ordering;
 use std::thread;
 
@@ -60,7 +64,7 @@ impl BlockingNotificationAction for DidOpenTextDocument {
         ctx: &mut InitActionContext,
         out: O,
     ) -> Result<(), ResponseError> {
-        trace!("on_open: {:?}", params.text_document.uri);
+        debug!("on_open: {:?}", params.text_document.uri);
         let file_path = parse_file_path!(&params.text_document.uri, "on_open")?;
         ctx.reset_change_version(&file_path);
         ctx.vfs.set_file(&file_path, &params.text_document.text);
@@ -68,6 +72,7 @@ impl BlockingNotificationAction for DidOpenTextDocument {
         if !ctx.config.lock().unwrap().analyse_on_save {
             ctx.isolated_analyze(&file_path, None, &out);
         }
+        ctx.report_errors(&out);
         Ok(())
     }
 }
@@ -76,11 +81,12 @@ impl BlockingNotificationAction for DidCloseTextDocument {
     fn handle<O: Output>(
         params: Self::Params,
         ctx: &mut InitActionContext,
-        _out: O,
+        out: O,
     ) -> Result<(), ResponseError> {
-        trace!("on_close: {:?}", params.text_document.uri);
+        debug!("on_close: {:?}", params.text_document.uri);
         let file_path = parse_file_path!(&params.text_document.uri, "on_close")?;
         ctx.remove_direct_open(file_path.to_path_buf());
+        ctx.report_errors(&out);
         Ok(())
     }
 }
@@ -91,7 +97,7 @@ impl BlockingNotificationAction for DidChangeTextDocument {
         ctx: &mut InitActionContext,
         out: O,
     ) -> Result<(), ResponseError> {
-        trace!("on_change: {:?}, thread: {:?}", params, thread::current().id());
+        debug!("on_change: {:?}, thread: {:?}", params, thread::current().id());
         if params.content_changes.is_empty() {
             return Ok(());
         }
@@ -160,7 +166,7 @@ impl BlockingNotificationAction for DidChangeConfiguration {
         ctx: &mut InitActionContext,
         out: O,
     ) -> Result<(), ResponseError> {
-        trace!("config change: {:?}", params.settings);
+        debug!("config change: {:?}", params.settings);
         use std::collections::HashMap;
         let mut dups = HashMap::new();
         let mut unknowns = vec![];
@@ -235,4 +241,107 @@ impl BlockingNotificationAction for DidChangeWorkspaceFolders {
         ctx.update_workspaces(added, removed);
         Ok(())
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct ChangeActiveContexts;
+
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum ContextDefinitionKindParam {
+    Synthetic(lsp_types::Uri),
+    Device(lsp_types::Uri),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChangeActiveContextsParams {
+    pub active_contexts: Vec<ContextDefinitionKindParam>,
+    // None implies update ALL context paths
+    pub uri: Option<lsp_types::Uri>,
+}
+
+impl ContextDefinitionKindParam {
+    fn to_context_def(&self) -> Option<ContextDefinition> {
+        Some(match self {
+            ContextDefinitionKindParam::Synthetic(uri) =>
+                ContextDefinition::Simulated(
+                    parse_file_path!(&uri, "context path")
+                        .ok()
+                        .and_then(CanonPath::from_path_buf)?),
+            ContextDefinitionKindParam::Device(uri) =>
+                ContextDefinition::Device(
+                    parse_file_path!(&uri, "context path")
+                        .ok()
+                        .and_then(CanonPath::from_path_buf)?),
+        })
+    }
+}
+
+impl LSPNotification for ChangeActiveContexts {
+    const METHOD: &'static str = "$/changeActiveContexts";
+    type Params = ChangeActiveContextsParams;
+}
+
+impl BlockingNotificationAction for ChangeActiveContexts {
+    fn handle<O: Output>(
+        params: ChangeActiveContextsParams,
+        ctx: &mut InitActionContext,
+        out: O) -> Result<(), ResponseError> {
+        debug!("ChangeActiveContexts: {:?}", params);
+        let contexts: Vec<ContextDefinition> = params.active_contexts
+            .iter()
+            .filter_map(ContextDefinitionKindParam::to_context_def)
+            .collect();
+        if contexts.len() < params.active_contexts.len() {
+            error!("Some context paths set by client were not valid \
+                    canonizable paths, they have been discarded");
+        }
+        let (devices, others): (HashSet<_>, HashSet<_>) =
+            contexts.into_iter()
+            .partition(|spec|matches!(spec, ContextDefinition::Device(_)));
+        if !others.is_empty() {
+            error!("Tried to activate synthetic device contexts which are not \
+                    yet supported, ignored these contexts.");
+            error!("{:?}, {:?}", devices, others);
+        }
+        if let Some(uri) = &params.uri {
+            if let Some(canon_path) = parse_file_path!(uri,
+                                                       "ChangeActiveContexts")
+                .ok().and_then(CanonPath::from_path_buf) {
+                    ctx.update_contexts(&canon_path, devices);
+                } else {
+                    error!("Wanted to change activecontexts for {:?}, but \
+                            failed to resolve it to an actual file", uri);
+                }
+        } else {
+            *ctx.device_active_contexts.lock().unwrap()
+                = devices;
+        }
+        // Re-report errors, since what we report for might have changed
+        ctx.report_errors(&out);
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json;
+    use lsp_types::Uri;
+    use std::str::FromStr;
+
+    #[test]
+    fn context_definition_ser() {
+        let context_dev = ContextDefinitionKindParam::Device(
+            Uri::from_str("some_path/foo").unwrap());
+        let context_syn = ContextDefinitionKindParam::Synthetic(
+            Uri::from_str("some_path/foo").unwrap());
+        assert_eq!(serde_json::from_str::<ContextDefinitionKindParam>(
+            &serde_json::to_string(&context_dev).unwrap()).unwrap(),
+                   context_dev);
+        assert_eq!(serde_json::from_str::<ContextDefinitionKindParam>(
+            &serde_json::to_string(&context_syn).unwrap()).unwrap(),
+                   context_syn);
+   }
 }

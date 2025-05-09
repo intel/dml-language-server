@@ -93,6 +93,30 @@ impl<T> AsRef<T> for Inferrable<T> {
     }
 }
 
+/// When to include a new device analysis into already opened
+/// common-code files that already have an active device context
+// TODO: support for non-all mode
+// NOTE: future synthetic isolated context settings are NOT included here
+#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
+pub enum DeviceContextMode {
+    // By default, every encountered context will be marked as being
+    // reported for
+    Always,
+    // If a device context directly or indirectly imports any file
+    // that is not included from an already active device context,
+    // we activate the new context
+    AnyNew,
+    // If the device is in the same or child directory as an activated context,
+    // or if an activated context is in a child directory of the device,
+    // we active it
+    SameModule,
+    // Only active a device context if ALL the files it imports do not have any
+    // device contexts active
+    First,
+    // Never active any device contexts automatically
+    Never,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[allow(missing_docs)]
 #[serde(default)]
@@ -106,10 +130,12 @@ pub struct Config {
     pub suppress_imports: bool,
     pub linting_enabled: bool,
     pub lint_cfg_path: Option<PathBuf>,
+    pub lint_direct_only: bool,
     pub no_default_features: bool,
     // pub jobs: Option<u32>,
     pub compile_info_path: Option<PathBuf>,
     pub analysis_retain_duration: Option<f64>,
+    pub new_device_context_mode: DeviceContextMode,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -189,9 +215,11 @@ impl Default for Config {
             suppress_imports: false,
             linting_enabled: true,
             lint_cfg_path: None,
+            lint_direct_only: true,
             no_default_features: false,
             compile_info_path: None,
             analysis_retain_duration: None,
+            new_device_context_mode: DeviceContextMode::Always,
         }
     }
 }

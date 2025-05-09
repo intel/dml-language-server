@@ -4,7 +4,23 @@
 -->
 # Change Log
 
+## 0.9.10
+
 ## 0.9.9
+- Fixed an issue that could cause analysis thread crash when an object was declared both
+  as an array and not one
+- Added LSP protocol extension notification "changeActiveContexts" and request
+  "getKnownContexts" which together can be used to determine and control the active
+  device contexts for the server.
+- Moved warning feedback when syntactic/semantic analysis is not available to
+  server output from server message
+- Goto-definition/declaration/implementation/references will now try to wait
+  for ongoing device analysis on the file before responding.
+- The DLS warning message setting 'once' will now warn once per file-warning
+  combination, rather than once per warning.
+- The DLS will no longer multi-report 'WorkDoneProgressEnd'.
+- Added a configuration option, "lint\_direct\_only", that disables lint reports
+  for files not directly opened in the editor. Defaults to true.
 
 ## 0.9.8
 - Added "warning" as a valid log statement type.

@@ -1696,13 +1696,19 @@ fn merge_composite_subobj<'c>(name: String,
             } else {
                 *decl.obj.span()
             };
+            let related = if !auth_obj.obj.dims.is_empty() {
+                vec![(combine_vec_of_decls(&auth_obj.obj.dims),
+                      "expected this dimensionality".to_string())]
+            } else {
+                vec![(*auth_obj.obj.span(),
+                      "no dimensions declared here".to_string())]
+            };
 
             report.push(DMLError {
                 span: error_span,
                 description: "Mismatching number of dimensions \
                               in object declaration".to_string(),
-                related: vec![(combine_vec_of_decls(&auth_obj.obj.dims),
-                               "expected this dimensionality".to_string())],
+                related,
                 severity: Some(DiagnosticSeverity::ERROR),
             });
         }
@@ -1764,19 +1770,19 @@ fn merge_composite_subobjs<'c>(parent_each_stmts: &InEachSpec,
     debug!("Merging composite subobjects");
     subobjs.into_iter().filter_map(
         |(name, (used, subobj_specs))|
-         if used {
-             Some(merge_composite_subobj(name,
-                                         parent_each_stmts,
-                                         subobj_specs
-                                         .into_iter()
-                                         .map(|(_, o, s)|(o, s))
-                                         .collect(),
-                                         parent_key,
-                                         container,
-                                         report))
-    } else {
-        None
-    }).collect()
+        if used {
+            Some(merge_composite_subobj(name,
+                                        parent_each_stmts,
+                                        subobj_specs
+                                        .into_iter()
+                                        .map(|(_, o, s)|(o, s))
+                                        .collect(),
+                                        parent_key,
+                                        container,
+                                        report))
+        } else {
+            None
+        }).collect()
     //obj.add_composite_component(new_obj_key, container);
     // TODO: Check collisions of 'name' parameters
 }
