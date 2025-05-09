@@ -7,7 +7,7 @@ use rules::{instantiate_rules, CurrentRules, RuleType};
 use rules::{spacing::{SpBraceOptions, SpPunctOptions, NspFunparOptions,
                       NspInparenOptions, NspUnaryOptions, NspTrailingOptions},
                       indentation::{LongLineOptions, IndentSizeOptions, IndentCodeBlockOptions,
-                                    IndentNoTabOptions, IndentClosingBraceOptions, IndentParenExprOptions, IndentSwitchCaseOptions, IndentEmptyLoopOptions},
+                                    IndentNoTabOptions, IndentClosingBraceOptions, IndentParenExprOptions, IndentSwitchCaseOptions, IndentEmptyLoopOptions, IndentContinuationLineOptions},
                     };
 use crate::analysis::{DMLError, IsolatedAnalysis, LocalDMLError};
 use crate::analysis::parsing::tree::TreeElement;
@@ -73,6 +73,8 @@ pub struct LintCfg {
     pub indent_switch_case: Option<IndentSwitchCaseOptions>,
     #[serde(default)]
     pub indent_empty_loop: Option<IndentEmptyLoopOptions>,
+    #[serde(default)]
+    pub indent_continuation_line: Option<IndentContinuationLineOptions>,
 }
 
 impl Default for LintCfg {
@@ -92,6 +94,7 @@ impl Default for LintCfg {
             indent_paren_expr: Some(IndentParenExprOptions{}),
             indent_switch_case: Some(IndentSwitchCaseOptions{indentation_spaces: INDENTATION_LEVEL_DEFAULT}),
             indent_empty_loop: Some(IndentEmptyLoopOptions{indentation_spaces: INDENTATION_LEVEL_DEFAULT}),
+            indent_continuation_line: Some(IndentContinuationLineOptions{indentation_spaces: INDENTATION_LEVEL_DEFAULT}),
         }
     }
 }
