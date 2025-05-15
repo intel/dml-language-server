@@ -2,8 +2,10 @@
 //  SPDX-License-Identifier: Apache-2.0 and MIT
 use log::error;
 
+use crate::lint::rules::indentation::IndentEmptyLoopArgs;
 use crate::span::Range;
 use crate::analysis::parsing::lexer::TokenKind;
+use crate::analysis::parsing::statement;
 use crate::analysis::parsing::parser::{Token, doesnt_understand_tokens,
                                        FileParser, Parse, ParseContext,
                                        FileInfo};
@@ -21,10 +23,13 @@ use crate::analysis::parsing::misc::{Initializer, InitializerContent, CDecl,
                                      ident_filter, objident_filter};
 use crate::analysis::parsing::structure::{parse_vardecl, VarDecl};
 use crate::analysis::LocalDMLError;
-use crate::lint::rules::spacing::{NspInparenArgs,
-                                  SpBracesArgs,
-                                  SpPunctArgs};
-use crate::lint::rules::CurrentRules;
+use crate::lint::{DMLStyleError,
+                  rules::{CurrentRules,
+                          indentation::{IndentCodeBlockArgs, IndentClosingBraceArgs, IndentParenExprArgs, IndentSwitchCaseArgs},
+                          spacing::{NspInparenArgs,
+                                    SpBracesArgs,
+                                    SpPunctArgs}},
+                                    AuxParams};
 use crate::vfs::TextFile;
 
 fn statement_contexts(context: &ParseContext)
@@ -139,8 +144,13 @@ impl TreeElement for CompoundContent {
     fn subs(&self) -> TreeElements<'_> {
         create_subs!(&self.lbrace, &self.statements, &self.rbrace)
     }
-    fn evaluate_rules(&self, acc: &mut Vec<LocalDMLError>, rules: &CurrentRules) {
+    fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, aux: AuxParams) {
         rules.sp_brace.check(acc, SpBracesArgs::from_compound(self));
+        rules.indent_code_block.check(acc, IndentCodeBlockArgs::from_compound_content(self, aux.depth));
+        rules.indent_closing_brace.check(acc, IndentClosingBraceArgs::from_compound_content(self, aux.depth));
+    }
+    fn should_increment_depth(&self) -> bool {
+        true
     }
 }
 
@@ -192,7 +202,7 @@ impl TreeElement for VariableDeclContent {
     fn post_parse_sanity(&self, _file: &TextFile) -> Vec<LocalDMLError> {
         self.decls.ensure_named()
     }
-    fn evaluate_rules(&self, acc: &mut Vec<LocalDMLError>, rules: &CurrentRules) {
+    fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, _aux: AuxParams) {
         rules.sp_punct.check(acc, SpPunctArgs::from_variable_decl(self));
     }
 }
@@ -424,8 +434,9 @@ impl TreeElement for IfContent {
                      &self.truebranch,
                      &self.elsebranch)
     }
-    fn evaluate_rules(&self, acc: &mut Vec<LocalDMLError>, rules: &CurrentRules) {
+    fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, _aux: AuxParams) {
         rules.nsp_inparen.check(acc, NspInparenArgs::from_if(self));
+        rules.indent_paren_expr.check(acc, IndentParenExprArgs::from_if(self));
     }
 }
 
@@ -536,6 +547,10 @@ impl TreeElement for WhileContent {
                      &self.rparen,
                      &self.statement)
     }
+    fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, aux: AuxParams) {
+        rules.indent_paren_expr.check(acc, IndentParenExprArgs::from_while(self));
+        rules.indent_empty_loop.check(acc, IndentEmptyLoopArgs::from_while_content(self, aux.depth));
+    }
 }
 
 impl Parse<StatementContent> for WhileContent {
@@ -582,6 +597,9 @@ impl TreeElement for DoContent {
                      &self.cond,
                      &self.rparen,
                      &self.semi)
+    }
+    fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, _aux: AuxParams) {
+        rules.indent_paren_expr.check(acc, IndentParenExprArgs::from_do_while(self));
     }
 }
 
@@ -844,6 +862,10 @@ impl TreeElement for ForContent {
                      &self.rparen,
                      &self.statement)
     }
+    fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, aux: AuxParams) {
+        rules.indent_paren_expr.check(acc, IndentParenExprArgs::from_for(self));
+        rules.indent_empty_loop.check(acc, IndentEmptyLoopArgs::from_for_content(self, aux.depth));
+    }
 }
 
 impl Parse<StatementContent> for ForContent {
@@ -1000,6 +1022,14 @@ impl TreeElement for SwitchCase {
             Self::Default(default, colon) => create_subs!(default, colon),
         }
     }
+    fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, aux: AuxParams) {
+        rules.indent_switch_case.check(acc, IndentSwitchCaseArgs::from_switch_case(self, aux.depth));
+    }
+    fn should_increment_depth(&self) -> bool {
+        matches!(self, SwitchCase::Statement(statement)
+            if !matches!(*statement.content,
+                Content::Some(statement::StatementContent::Compound(_))))
+    }
 }
 
 fn parse_switchcase(context: &ParseContext, stream: &mut FileParser<'_>, file_info: &FileInfo)
@@ -1079,6 +1109,12 @@ impl TreeElement for SwitchContent {
                      &self.lbrace,
                      &self.cases,
                      &self.rbrace)
+    }
+    fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>,
+                      rules: &CurrentRules, aux: AuxParams)
+    {
+        rules.indent_closing_brace.check(acc, IndentClosingBraceArgs::from_switch_content(self, aux.depth));
+        rules.indent_paren_expr.check(acc, IndentParenExprArgs::from_switch(self));
     }
 }
 
@@ -1573,6 +1609,9 @@ impl TreeElement for ForeachContent {
                      &self.rparen,
                      &self.statement)
     }
+    fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, _aux: AuxParams) {
+        rules.indent_paren_expr.check(acc, IndentParenExprArgs::from_foreach(self));
+    }
 }
 
 impl Parse<StatementContent> for ForeachContent {
@@ -1709,7 +1748,7 @@ impl TreeElement for ExpressionStmtContent {
     fn subs(&self) -> TreeElements<'_> {
         create_subs!(&self.expression, &self.semi)
     }
-    fn evaluate_rules(&self, acc: &mut Vec<LocalDMLError>, rules: &CurrentRules) {
+    fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, _aux: AuxParams) {
         rules.sp_punct.check(acc, SpPunctArgs::from_expression_stmt(self));
     }
 }
