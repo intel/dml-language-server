@@ -484,7 +484,7 @@ impl IndentParenExprArgs {
 }
 
 impl IndentParenExprRule {
-    pub fn check<'a> (&self, acc: &mut Vec<DMLStyleError>,
+    pub fn check(&self, acc: &mut Vec<DMLStyleError>,
         args: Option<IndentParenExprArgs>) {
         if !self.enabled { return; }
         let Some(args) = args else { return; };

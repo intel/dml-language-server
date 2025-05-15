@@ -278,7 +278,7 @@ impl TreeElement for LeafToken {
     }
     fn gather_tokens(&self, coll: &mut TreeElementTokenIterator) {
         if let Self::Actual(t) = self {
-            coll.push(t.clone())
+            coll.push(*t)
         }
     }
 }
