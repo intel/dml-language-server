@@ -204,12 +204,10 @@ fn composite_indent_incorrect() {
     let rules = set_up();
     let expected_errors = define_expected_errors!(
         RuleType::IN4,
-        (12, 12, 4, 5),
-        (12, 12, 2, 3),
-        (12, 12, 0, 1),
         (11, 11, 16, 17),
-    ); // Order of expected errors is not intuitive here
-    // and has to be defined in a reverse
-    // fashion to be asserted properly
+        (12, 12, 0, 1),
+        (12, 12, 2, 3),
+        (12, 12, 4, 5),
+    );
     assert_snippet(COMPOSITE_INDENT_INCORRECT, expected_errors, &rules);
 }

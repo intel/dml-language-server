@@ -64,7 +64,9 @@ impl LongLinesRule {
         let len = line.len().try_into().unwrap();
         if len > self.max_length {
             let rowu32 = row.try_into().unwrap();
-            self.push_err(acc, Range::<ZeroIndexed>::from_u32(rowu32,rowu32, self.max_length, len));
+            acc.push(
+                self.create_err(Range::<ZeroIndexed>::from_u32(rowu32,rowu32, self.max_length, len))
+            );
         }
     }
 }
@@ -99,7 +101,9 @@ impl IndentNoTabRule {
 
         for (col, _) in line.match_indices('\t') {
             let colu32 = col.try_into().unwrap();
-            self.push_err(acc, Range::<ZeroIndexed>::from_u32(rowu32, rowu32, colu32, colu32 + 1));
+            acc.push(
+                self.create_err(Range::<ZeroIndexed>::from_u32(rowu32, rowu32, colu32, colu32 + 1))
+            );
         }
     }
 }
@@ -203,7 +207,7 @@ impl IndentCodeBlockRule {
             args.lbrace.row_start == args.members_ranges[0].row_start { return; }
         for member_range in args.members_ranges {
             if self.indentation_is_not_aligned(member_range, args.expected_depth) {
-                self.push_err(acc, member_range);
+                acc.push(self.create_err(member_range));
             }
         }
     }
@@ -347,13 +351,14 @@ impl IndentClosingBraceRule {
         let last_member_on_same_row_than_rbrace:bool = args.last_member.row_end
             == args.rbrace.row_start;
         if last_member_on_same_row_than_rbrace {
-            return self.push_err(acc, args.rbrace);
+            acc.push(self.create_err(args.rbrace));
+            return;
         }
 
         let rbrace_on_same_ind_level_than_switchtok:bool = args.rbrace.col_start.0
             == args.expected_depth * self.indentation_spaces;
         if !rbrace_on_same_ind_level_than_switchtok {
-            self.push_err(acc, args.rbrace);
+            acc.push(self.create_err(args.rbrace));
         }
     }
 }
@@ -495,7 +500,7 @@ impl IndentParenExprRule {
             if member_range.row_start.0 != last_row {
                 last_row = member_range.row_start.0;
                 if member_range.col_start.0 != expected_line_start {
-                    self.push_err(acc, member_range);
+                    acc.push(self.create_err(member_range));
                 }
             }
         }
@@ -574,7 +579,7 @@ impl IndentSwitchCaseRule {
         if !self.enabled { return; }
         let Some(args) = args else { return; };
         if self.indentation_is_not_aligned(args.case_range, args.expected_depth) {
-            self.push_err(acc, args.case_range);
+            acc.push(self.create_err(args.case_range));
         }
     }
     fn indentation_is_not_aligned(&self, member_range: ZeroRange, depth: u32) -> bool {
@@ -661,7 +666,9 @@ impl IndentEmptyLoopRule {
         let Some(args) = args else { return; };
         if self.indentation_is_not_aligned(args.semicolon_range, args.expected_depth) ||
             args.loop_keyword_range.row_start == args.semicolon_range.row_start {
-            self.push_err(acc, Range::combine(args.loop_keyword_range, args.semicolon_range))
+            acc.push(
+                self.create_err(Range::combine(args.loop_keyword_range, args.semicolon_range))
+            );
         }
     }
     fn indentation_is_not_aligned(&self, member_range: ZeroRange, depth: u32) -> bool {

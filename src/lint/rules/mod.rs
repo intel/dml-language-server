@@ -50,19 +50,18 @@ pub trait Rule {
     fn name() -> &'static str;
     fn description() -> &'static str;
     fn get_rule_type() -> RuleType;
-    fn push_err(&self, acc: &mut Vec<DMLStyleError>, range: ZeroRange) {
-        let dmlerror = DMLStyleError {
+    fn create_err(&self, range: ZeroRange) -> DMLStyleError {
+        DMLStyleError {
             error: LocalDMLError {
                 range,
                 description: Self::description().to_string(),
             },
             rule_type: Self::get_rule_type(),
-        };
-        acc.push(dmlerror);
+        }
     }
 }
 
-#[derive(PartialEq, Debug, Clone)]
+#[derive(PartialEq, Debug, Clone, Eq, Hash)]
 pub enum RuleType {
     SpBraces,
     SpPunct,
