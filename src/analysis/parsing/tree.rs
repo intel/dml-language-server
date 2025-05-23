@@ -7,8 +7,8 @@ use crate::analysis::reference::{Reference, NodeRef, MaybeIsNodeRef,
 use crate::analysis::FileSpec;
 use crate::analysis::structure::expressions::DMLString;
 
-use crate::lint::rules::CurrentRules;
-use crate::span::{Range, Span, ZeroIndexed, Position, FilePosition};
+use crate::lint::{rules::CurrentRules, AuxParams, DMLStyleError};
+use crate::span::{FilePosition, Position, Range, Span, ZeroIndexed};
 use crate::vfs::{Vfs as GenVfs, TextFile};
 
 pub type ZeroRange = Range::<ZeroIndexed>;
@@ -24,6 +24,7 @@ impl <T: TreeElement + ReferenceContainer + std::fmt::Debug>
     TreeElementMember for T {}
 
 pub type TreeElements<'t> = Vec<&'t dyn TreeElementMember>;
+pub type TreeElementTokenIterator = Vec<Token>;
 // TODO: Might be worth moving this specialization somewhere else
 pub type Vfs = GenVfs<()>;
 
@@ -90,14 +91,32 @@ pub trait TreeElement {
                       file: FileSpec<'a>) {
         self.default_references(accumulator, file);
     }
+    // TODO: This places a hard requirement that subs()
+    // returns the sub nodes in order, which I _think_
+    // is true but is not currently tested
+    fn tokens(&self) -> TreeElementTokenIterator {
+        let mut coll = vec![];
+        self.gather_tokens(&mut coll);
+        coll
+    }
 
-    fn style_check(&self, acc: &mut Vec<LocalDMLError>, rules: &CurrentRules) {
-        self.evaluate_rules(acc, rules);
+    fn gather_tokens(&self, coll: &mut TreeElementTokenIterator) {
         for sub in self.subs() {
-            sub.style_check(acc, rules);
+            sub.gather_tokens(coll);
         }
     }
-    fn evaluate_rules(&self, _acc: &mut Vec<LocalDMLError>, _rules: &CurrentRules) {} // default NOOP
+
+    fn style_check(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, mut aux: AuxParams) {
+        if self.should_increment_depth() {
+            aux.depth += 1;
+        }
+        self.evaluate_rules(acc, rules, aux);
+        for sub in self.subs() {
+            sub.style_check(acc, rules, aux);
+        }
+    }
+    fn should_increment_depth(&self) -> bool {false}  // default don't increment
+    fn evaluate_rules(&self, _acc: &mut Vec<DMLStyleError>, _rules: &CurrentRules, _aux: AuxParams) {} // default NOOP
 }
 
 impl <T: ?Sized + TreeElement> ReferenceContainer for T {
@@ -255,6 +274,11 @@ impl TreeElement for LeafToken {
         match self {
             Self::Actual(_) => vec![],
             Self::Missing(missingtok) => vec![missingtok.into()],
+        }
+    }
+    fn gather_tokens(&self, coll: &mut TreeElementTokenIterator) {
+        if let Self::Actual(t) = self {
+            coll.push(*t)
         }
     }
 }

@@ -28,12 +28,20 @@ Each rule is implemented as a struct, and a method `check()` is defined so each 
 Also, for each rule an associated type (`SpBracesArgs`) details the required arguments the rule's `check()` implementation will require for evaluating the rule logic.
 Associated functions are defined also for these Args types to extract the required information from each type of node. To expand on the example, `SpBracesArgs` implements functions to extract the information required for the `SpBraces` rule from either the `CompoundContent` tree node object, or from the `ObjectStatementsContent` tree node object type.
 
+#### Indentation enforcement
+
+The indentation rules (found in [indentation.rs](./rules/indentation.rs)) are implemented by tracking "indentation levels" for each code block and its corresponding expected depth is calculated depending on how deep each statement is nested.
+The indentation size is fixed, based on the `indentation_spaces` parameter (which can be configured in rule IN1 using the lint config.json file). This parameter is used to multiply the indentation level by the amount of configured spaces per indent.
+
+The indentation level is tracked by the parameter `depth`, which is passed down in the `style_check()` logic to each node in the tree in the `AuxParams` struct.
+This depth increases depending on each node type. A function `should_increment_depth() -> bool` is part of the `TreeElement` trait which defaults to false. Each TreeElement implementation for a particular node content type can define its own procedure to increment depth if required.
+
 ### Configurable rules
 
 Each rule should be configurable to be either enabled/disabled, or have any extra parameters (like line length threshold for example) as required.
 
 The client extension should specify a declarative file with this configuration. This file is used to define `LintCfg` struct which is passed down to each linter job. The linter job can then setup the rule settings accordingly.
-See `example_files/example_lint_cfg.json` and its corresponding README for details on how to use this file.
+See [example_lint_cfg.json](../../example_files/example_lint_cfg.json) and its corresponding README for details on how to use this file.
 Users can decide to define the config file in order to turn off any rules or set parameters avaiable for customizing their behavior.
 Currently, the lint module will be enabled by default on the DLS. The `simics-modeling.dls.lintingEnabled` setting in the workspace configuration can be set to disable the style checks.
 
