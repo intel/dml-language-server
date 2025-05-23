@@ -5,6 +5,7 @@
 # Change Log
 
 ## 0.9.10
+- Added indentation style rules to the lint module
 
 ## 0.9.9
 - Fixed an issue that could cause analysis thread crash when an object was declared both

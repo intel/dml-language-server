@@ -11,7 +11,7 @@ Below are listed the currently supported rules for linting:
 - NspTrailing, `nsp_trailing`: no spaces between the last token in a line and the corresponding newline `\n`
 
 ## Indentation
-- **IN1**, `indent_size`: Lines are indented a fixed amount of spaces for each indentation level. Defaults to 4, can be set to a custom value
+- **IN1**, `indent_size`: Lines are indented a fixed amount of spaces for each indentation level. Defaults to 4, can be set to a custom value by defining field "indentation_spaces" lint configuration [json file](../../example_files/example_lint_cfg.README)
 - **IN2**, `indent_no_tabs`: Tab characters (ASCII 9) should never be used to indent lines
 - **IN3**, `indent_code_block`: If the previous line contains an opening brace without corresponding closing brace, the current line should be indented one level more than the previous line
 - **IN4**, `indent_closing_brace`: Closing braces at the beginning of a line should be aligned to the corresponding indentation level of the statement that started the code block. A closing brace should only ever appear on the same line as the opening brace, or first on a line

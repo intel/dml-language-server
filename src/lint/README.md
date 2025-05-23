@@ -41,7 +41,7 @@ This depth increases depending on each node type. A function `should_increment_d
 Each rule should be configurable to be either enabled/disabled, or have any extra parameters (like line length threshold for example) as required.
 
 The client extension should specify a declarative file with this configuration. This file is used to define `LintCfg` struct which is passed down to each linter job. The linter job can then setup the rule settings accordingly.
-See [example_lint_cfg.json](./example_files/example_lint_cfg.json) and its corresponding README for details on how to use this file.
+See [example_lint_cfg.json](../../example_files/example_lint_cfg.json) and its corresponding README for details on how to use this file.
 Users can decide to define the config file in order to turn off any rules or set parameters avaiable for customizing their behavior.
 Currently, the lint module will be enabled by default on the DLS. The `simics-modeling.dls.lintingEnabled` setting in the workspace configuration can be set to disable the style checks.
 
