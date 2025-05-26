@@ -48,8 +48,8 @@ pub fn robust_assert_snippet(source_code: &str, expected_errors: Vec<ExpectedDML
     let lint_errors = run_linter(source_code, rules).unwrap();
     assert_eq!(lint_errors.len(), expected_errors.len(), "{:#?}", lint_errors);
 
-    let actual_errors: HashSet<_> = lint_errors.iter().map(|e| (e.error.range.clone(), e.rule_type.clone())).collect();
-    let expected_errors: HashSet<_> = expected_errors.iter().map(|e| (e.range.clone(), e.rule_type.clone())).collect();
+    let actual_errors: HashSet<_> = lint_errors.iter().map(|e| (e.error.range, e.rule_type.clone())).collect();
+    let expected_errors: HashSet<_> = expected_errors.iter().map(|e| (e.range, e.rule_type.clone())).collect();
 
     assert_eq!(actual_errors, expected_errors, "Mismatch between actual and expected errors:\nActual: {:#?}\nExpected: {:#?}", actual_errors, expected_errors);
 }
