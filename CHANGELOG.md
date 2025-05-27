@@ -6,7 +6,8 @@
 
 ## 0.9.10
 - Added indentation-style rules to the lint module with configurable indent size as specified in [example_lint_cfg.json](./example_files/example_lint_cfg.README)
-
+- Added "explicit\_param\_decl" as a know provisional (NOTE: the provisionals
+  actual functionality is not implemented)
 ## 0.9.9
 - Fixed an issue that could cause analysis thread crash when an object was declared both
   as an array and not one
