@@ -249,6 +249,10 @@ impl AnalysisStorage {
         self.isolated_analysis.contains_key(path)
     }
 
+    pub fn has_lint_analysis(&self, path: &CanonPath) -> bool {
+        self.lint_analysis.contains_key(path)
+    }
+
     pub fn all_dependencies(&self,
                             path: &CanonPath,
                             context: Option<&CanonPath>)

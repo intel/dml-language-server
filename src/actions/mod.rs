@@ -434,17 +434,22 @@ impl <O: Output> InitActionContext<O> {
     pub fn report_errors(&self, output: &O) {
         self.update_analysis();
         let filter = Some(self.device_active_contexts.lock().unwrap().clone());
-        let (isolated, device, lint) =
+        let (isolated, device, mut lint) =
             self.analysis.lock().unwrap().gather_errors(filter.as_ref());
         let notifier = AnalysisDiagnosticsNotifier::new("indexing".to_string(),
                                                         output.clone());
         notifier.notify_begin_diagnostics();
+        let config = self.config.lock().unwrap();
+        if !config.linting_enabled {
+            // A slightly hacky way to not report linting errors
+            // when we have done linting but then turned off the setting
+            lint.clear();
+        }
         let files: HashSet<&PathBuf> =
             isolated.keys()
             .chain(device.keys())
             .chain(lint.keys())
             .collect();
-        let config = self.config.lock().unwrap();
         let direct_opens = self.direct_opens.lock().unwrap();
         for file in files {
             let mut sorted_errors: Vec<DMLError> =
@@ -570,12 +575,91 @@ impl <O: Output> InitActionContext<O> {
                                 old_config: Config,
                                 out: &O) {
         trace!("Compilation info might have changed");
-        let config = self.config.lock().unwrap();
-        if config.compile_info_path != old_config.compile_info_path {
-            self.update_compilation_info(out);
+        enum LintReissueRequirement {
+            None,
+            ReReport,
+            AnalyzeMissing,
+            AnalyzeAll,
         }
-        if config.lint_cfg_path != old_config.lint_cfg_path {
-            self.update_linter_config(out);
+        impl LintReissueRequirement {
+            fn upgrade_to(self, to: LintReissueRequirement) ->
+                LintReissueRequirement {
+                    match (self, to) {
+                        (Self::None, o) => o,
+                        (o, Self::None) => o,
+                        (Self::AnalyzeAll, _) => Self::AnalyzeAll,
+                        (_, Self::AnalyzeAll) => Self::AnalyzeAll,
+                        (Self::AnalyzeMissing, _) => Self::AnalyzeMissing,
+                        (_, Self::AnalyzeMissing) => Self::AnalyzeMissing,
+                        _ => Self::ReReport,
+                    }
+                }
+        }
+        let mut lint_reissue = LintReissueRequirement::None;
+        {
+            let config = self.config.lock().unwrap();
+            if config.compile_info_path != old_config.compile_info_path {
+                self.update_compilation_info(out);
+            }
+            if config.linting_enabled != old_config.linting_enabled {
+                if config.linting_enabled {
+                    lint_reissue = lint_reissue.upgrade_to(
+                        LintReissueRequirement::AnalyzeMissing);
+                } else {
+                    lint_reissue = lint_reissue.upgrade_to(
+                        LintReissueRequirement::ReReport);
+                }
+            }
+            if config.suppress_imports != old_config.suppress_imports {
+                if config.suppress_imports {
+                    lint_reissue = lint_reissue.upgrade_to(
+                        LintReissueRequirement::ReReport);
+                } else {
+                    lint_reissue = lint_reissue.upgrade_to(
+                        LintReissueRequirement::AnalyzeMissing);
+                }
+            }
+            if config.lint_direct_only != old_config.lint_direct_only {
+                if config.lint_direct_only {
+                    lint_reissue = lint_reissue.upgrade_to(
+                        LintReissueRequirement::ReReport);
+                } else {
+                    lint_reissue = lint_reissue.upgrade_to(
+                        LintReissueRequirement::AnalyzeMissing);
+                }
+            }
+            if config.lint_cfg_path != old_config.lint_cfg_path {
+                self.update_linter_config(out);
+                lint_reissue = LintReissueRequirement::AnalyzeAll;
+            }
+        }
+        match lint_reissue {
+            LintReissueRequirement::None => (),
+            LintReissueRequirement::ReReport =>
+                self.report_errors(out),
+            LintReissueRequirement::AnalyzeMissing => {
+                // Because lint_analyze re-locks self.analysis, we need
+                // to copy out the paths before iterating here
+                let paths: Vec<_> = {
+                    let storage = self.analysis.lock().unwrap();
+                    storage.isolated_analysis.keys().filter(
+                        |p|!storage.has_lint_analysis(p)).cloned().collect()
+                };
+                for path in paths {
+                    self.maybe_trigger_lint_analysis(path.as_path(), out);
+                }
+                self.report_errors(out);
+            },
+            LintReissueRequirement::AnalyzeAll => {
+                let paths: Vec<_> = {
+                    self.analysis.lock().unwrap()
+                        .isolated_analysis.keys().cloned().collect()
+                };
+                for path in paths {
+                    self.maybe_trigger_lint_analysis(path.as_path(), out);
+                }
+                self.report_errors(out);
+            },
         }
     }
 
