@@ -5,5 +5,12 @@
     "nsp_inparen": {},
     "nsp_unary": {},
     "nsp_trailing": {},
-    "long_lines": { "max_length": 80 }
+    "long_lines": { "max_length": 80 },
+    "indent_size": { "indentation_spaces": 4 },
+    "indent_no_tabs": {},
+    "indent_code_block": {},
+    "indent_closing_brace": {},
+    "indent_paren_expr": {},
+    "indent_switch_case": {},
+    "indent_empty_loop": {}
 }

@@ -1,12 +1,15 @@
 pub mod spacing;
 pub mod indentation;
 
-use crate::lint::rules::spacing::{SpBracesRule,
+#[cfg(test)]
+pub mod tests;
+
+use spacing::{SpBracesRule,
     SpPunctRule, NspFunparRule, NspInparenRule,
     NspUnaryRule, NspTrailingRule};
-use crate::lint::LongLineOptions;
-use crate::lint::rules::indentation::LongLinesRule;
-use crate::lint::LintCfg;
+use indentation::{LongLinesRule, IndentNoTabRule, IndentCodeBlockRule, IndentClosingBraceRule, IndentParenExprRule, IndentSwitchCaseRule, IndentEmptyLoopRule};
+use crate::lint::{LintCfg, DMLStyleError};
+use crate::analysis::{LocalDMLError, parsing::tree::ZeroRange};
 
 pub struct CurrentRules {
     pub sp_brace: SpBracesRule,
@@ -16,6 +19,12 @@ pub struct CurrentRules {
     pub nsp_unary: NspUnaryRule,
     pub nsp_trailing: NspTrailingRule,
     pub long_lines: LongLinesRule,
+    pub indent_no_tabs: IndentNoTabRule,
+    pub indent_code_block: IndentCodeBlockRule,
+    pub indent_closing_brace: IndentClosingBraceRule,
+    pub indent_paren_expr: IndentParenExprRule,
+    pub indent_switch_case: IndentSwitchCaseRule,
+    pub indent_empty_loop: IndentEmptyLoopRule
 }
 
 pub fn  instantiate_rules(cfg: &LintCfg) -> CurrentRules {
@@ -26,7 +35,13 @@ pub fn  instantiate_rules(cfg: &LintCfg) -> CurrentRules {
         nsp_inparen: NspInparenRule { enabled: cfg.nsp_inparen.is_some() },
         nsp_unary: NspUnaryRule { enabled: cfg.nsp_unary.is_some() },
         nsp_trailing: NspTrailingRule { enabled: cfg.nsp_trailing.is_some() },
-        long_lines: LongLineOptions::into_rule(&cfg.long_lines),
+        long_lines: LongLinesRule::from_options(&cfg.long_lines),
+        indent_no_tabs: IndentNoTabRule { enabled: cfg.indent_no_tabs.is_some() },
+        indent_code_block: IndentCodeBlockRule::from_options(&cfg.indent_code_block),
+        indent_closing_brace: IndentClosingBraceRule::from_options(&cfg.indent_closing_brace),
+        indent_paren_expr: IndentParenExprRule { enabled: cfg.indent_paren_expr.is_some() },
+        indent_switch_case: IndentSwitchCaseRule::from_options(&cfg.indent_switch_case),
+        indent_empty_loop: IndentEmptyLoopRule::from_options(&cfg.indent_empty_loop)
     }
 }
 
@@ -34,26 +49,33 @@ pub fn  instantiate_rules(cfg: &LintCfg) -> CurrentRules {
 pub trait Rule {
     fn name() -> &'static str;
     fn description() -> &'static str;
-}
-
-pub mod tests {
-
-    use crate::lint::tests::create_ast_from_snippet;
-    use crate::lint::begin_style_check;
-    use crate::lint::rules::CurrentRules;
-
-    pub fn assert_snippet(source_code: &str,
-                          expected_errors: usize,
-                          rules: &CurrentRules) {
-        print!("\nSnippet to test on:\n{}\n", source_code);
-        let ast = create_ast_from_snippet(source_code);
-        print!("Resulting AST:\n{:#?}\n", ast);
-        let lint_errors = begin_style_check(ast,
-                                            source_code.to_string(),
-                                            rules);
-
-        assert!(lint_errors.is_ok());
-        assert_eq!(lint_errors.clone().unwrap().len(), expected_errors,
-                   "{:#?}", lint_errors);
+    fn get_rule_type() -> RuleType;
+    fn create_err(&self, range: ZeroRange) -> DMLStyleError {
+        DMLStyleError {
+            error: LocalDMLError {
+                range,
+                description: Self::description().to_string(),
+            },
+            rule_type: Self::get_rule_type(),
+        }
     }
 }
+
+#[derive(PartialEq, Debug, Clone, Eq, Hash)]
+pub enum RuleType {
+    SpBraces,
+    SpPunct,
+    NspFunpar,
+    NspInparen,
+    NspUnary,
+    NspTrailing,
+    LL1,
+    IN2,
+    IN3,
+    IN4,
+    IN5,
+    IN6,
+    IN9,
+    IN10
+}
+

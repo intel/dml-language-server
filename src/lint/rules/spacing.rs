@@ -3,8 +3,8 @@ use std::convert::TryInto;
 use serde::{Deserialize, Serialize};
 use crate::analysis::parsing::types::{BitfieldsContent, LayoutContent,
                                       StructTypeContent};
-use crate::lint::rules::Rule;
-use crate::analysis::LocalDMLError;
+use crate::lint::{rules::{Rule, RuleType},
+                  DMLStyleError};
 use crate::analysis::parsing::tree::{TreeElement, ZeroRange};
 use crate::analysis::parsing::expression::{FunctionCallContent, IndexContent,
                                            PostUnaryExpressionContent,
@@ -97,25 +97,17 @@ impl SpBracesArgs {
 }
 
 impl SpBracesRule {
-    pub fn check(&self, acc: &mut Vec<LocalDMLError>,
+    pub fn check(&self, acc: &mut Vec<DMLStyleError>,
         ranges: Option<SpBracesArgs>) {
         if !self.enabled { return; }
         if let Some(location) = ranges {
             if (location.lbrace.row_end == location.body_start.row_start)
                 && (location.lbrace.col_end == location.body_start.col_start) {
-                let dmlerror = LocalDMLError {
-                    range: location.lbrace,
-                    description: Self::description().to_string(),
-                };
-                acc.push(dmlerror);
+                acc.push(self.create_err(location.lbrace));
             }
             if (location.rbrace.row_start == location.body_end.row_end)
                 && (location.rbrace.col_start == location.body_end.col_end) {
-                let dmlerror = LocalDMLError {
-                    range: location.rbrace,
-                    description: Self::description().to_string(),
-                };
-                acc.push(dmlerror);
+                acc.push(self.create_err(location.rbrace));
             }
         }
     }
@@ -127,6 +119,9 @@ impl Rule for SpBracesRule {
     }
     fn description() -> &'static str {
         "Missing space around brace"
+    }
+    fn get_rule_type() -> RuleType {
+        RuleType::SpBraces
     }
 }
 
@@ -230,7 +225,7 @@ impl SpPunctArgs {
 }
 
 impl SpPunctRule {
-    pub fn check(&self, acc: &mut Vec<LocalDMLError>,
+    pub fn check(&self, acc: &mut Vec<DMLStyleError>,
         ranges: Option<SpPunctArgs>) {
         if !self.enabled { return; }
         if let Some(args) = ranges {
@@ -244,11 +239,7 @@ impl SpPunctRule {
                         before_range.row_end, punct_range.row_start,
                         before_range.col_end, punct_range.col_start
                     );
-                    let dmlerror = LocalDMLError {
-                        range: error_range,
-                        description: Self::description().to_string(),
-                    };
-                    acc.push(dmlerror);
+                    acc.push(self.create_err(error_range));
                 }
 
                 if after_range.is_none() {continue;}
@@ -259,11 +250,7 @@ impl SpPunctRule {
                         punct_range.row_start, after_range.unwrap().row_end,
                         punct_range.col_start, after_range.unwrap().col_end,
                     );
-                    let dmlerror = LocalDMLError {
-                        range: error_range,
-                        description: Self::description().to_string(),
-                    };
-                    acc.push(dmlerror);
+                    acc.push(self.create_err(error_range));
                 }
             }
         }
@@ -276,6 +263,9 @@ impl Rule for SpPunctRule {
     }
     fn description() -> &'static str {
         "Missing space after punctuation mark"
+    }
+    fn get_rule_type() -> RuleType {
+        RuleType::SpPunct
     }
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -309,15 +299,11 @@ impl NspFunparArgs {
 }
 impl NspFunparRule {
     pub fn check(&self,
-                 acc: &mut Vec<LocalDMLError>,
+                 acc: &mut Vec<DMLStyleError>,
                  range: Option<NspFunparArgs>) {
         if !self.enabled { return; }
         if let Some(gap) = range {
-            let dmlerror = LocalDMLError {
-                range: gap,
-                description: Self::description().to_string(),
-            };
-            acc.push(dmlerror);
+            acc.push(self.create_err(gap));
         }
     }
 }
@@ -327,6 +313,9 @@ impl Rule for NspFunparRule {
     }
     fn description() -> &'static str {
         "There should be no space between a method/function name and its opening parenthesis."
+    }
+    fn get_rule_type() -> RuleType {
+        RuleType::NspFunpar
     }
 }
 
@@ -398,7 +387,7 @@ impl NspInparenArgs {
 }
 impl NspInparenRule {
     pub fn check(&self,
-                 acc: &mut Vec<LocalDMLError>,
+                 acc: &mut Vec<DMLStyleError>,
                  ranges: Option<NspInparenArgs>) {
         if !self.enabled { return; }
         if let Some(location) =  ranges {
@@ -407,22 +396,14 @@ impl NspInparenRule {
                 let mut gap = location.opening;
                 gap.col_start = location.opening.col_end;
                 gap.col_end = location.content_start.col_start;
-                let dmlerror = LocalDMLError {
-                    range: gap,
-                    description: Self::description().to_string(),
-                };
-                acc.push(dmlerror);
+                acc.push(self.create_err(gap));
             }
             if (location.closing.row_start == location.content_end.row_end)
                 && (location.closing.col_start != location.content_end.col_end) { 
                 let mut gap = location.closing;
                 gap.col_end = location.closing.col_start;
                 gap.col_start = location.content_end.col_end;
-                let dmlerror = LocalDMLError {
-                    range: gap,
-                    description: Self::description().to_string(),
-                };
-                acc.push(dmlerror);
+                acc.push(self.create_err(gap));
             }
         }
     }
@@ -433,6 +414,9 @@ impl Rule for NspInparenRule {
     }
     fn description() -> &'static str {
         "There should be no space after opening or before closing () / []"
+    }
+    fn get_rule_type() -> RuleType {
+        RuleType::NspInparen
     }
 }
 
@@ -466,15 +450,11 @@ impl NspUnaryArgs {
 }
 impl NspUnaryRule {
     pub fn check(&self,
-                 acc: &mut Vec<LocalDMLError>,
+                 acc: &mut Vec<DMLStyleError>,
                  range: Option<NspUnaryArgs>) {
         if !self.enabled { return; }
         if let Some(gap) = range {
-            let dmlerror = LocalDMLError {
-                range: gap,
-                description: Self::description().to_string(),
-            };
-            acc.push(dmlerror);
+            acc.push(self.create_err(gap));
         }
     }
 }
@@ -485,6 +465,9 @@ impl Rule for NspUnaryRule {
     fn description() -> &'static str {
         "There should be no space between unary operator and its operand"
     }
+    fn get_rule_type() -> RuleType {
+        RuleType::NspUnary
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -494,20 +477,16 @@ pub struct NspTrailingRule {
     pub enabled: bool,
 }
 impl NspTrailingRule {
-    pub fn check(&self, acc: &mut Vec<LocalDMLError>, row: usize, line: &str) {
+    pub fn check(&self, acc: &mut Vec<DMLStyleError>, row: usize, line: &str) {
         if !self.enabled { return; }
         let len = line.len().try_into().unwrap();
         let row_u32 = row.try_into().unwrap();
         let tokens_end = line.trim_end().len().try_into().unwrap();
         if tokens_end < len {
-            let dmlerror = LocalDMLError {
-                range: Range::<ZeroIndexed>::from_u32(row_u32,
-                                                      row_u32,
-                                                      tokens_end,
-                                                      len),
-                description: Self::description().to_string(),
-            };
-            acc.push(dmlerror);
+            acc.push(self.create_err(Range::<ZeroIndexed>::from_u32(row_u32,
+                                                        row_u32,
+                                                        tokens_end,
+                                                        len)));
         }
     }
 }
@@ -518,216 +497,7 @@ impl Rule for NspTrailingRule {
     fn description() -> &'static str {
         "Found trailing whitespace on row"
     }
-}
-
-#[cfg(test)]
-pub mod tests {
-
-    use crate::lint::rules::tests::assert_snippet;
-    use crate::lint::rules::instantiate_rules;
-    use crate::lint::LintCfg;
-
-    // Put whitespace (space or newline):
-    //  SP.reserved around reserved words, such as if, else, default,
-    //  size, const and in, except when a reserved word is used as an identifier
-    //  (e.g., local uint8 *data;)
-    pub static SP_RESERVED: &str = "
-method this_is_some_method() {
-    local int this_some_integer = 0x666;
-    if(this_some_integer == 0x666)
-        return;
-}
-";
-
-    //  SP.braces around braces ({ and })
-    pub static SP_BRACES: &str = "
-method this_is_some_method() {return 0;}
-
-method this_is_empty_method() { }
-
-bank pcie_config {register command {field mem {
-            method pcie_write(uint64 value) {
-                if (value != 0) {value = value + 1;
-                }
-                default(value);
-                map_memory_alt();}
-}}}
-";
-    #[test]
-    fn style_check_sp_braces() {
-        let mut cfg = LintCfg::default();
-        let mut rules = instantiate_rules(&cfg);
-        assert_snippet(SP_BRACES, 8, &rules);
-        // Test rule disable
-        cfg.sp_brace = None;
-        rules = instantiate_rules(&cfg);
-        assert_snippet(SP_BRACES, 0, &rules);
-
-    }
-
-    pub static SP_BRACES_02: &str = "
-typedef struct {uint16 idx;} hqm_cq_list_release_ctx_t;
-
-typedef layout \"little-endian\" {bitfields 8 {uint2 rsvd @ [7:6];
-        uint1 error_f          @ [5:5];
-        uint1 int_arm          @ [4:4];
-        uint1 qe_valid         @ [3:3];
-        uint1 qe_frag          @ [2:2];
-        uint1 qe_comp          @ [1:1];
-        uint1 cq_token         @ [0:0];} byte;} prod_qe_cmd_t;
-";
-    #[test]
-    fn style_check_sp_braces_02() {
-        let mut cfg = LintCfg::default();
-        let mut rules = instantiate_rules(&cfg);
-        assert_snippet(SP_BRACES_02, 6, &rules);
-        // Test rule disable
-        cfg.sp_brace = None;
-        rules = instantiate_rules(&cfg);
-        assert_snippet(SP_BRACES_02, 0, &rules);
-
-    }
-
-    //  SP.binop around binary operators except the dereferencing operators dot
-    //  (a.b) and arrow (a->b)
-    pub static SP_BINOP: &str = "
-method this_is_some_method() {
-    local int this_some_integer = 5+6;
-    if (this_some_integer == 0x666)
-        this_some_integer = this.val;
-}
-";
-
-    //  SP.ternary around ? and : in the ternary ?: operator
-    pub static SP_TERNARY: &str = "
-method this_is_some_method(bool flag) {
-    local int this_some_integer = (flag?5:7));
-}
-";
-
-    //  SP.punct after but not before colon, semicolon and comma
-    pub static SP_PUNCT: &str = "
-method this_is_some_method(bool flag ,int8 var) {
-    local int this_some_integer = 0x666 ;
-    if(this_some_integer == 0x666)
-        return;
-    some_func(arg1 ,arg2 ,arg3 ,arg4);
-}
-";
-    #[test]
-    fn style_check_sp_punct_rule() {
-        let mut cfg = LintCfg::default();
-        let mut rules = instantiate_rules(&cfg);
-        assert_snippet(SP_PUNCT, 9, &rules);
-        // Test rule disable
-        cfg.sp_punct = None;
-        rules = instantiate_rules(&cfg);
-        assert_snippet(SP_PUNCT, 0, &rules);
-    }
-
-    //  SP.ptrdecl between a type and the * marking a pointer
-    pub static SP_PTRDECL: &str = "
-method this_is_some_method(conf_object_t* dummy_obj) {
-    if(!dummy_obj)
-        return;
-}
-";
-
-    //  SP.comment around the comment delimiters //, /* and **/
-    pub static SP_COMMENT: &str = "
-/*Function
-documentation*/
-method this_is_some_method(conf_object_t *dummy_obj) {
-    if(!dummy_obj)//Not null
-        return;
-}
-";
-
-    // There should be no space:
-    //  NSP.funpar between a function/method name and its opening parenthesis
-    pub static NSP_FUNPAR: &str = "
-method this_is_some_method (conf_object_t *dummy_obj) {
-    if(!dummy_obj)
-        other_method_called ();
-}
-";
-    #[test]
-    fn style_check_nsp_funpar() {
-        let mut cfg = LintCfg::default();
-        let mut rules = instantiate_rules(&cfg);
-        assert_snippet(NSP_FUNPAR, 2, &rules);
-        // Test rule disable
-        cfg.nsp_funpar = None;
-        rules = instantiate_rules(&cfg);
-        assert_snippet(NSP_FUNPAR, 0, &rules);
-    }
-
-    //  NSP.inparen immediately inside parentheses or brackets
-    pub static NSP_INPAREN: &str = "
-method this_is_some_method( conf_object_t *dummy_obj ) {
-    if( !dummy_obj[ 0 ] )
-        return;
-}
-";
-    #[test]
-    fn style_check_nsp_inparen() {
-        let mut cfg = LintCfg::default();
-        let mut rules = instantiate_rules(&cfg);
-        assert_snippet(NSP_INPAREN, 6, &rules);
-        // Test rule disable
-        cfg.nsp_inparen = None;
-        rules = instantiate_rules(&cfg);
-        assert_snippet(NSP_INPAREN, 0, &rules);
-    }
-
-    //  NSP.unary between a unary operator and its operand
-    pub static NSP_UNARY: &str = "
-method this_is_some_method(conf_object_t *dummy_obj) {
-    if(! dummy_obj)
-        return;
-    local uint64 p = & dummy_obj;
-    p ++;
-    -- p;
-    local int64 neg = - 1;
-}
-";
-    #[test]
-    fn style_check_nsp_unary() {
-        let mut cfg = LintCfg::default();
-        let mut rules = instantiate_rules(&cfg);
-        assert_snippet(NSP_UNARY, 5, &rules);
-        // Test rule disable
-        cfg.nsp_unary = None;
-        rules = instantiate_rules(&cfg);
-        assert_snippet(NSP_UNARY, 0, &rules);
-    }
-
-    //  NSP.ptrdecl after the * marking a pointer in a declaration
-    pub static NSP_PTRDECL: &str = "
-method this_is_some_method(conf_object_t * dummy_obj) {
-    if(!dummy_obj)
-        return;
-}
-";
-
-    //  Adding trailing whitespace removal to spacing rules:
-    //  no whitespaces should be left at the end of a line between the last token
-    //  and the newline \n
-    pub static NSP_TRAILING: &str = "
-method this_is_some_method(int64 num) {
-    local int this_some_integer = 0x666;           
-    if (this_some_integer == 0x666)       
-        return;  
-}   
-";
-    #[test]
-    fn style_check_nsp_trailing() {
-        let mut cfg = LintCfg::default();
-        let mut rules = instantiate_rules(&cfg);
-        assert_snippet(NSP_TRAILING, 4, &rules);
-        // Test rule disable
-        cfg.nsp_trailing = None;
-        rules = instantiate_rules(&cfg);
-        assert_snippet(NSP_TRAILING, 0, &rules);
+    fn get_rule_type() -> RuleType {
+        RuleType::NspTrailing
     }
 }

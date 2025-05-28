@@ -20,7 +20,8 @@ use crate::lint::rules::spacing::{SpBracesArgs,
                                   NspInparenArgs,
                                   NspFunparArgs,
                                   SpPunctArgs};
-use crate::lint::rules::CurrentRules;
+use crate::lint::rules::indentation::{IndentCodeBlockArgs, IndentClosingBraceArgs, IndentParenExprArgs};
+use crate::lint::{rules::CurrentRules, AuxParams, DMLStyleError};
 use crate::analysis::reference::{Reference, ReferenceKind};
 use crate::analysis::FileSpec;
 use crate::span::Range;
@@ -234,10 +235,11 @@ impl TreeElement for MethodContent {
         }
         errors
     }
-    fn evaluate_rules(&self, acc: &mut Vec<LocalDMLError>, rules: &CurrentRules) {
+    fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, _aux: AuxParams) {
         rules.nsp_funpar.check(acc, NspFunparArgs::from_method(self));
         rules.nsp_inparen.check(acc, NspInparenArgs::from_method(self));
         rules.sp_punct.check(acc, SpPunctArgs::from_method(self));
+        rules.indent_paren_expr.check(acc, IndentParenExprArgs::from_method(self));
     }
 }
 
@@ -703,8 +705,15 @@ impl TreeElement for ObjectStatementsContent {
                 create_subs!(left, vect, right)
         }
     }
-    fn evaluate_rules(&self, acc: &mut Vec<LocalDMLError>, rules: &CurrentRules) {
+    fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, aux: AuxParams) {
         rules.sp_brace.check(acc, SpBracesArgs::from_obj_stmts(self));
+        rules.indent_code_block.check(acc, IndentCodeBlockArgs::from_obj_stmts_content(self, aux.depth));
+        rules.indent_closing_brace.check(acc, IndentClosingBraceArgs::from_obj_stmts_content(self, aux.depth));
+    }
+    fn should_increment_depth(&self) -> bool {
+        matches!(self, ObjectStatementsContent::List(lbrace, list, rbrace)
+            if lbrace.range().row_start != list.range().row_start &&
+               lbrace.range().row_start != rbrace.range().row_end)
     }
 }
 

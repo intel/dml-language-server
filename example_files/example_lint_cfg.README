@@ -17,4 +17,12 @@
     // "nsp_unary": {}
     // or assign it to null
     "nsp_unary": null
+    // indentation rules can be configured by setting
+    // "indentation_spaces" field for "indent_size" rule
+    // to the desired integer value (defaults to 4).
+    // all other indentation rules will use this size
+    "indent_size": { "indentation_spaces": 4 },
+    "indent_tabs": {},
+    "indent_code_block": {}
+    
 }
