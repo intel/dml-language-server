@@ -106,7 +106,7 @@ impl BlockingRequestAction for ShutdownRequest {
     }
 }
 
-pub(crate) fn maybe_notify_unknown_configs<O: Output>(out: &O, unknowns: &[String]) {
+pub(crate) fn maybe_notify_unknown_configs<O: Output>(_out: &O, unknowns: &[String]) {
     use std::fmt::Write;
     if unknowns.is_empty() {
         return;
@@ -117,10 +117,11 @@ pub(crate) fn maybe_notify_unknown_configs<O: Output>(out: &O, unknowns: &[Strin
         write!(msg, "{}`{}` ", if first { ' ' } else { ',' }, key).unwrap();
         first = false;
     }
-    out.notify(Notification::<ShowMessage>::new(ShowMessageParams {
-        typ: MessageType::WARNING,
-        message: msg,
-    }));
+    warn!("{}", msg);
+    // out.notify(Notification::<ShowMessage>::new(ShowMessageParams {
+    //     typ: MessageType::WARNING,
+    //     message: msg,
+    // }));
 }
 
 #[allow(dead_code)]
