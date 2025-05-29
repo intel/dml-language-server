@@ -38,3 +38,25 @@ fn no_space_inparen_method_func_index_correct() {
     let rules = set_up();
     assert_snippet(NO_SPACE_INPAREN_METHOD_FUNC_INDEX_CORRECT, vec![], &rules);
 }
+
+
+pub static NSP_INPAREN_02: &str = "
+bank some_bank {
+    group some_group[ i < ( GROUP_COUNT ) ] {
+        register some_reg is ( some_template, another_template ) {
+            param desc = \"Register description\";
+        }
+    }
+}
+";
+    #[test]
+    fn style_check_nsp_inparen_02() {
+        // let mut cfg = LintCfg::default();
+        // let mut rules = instantiate_rules(&cfg);
+        // assert_snippet(NSP_INPAREN_02, 6, &rules);
+        // Test rule disable
+        // cfg.nsp_inparen = None;
+        // rules = instantiate_rules(&cfg);
+        // assert_snippet(NSP_INPAREN_02, 0, &rules);
+
+    }

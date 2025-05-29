@@ -92,3 +92,40 @@ fn space_braces_struct_layout_bitf_correct() {
     rules.sp_brace.enabled = false;
     assert_snippet(SPACE_BRACES_STRUCT_LAYOUT_BITF_CORRECT, vec![], &rules);
 }
+
+pub static SP_BRACES_SWITCHES: &str = "
+method test_switch(int some_var) {
+    switch (some_var){
+    case 1:
+        print(1);
+        break;
+    case extra:
+        print(\"extra\");
+        break;
+    case 2:
+        print(2);
+        break;
+    case COMPOUND:{
+        print(1);
+        print(2);
+        break;
+    }
+    default:
+        print(0);
+        break;
+    }
+}
+";
+#[test]
+fn style_check_sp_braces_switches() {
+    let mut rules = set_up();
+    let expected_errors = define_expected_errors!(
+        RuleType::SpBraces,
+        (2, 2, 52, 53),
+        (11, 11, 18, 19),
+    );
+    assert_snippet(SP_BRACES_SWITCHES, expected_errors, &rules);
+    // Test rule disable
+    rules.sp_brace.enabled = false;
+    assert_snippet(SP_BRACES_SWITCHES, vec![], &rules);
+}
