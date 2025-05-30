@@ -90,6 +90,20 @@ fn funcall_paren_incorrect() {
     assert_snippet(FUNCALL_PAREN_INCORRECT, expected_errors, &rules);
 }
 
+static FUNCALL_BROKEN_AFTER_PAREN_EXCEPTION_CORRECT: &str = "
+method effect() {
+    callback(
+        0xABC,
+        identifier,
+        false);
+}
+";
+#[test]
+fn funcall_broken_after_paren_exception_correct() {
+    let rules = set_up();
+    assert_snippet(FUNCALL_BROKEN_AFTER_PAREN_EXCEPTION_CORRECT, vec![], &rules);
+}
+
 static FUNCALL_NESTED_PAREN_CORRECT: &str = "
 method effect() {
     callback(another_cb(varname,

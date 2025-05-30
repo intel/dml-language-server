@@ -374,6 +374,9 @@ pub struct IndentParenExprArgs {
 }
 
 impl IndentParenExprArgs {
+    pub fn is_broken_after_lparen(lparen_range: ZeroRange, next_token_range: ZeroRange) -> bool {
+        lparen_range.row_start != next_token_range.row_start
+    }
     pub fn filter_out_parenthesized_tokens(expression_tokens: TreeElementTokenIterator) -> Vec<Token> {
         let mut token_list: Vec<Token> = vec![];
         let mut paren_depth = 0;
@@ -428,6 +431,11 @@ impl IndentParenExprArgs {
         let mut filtered_member_ranges: Vec<ZeroRange> = vec![];
         for (arg, _comma) in node.arguments.iter() {
             filtered_member_ranges.extend(Self::filter_out_parenthesized_tokens(arg.tokens()).iter().filter(|t| t.kind != TokenKind::RParen).map(|t| t.range));
+        }
+        if filtered_member_ranges.is_empty()
+            || Self::is_broken_after_lparen(node.lparen.range(),
+                filtered_member_ranges.first()?.to_owned()) {
+            return None
         }
         Some(IndentParenExprArgs {
             members_ranges: filtered_member_ranges,
