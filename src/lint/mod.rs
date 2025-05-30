@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use lazy_static::lazy_static;
 use log::{debug, error, trace};
+use rules::linebreaking::FuncCallBreakOnOpenParenOptions;
 use serde::{Deserialize, Serialize};
 use regex::Regex;
 use rules::{instantiate_rules, CurrentRules, RuleType};
@@ -113,6 +114,8 @@ pub struct LintCfg {
     pub indent_empty_loop: Option<IndentEmptyLoopOptions>,
     #[serde(default)]
     pub indent_continuation_line: Option<IndentContinuationLineOptions>,
+    #[serde(default)]
+    pub func_call_break_on_open_paren: Option<FuncCallBreakOnOpenParenOptions>,
     #[serde(default = "get_true")]
     pub annotate_lints: bool,
 }
@@ -159,10 +162,12 @@ impl Default for LintCfg {
             indent_switch_case: Some(IndentSwitchCaseOptions{indentation_spaces: INDENTATION_LEVEL_DEFAULT}),
             indent_empty_loop: Some(IndentEmptyLoopOptions{indentation_spaces: INDENTATION_LEVEL_DEFAULT}),
             indent_continuation_line: Some(IndentContinuationLineOptions{indentation_spaces: INDENTATION_LEVEL_DEFAULT}),
+            func_call_break_on_open_paren: Some(FuncCallBreakOnOpenParenOptions{indentation_spaces: INDENTATION_LEVEL_DEFAULT}),
             annotate_lints: true,
         }
     }
 }
+
 
 #[derive(Debug, Clone)]
 pub struct DMLStyleError {

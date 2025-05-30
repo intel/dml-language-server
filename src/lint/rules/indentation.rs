@@ -376,6 +376,9 @@ pub struct IndentParenExprArgs {
 }
 
 impl IndentParenExprArgs {
+    pub fn is_broken_after_lparen(lparen_range: ZeroRange, next_token_range: ZeroRange) -> bool {
+        lparen_range.row_start != next_token_range.row_start
+    }
     pub fn filter_out_parenthesized_tokens(expression_tokens: TreeElementTokenIterator) -> Vec<Token> {
         let mut token_list: Vec<Token> = vec![];
         let mut paren_depth = 0;
@@ -430,6 +433,11 @@ impl IndentParenExprArgs {
         let mut filtered_member_ranges: Vec<ZeroRange> = vec![];
         for (arg, _comma) in node.arguments.iter() {
             filtered_member_ranges.extend(Self::filter_out_parenthesized_tokens(arg.tokens()).iter().filter(|t| t.kind != TokenKind::RParen).map(|t| t.range));
+        }
+        if filtered_member_ranges.is_empty()
+            || Self::is_broken_after_lparen(node.lparen.range(),
+                filtered_member_ranges.first()?.to_owned()) {
+            return None
         }
         Some(IndentParenExprArgs {
             members_ranges: filtered_member_ranges,
@@ -500,9 +508,14 @@ impl IndentParenExprRule {
                  acc: &mut Vec<DMLStyleError>) {
         if !self.enabled { return; }
         let Some(args) = args else { return; };
+        if args.members_ranges.is_empty() { return; }
         let expected_line_start = args.lparen.col_start.0 + 1;
         let mut last_row = args.lparen.row_start.0;
-
+        if last_row != args.members_ranges.first().unwrap().row_start.0 {
+            // If the first member is not on the same line as the lparen,
+            // then it is not a continuation line, so we do not check it.
+            return;
+        }
         for member_range in args.members_ranges {
             if member_range.row_start.0 != last_row {
                 last_row = member_range.row_start.0;

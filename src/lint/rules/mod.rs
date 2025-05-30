@@ -1,5 +1,6 @@
 pub mod spacing;
 pub mod indentation;
+pub mod linebreaking;
 
 #[cfg(test)]
 pub mod tests;
@@ -23,6 +24,7 @@ use indentation::{LongLinesRule,
     IndentSwitchCaseRule,
     IndentEmptyLoopRule,
     IndentContinuationLineRule};
+use linebreaking::FuncCallBreakOnOpenParenRule;
 use crate::lint::{LintCfg, DMLStyleError};
 use crate::analysis::{LocalDMLError, parsing::tree::ZeroRange};
 
@@ -46,6 +48,7 @@ pub struct CurrentRules {
     pub indent_switch_case: IndentSwitchCaseRule,
     pub indent_empty_loop: IndentEmptyLoopRule,
     pub indent_continuation_line: IndentContinuationLineRule,
+    pub func_call_break_on_open_paren: FuncCallBreakOnOpenParenRule,
 }
 
 pub fn  instantiate_rules(cfg: &LintCfg) -> CurrentRules {
@@ -69,6 +72,7 @@ pub fn  instantiate_rules(cfg: &LintCfg) -> CurrentRules {
         indent_switch_case: IndentSwitchCaseRule::from_options(&cfg.indent_switch_case),
         indent_empty_loop: IndentEmptyLoopRule::from_options(&cfg.indent_empty_loop),
         indent_continuation_line: IndentContinuationLineRule::from_options(&cfg.indent_continuation_line),
+        func_call_break_on_open_paren: FuncCallBreakOnOpenParenRule::from_options(&cfg.func_call_break_on_open_paren),
     }
 }
 
@@ -103,6 +107,7 @@ pub enum RuleType {
     NspUnary,
     NspTrailing,
     LL1,
+    LL6,
     IN2,
     IN3,
     IN4,

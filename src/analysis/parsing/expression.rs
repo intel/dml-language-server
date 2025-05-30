@@ -27,6 +27,7 @@ use crate::lint::{DMLStyleError,
                                     CurrentRules},
                                     AuxParams};
 use crate::lint::rules::indentation::IndentParenExprArgs;
+use crate::lint::rules::linebreaking::FuncCallBreakOnOpenParenArgs;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct UnaryExpressionContent {
@@ -175,8 +176,10 @@ impl TreeElement for ParenExpressionContent {
     fn subs(&self) -> TreeElements<'_> {
         create_subs!(&self.lparen, &self.expr, &self.rparen)
     }
-    fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, _aux: AuxParams) {
+    fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, aux: AuxParams) {
         rules.indent_paren_expr.check(IndentParenExprArgs::from_paren_expression(self), acc);
+        rules.func_call_break_on_open_paren.check(
+            FuncCallBreakOnOpenParenArgs::from_paren_expression(self, aux.depth), acc);
     }
 }
 
@@ -222,11 +225,13 @@ impl TreeElement for FunctionCallContent {
                 noderef, ReferenceKind::Callable));
         }
     }
-    fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, _aux: AuxParams) {
+    fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, aux: AuxParams) {
         rules.nsp_funpar.check(NspFunparArgs::from_function_call(self), acc);
         rules.nsp_inparen.check(NspInparenArgs::from_function_call(self), acc);
         rules.sp_punct.check(SpPunctArgs::from_function_call(self), acc);
         rules.indent_paren_expr.check(IndentParenExprArgs::from_function_call(self), acc);
+        rules.func_call_break_on_open_paren
+            .check(FuncCallBreakOnOpenParenArgs::from_function_call(self, aux.depth), acc);
     }
 }
 
@@ -340,8 +345,10 @@ impl TreeElement for CastContent {
         create_subs!(&self.cast, &self.lparen, &self.from,
                      &self.comma, &self.to, &self.rparen)
     }
-    fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, _aux: AuxParams) {
+    fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, aux: AuxParams) {
         rules.indent_paren_expr.check(IndentParenExprArgs::from_cast(self), acc);
+        rules.func_call_break_on_open_paren
+            .check(FuncCallBreakOnOpenParenArgs::from_cast(self, aux.depth), acc);
     }
 }
 

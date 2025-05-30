@@ -346,8 +346,7 @@ fn switch_paren_incorrect() {
 }
 
 static NESTED_PAREN_EXPR_CORRECT: &str = "
-param result = (
-                (reg0.val
+param result = ((reg0.val
                  * reg1.enable.val)
                 &
                 mask_reg
@@ -362,8 +361,7 @@ fn nested_paren_expr_correct(){
 }
 
 static NESTED_PAREN_EXPR_INCORRECT: &str = "
-param result = (
-    (reg0.val
+param result = ((reg0.val
      * reg1.enable.val)
                 &
                  mask_reg
@@ -375,8 +373,8 @@ fn nested_paren_expr_incorrect(){
     let rules = set_up();
     let expected_errors = define_expected_errors!(
         RuleType::IN5,
-        (2, 2, 4, 5),
-        (5, 5, 17, 25),
+        (2, 2, 5, 6),
+        (4, 4, 17, 25),
     );
     assert_snippet(NESTED_PAREN_EXPR_INCORRECT, expected_errors, &rules);
 }

@@ -16,6 +16,7 @@ use crate::analysis::parsing::parser::{doesnt_understand_tokens,
                                        FileParser, Parse, ParseContext,
                                        FileInfo};
 use crate::analysis::LocalDMLError;
+use crate::lint::rules::linebreaking::FuncCallBreakOnOpenParenArgs;
 use crate::lint::rules::spacing::{SpBracesArgs,
                                   NspInparenArgs,
                                   NspFunparArgs,
@@ -238,11 +239,12 @@ impl TreeElement for MethodContent {
         }
         errors
     }
-    fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, _aux: AuxParams) {
+    fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, aux: AuxParams) {
         rules.nsp_funpar.check(NspFunparArgs::from_method(self), acc);
         rules.nsp_inparen.check(NspInparenArgs::from_method(self), acc);
         rules.sp_punct.check(SpPunctArgs::from_method(self), acc);
         rules.indent_paren_expr.check(IndentParenExprArgs::from_method(self), acc);
+        rules.func_call_break_on_open_paren.check(FuncCallBreakOnOpenParenArgs::from_method(self, aux.depth), acc);
     }
 }
 
