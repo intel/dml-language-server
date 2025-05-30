@@ -1,5 +1,6 @@
 pub mod spacing;
 pub mod indentation;
+pub mod linebreaking;
 
 #[cfg(test)]
 pub mod tests;
@@ -8,6 +9,7 @@ use spacing::{SpBracesRule,
     SpPunctRule, NspFunparRule, NspInparenRule,
     NspUnaryRule, NspTrailingRule};
 use indentation::{LongLinesRule, IndentNoTabRule, IndentCodeBlockRule, IndentClosingBraceRule, IndentParenExprRule, IndentSwitchCaseRule, IndentEmptyLoopRule, IndentContinuationLineRule};
+use linebreaking::FuncCallBreakOnOpeningParen;
 use crate::lint::{LintCfg, DMLStyleError};
 use crate::analysis::{LocalDMLError, parsing::tree::ZeroRange};
 
@@ -26,6 +28,7 @@ pub struct CurrentRules {
     pub indent_switch_case: IndentSwitchCaseRule,
     pub indent_empty_loop: IndentEmptyLoopRule,
     pub indent_continuation_line: IndentContinuationLineRule,
+    pub func_call_break_on_opening_paren: FuncCallBreakOnOpeningParen,
 }
 
 pub fn  instantiate_rules(cfg: &LintCfg) -> CurrentRules {
@@ -44,6 +47,7 @@ pub fn  instantiate_rules(cfg: &LintCfg) -> CurrentRules {
         indent_switch_case: IndentSwitchCaseRule::from_options(&cfg.indent_switch_case),
         indent_empty_loop: IndentEmptyLoopRule::from_options(&cfg.indent_empty_loop),
         indent_continuation_line: IndentContinuationLineRule::from_options(&cfg.indent_continuation_line),
+        func_call_break_on_opening_paren: FuncCallBreakOnOpeningParen { enabled: cfg.func_call_break_on_opening_paren.is_some() },
     }
 }
 
@@ -72,6 +76,7 @@ pub enum RuleType {
     NspUnary,
     NspTrailing,
     LL1,
+    LL6,
     IN2,
     IN3,
     IN4,

@@ -2,6 +2,7 @@ use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 use log::{debug, error, trace};
+use rules::linebreaking::FuncCallBreakOnOpeningParenOptions;
 use serde::{Deserialize, Serialize};
 use rules::{instantiate_rules, CurrentRules, RuleType};
 use rules::{spacing::{SpBraceOptions, SpPunctOptions, NspFunparOptions,
@@ -75,6 +76,8 @@ pub struct LintCfg {
     pub indent_empty_loop: Option<IndentEmptyLoopOptions>,
     #[serde(default)]
     pub indent_continuation_line: Option<IndentContinuationLineOptions>,
+    #[serde(default)]
+    pub func_call_break_on_opening_paren: Option<FuncCallBreakOnOpeningParenOptions>,
 }
 
 impl Default for LintCfg {
@@ -95,9 +98,11 @@ impl Default for LintCfg {
             indent_switch_case: Some(IndentSwitchCaseOptions{indentation_spaces: INDENTATION_LEVEL_DEFAULT}),
             indent_empty_loop: Some(IndentEmptyLoopOptions{indentation_spaces: INDENTATION_LEVEL_DEFAULT}),
             indent_continuation_line: Some(IndentContinuationLineOptions{indentation_spaces: INDENTATION_LEVEL_DEFAULT}),
+            func_call_break_on_opening_paren: Some(FuncCallBreakOnOpeningParenOptions{}),
         }
     }
 }
+
 
 #[derive(Debug, Clone)]
 pub struct DMLStyleError {
