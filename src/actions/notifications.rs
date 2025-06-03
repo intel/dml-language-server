@@ -214,9 +214,9 @@ impl BlockingNotificationAction for DidChangeConfiguration {
                 return Err(().into());
             }
         };
-
+        let old = ctx.config.lock().unwrap().clone();
         ctx.config.lock().unwrap().update(new_config);
-        ctx.maybe_changed_config(&out);
+        ctx.maybe_changed_config(old, &out);
 
         Ok(())
     }
@@ -248,7 +248,7 @@ impl BlockingNotificationAction for DidChangeWatchedFiles {
     ) -> Result<(), ResponseError> {
         if let Some(file_watch) = FileWatch::new(ctx) {
             if params.changes.iter().any(|c| file_watch.is_relevant(c)) {
-                ctx.maybe_changed_config(&out);
+                ctx.update_compilation_info(&out);
             }
         }
         Ok(())

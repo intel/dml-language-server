@@ -375,7 +375,7 @@ impl <O: Output> InitActionContext<O> {
         }
     }
 
-    fn update_linter_config(&mut self, _out: &O) {
+    fn update_linter_config(&self, _out: &O) {
         trace!("Updating linter config");
         if let Ok(config) = self.config.lock() {
             *self.lint_config.lock().unwrap() =
@@ -385,7 +385,7 @@ impl <O: Output> InitActionContext<O> {
         }
     }
 
-    pub fn update_compilation_info(&mut self, out: &O) {
+    pub fn update_compilation_info(&self, out: &O) {
         trace!("Updating compile info");
         if let Ok(config) = self.config.lock() {
             if let Some(compile_info) = &config.compile_info_path {
@@ -566,10 +566,17 @@ impl <O: Output> InitActionContext<O> {
 
     // Called when config might have changed, re-update include paths
     // and similar
-    pub fn maybe_changed_config(&mut self, out: &O) {
+    pub fn maybe_changed_config(&mut self,
+                                old_config: Config,
+                                out: &O) {
         trace!("Compilation info might have changed");
-        self.update_compilation_info(out);
-        self.update_linter_config(out);
+        let config = self.config.lock().unwrap();
+        if config.compile_info_path != old_config.compile_info_path {
+            self.update_compilation_info(out);
+        }
+        if config.lint_cfg_path != old_config.lint_cfg_path {
+            self.update_linter_config(out);
+        }
     }
 
     // Call before adding new analysis

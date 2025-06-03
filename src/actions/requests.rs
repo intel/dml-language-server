@@ -1038,8 +1038,8 @@ impl SentRequest for WorkspaceConfiguration {
                 return;
             }
         };
-
+        let old = ctx.config.lock().unwrap().clone();
         ctx.config.lock().unwrap().update(new_config);
-        ctx.maybe_changed_config(out);
+        ctx.maybe_changed_config(old, out);
     }
 }
