@@ -346,12 +346,12 @@ impl <O: Output> InitActionContext<O> {
         }
     }
 
-    fn add_direct_open(&mut self, path: PathBuf) {
+    fn add_direct_open(&self, path: PathBuf) {
         let canon_path: CanonPath = path.into();
         self.direct_opens.lock().unwrap().insert(canon_path);
     }
 
-    fn remove_direct_open(&mut self, path: PathBuf) {
+    fn remove_direct_open(&self, path: PathBuf) {
         let canon_path: CanonPath = path.into();
         if !self.direct_opens.lock().unwrap().remove(&canon_path) {
             debug!("Tried to remove a directly opened file ({:?}) \
@@ -365,7 +365,7 @@ impl <O: Output> InitActionContext<O> {
         self.update_compilation_info(&out)
     }
 
-    pub fn update_workspaces(&mut self,
+    pub fn update_workspaces(&self,
                              mut add: Vec<Workspace>,
                              remove: Vec<Workspace>) {
         if let Ok(mut workspaces) = self.workspace_roots.lock() {
@@ -431,7 +431,7 @@ impl <O: Output> InitActionContext<O> {
         }
     }
 
-    pub fn report_errors(&mut self, output: &O) {
+    pub fn report_errors(&self, output: &O) {
         self.update_analysis();
         let filter = Some(self.device_active_contexts.lock().unwrap().clone());
         let (isolated, device, lint) =
@@ -530,12 +530,12 @@ impl <O: Output> InitActionContext<O> {
             Ok(new_compinfo)
         }
 
-    pub fn update_analysis(&mut self) {
+    pub fn update_analysis(&self) {
         self.analysis.lock().unwrap()
             .update_analysis(&self.construct_resolver());
     }
 
-    pub fn trigger_device_analysis(&mut self, file: &Path, out: &O) {
+    pub fn trigger_device_analysis(&self, file: &Path, out: &O) {
         let canon_path: CanonPath = file.to_path_buf().into();
         debug!("triggering devices dependant on {}", canon_path.as_str());
         self.update_analysis();
@@ -566,7 +566,7 @@ impl <O: Output> InitActionContext<O> {
 
     // Called when config might have changed, re-update include paths
     // and similar
-    pub fn maybe_changed_config(&mut self,
+    pub fn maybe_changed_config(&self,
                                 old_config: Config,
                                 out: &O) {
         trace!("Compilation info might have changed");
@@ -580,7 +580,7 @@ impl <O: Output> InitActionContext<O> {
     }
 
     // Call before adding new analysis
-    pub fn maybe_start_progress(&mut self, out: &O) {
+    pub fn maybe_start_progress(&self, out: &O) {
 
         let mut notifier = self.current_notifier.lock().unwrap();
 
@@ -610,6 +610,9 @@ impl <O: Output> InitActionContext<O> {
         }
     }
 
+    // NOTE: Do not call this method from outside the main server loop,
+    // as notification/request handlers obtain _copies_ of the context,
+    // and not the context itself
     fn maybe_warn_missing_builtins(&mut self, out: &O) {
         if !self.has_notified_missing_builtins &&
             !self.analysis.lock().unwrap().has_client_file(
@@ -640,7 +643,7 @@ impl <O: Output> InitActionContext<O> {
         toret
     }
 
-    pub fn isolated_analyze(&mut self,
+    pub fn isolated_analyze(&self,
                             client_path: &Path,
                             context: Option<CanonPath>,
                             out: &O) {
@@ -669,7 +672,7 @@ impl <O: Output> InitActionContext<O> {
             &self.vfs, context, path, client_path.to_path_buf(), token);
     }
 
-    fn device_analyze(&mut self, device: &CanonPath, out: &O) {
+    fn device_analyze(&self, device: &CanonPath, out: &O) {
         debug!("Wants device analysis of {:?}", device);
         self.maybe_start_progress(out);
         self.maybe_add_device_context(device);
@@ -851,7 +854,7 @@ impl <O: Output> InitActionContext<O> {
         }
     }
 
-    pub fn maybe_trigger_lint_analysis(&mut self, file: &Path, out: &O) {
+    pub fn maybe_trigger_lint_analysis(&self, file: &Path, out: &O) {
         if !self.config.lock().unwrap().linting_enabled {
             return;
         }
@@ -870,7 +873,7 @@ impl <O: Output> InitActionContext<O> {
                           out);
     }
 
-    fn lint_analyze(&mut self,
+    fn lint_analyze(&self,
                     file: &Path,
                     context: Option<CanonPath>,
                     cfg: LintCfg,
@@ -1142,17 +1145,17 @@ impl <O: Output> InitActionContext<O> {
         out.request(request);
     }
 
-    pub fn handle_request_response(&mut self, resp: RawResponse, out: &O) {
+    pub fn handle_request_response(&self, resp: RawResponse, out: &O) {
         info!("Got a response to some request: {:?}", resp);
         let maybe_req_fn = { self.outstanding_requests
                              .lock().unwrap().remove(&resp.id) };
         if let Some(request_fn) = maybe_req_fn {
-                request_fn(self, resp, out);
-            } else {
-                info!("Got response for request id {:?} but it was not tracked\
-                       (either timed out or was never sent)",
-                      resp.id);
-            }
+            request_fn(self, resp, out);
+        } else {
+            info!("Got response for request id {:?} but it was not tracked\
+                   (either timed out or was never sent)",
+                  resp.id);
+        }
     }
 }
 

@@ -994,7 +994,7 @@ impl RequestAction for GetKnownContextsRequest {
 impl SentRequest for RegisterCapability {
     type Response = <Self as lsp_data::request::Request>::Result;
     fn on_response<O: Output>
-        (_ctx: &mut InitActionContext<O>, _response: Self::Response, _out: &O) {
+        (_ctx: &InitActionContext<O>, _response: Self::Response, _out: &O) {
             info!("Successful registration on some capability");
         }
 }
@@ -1002,7 +1002,7 @@ impl SentRequest for RegisterCapability {
 impl SentRequest for WorkspaceConfiguration {
     type Response = <Self as lsp_data::request::Request>::Result;
     fn on_response<O: Output>
-        (ctx: &mut InitActionContext<O>, response: Self::Response, out: &O)
+        (ctx: &InitActionContext<O>, response: Self::Response, out: &O)
     {
         info!("Acquired configuration updates {:?}", response);
 

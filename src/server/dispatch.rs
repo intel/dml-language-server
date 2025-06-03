@@ -167,7 +167,7 @@ pub trait RequestAction: LSPRequest {
     ) -> Result<Self::Response, ResponseError>;
 }
 
-pub type HandleResponseType<O> = fn (&mut InitActionContext<O>,
+pub type HandleResponseType<O> = fn (&InitActionContext<O>,
                                      RawResponse,
                                      &O);
 // Request sent from server to client
@@ -181,7 +181,7 @@ pub trait SentRequest: LSPRequest {
     }
 
     fn handle_response<O: Output>
-        (ctx: &mut InitActionContext<O>, response: RawResponse, out: &O)
+        (ctx: &InitActionContext<O>, response: RawResponse, out: &O)
     {
         match response.result {
             Ok(val) => {
@@ -201,5 +201,5 @@ pub trait SentRequest: LSPRequest {
         }
     }
     fn on_response<O: Output>
-        (ctx: &mut InitActionContext<O>, response: Self::Response, out: &O);
+        (ctx: &InitActionContext<O>, response: Self::Response, out: &O);
 }
