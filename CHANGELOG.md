@@ -6,6 +6,9 @@
 
 ## 0.9.10
 - Added indentation-style rules to the lint module with configurable indent size as specified in [example_lint_cfg.json](./example_files/example_lint_cfg.README)
+- Configuration changes are now correctly tracked with the pull-model, and the
+  server should correctly update most settings without a restart on config
+  change.
 
 ## 0.9.9
 - Fixed an issue that could cause analysis thread crash when an object was declared both
