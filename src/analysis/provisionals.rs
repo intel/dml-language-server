@@ -11,7 +11,10 @@ use crate::analysis::parsing::tree::LeafToken;
 use crate::analysis::FileSpec;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, EnumString)]
+#[strum(serialize_all = "snake_case")]
 pub enum Provisional {
+    // TODO: implement the neccessary checks for explicit params
+    ExplicitParamDecl,
 }
 
 impl fmt::Display for Provisional {
@@ -54,6 +57,20 @@ impl ProvisionalsManager {
             }
             self.handle_provisional_add(
                 DMLString::from_token(provisional_leaf, file).unwrap());
+        }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_provisionals_parsing() {
+        for (s, p) in [
+            ("explicit_param_decl", Provisional::ExplicitParamDecl),
+        ] {
+            assert_eq!(Provisional::from_str(s), Ok(p));
         }
     }
 }
