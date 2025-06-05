@@ -230,11 +230,9 @@ lazy_static::lazy_static! {
 }
 
 impl Config {
-    /// try to deserialize a Config from a json value, val is expected to be a
-    /// Value::Object, all first level keys of val are converted to snake_case,
-    /// duplicated and unknown keys are reported
-    pub fn try_deserialize(
-        val: &serde_json::value::Value,
+    #[allow(clippy::ptr_arg)]
+    pub fn try_deserialize_vec(
+        vals: &Vec<(String, serde_json::value::Value)>,
         dups: &mut std::collections::HashMap<String, Vec<String>>,
         unknowns: &mut Vec<String>,
         deprecated: &mut Vec<String>,
@@ -249,9 +247,9 @@ impl Config {
             }
         }
 
-        if let serde_json::Value::Object(map) = val {
-            let seq = serde::de::value::MapDeserializer::new(map.iter().filter_map(|(k, v)| {
-                use heck::ToSnakeCase;
+        use heck::ToSnakeCase;
+        let seq = serde::de::value::MapDeserializer::new(
+            vals.iter().filter_map(|(k, v)| {
                 let snake_case = k.to_snake_case();
                 let vec = dups.entry(snake_case.clone()).or_default();
                 vec.push(k.to_string());
@@ -266,15 +264,33 @@ impl Config {
                     None
                 }
             }));
-            match serde_ignored::deserialize(seq, |path| unknowns.push(path.to_string())) {
-                Ok(conf) => {
-                    dups.retain(|_, v| v.len() > 1);
-                    return Ok(conf);
-                }
-                _ => {
-                    dups.retain(|_, v| v.len() > 1);
-                }
+        match serde_ignored::deserialize(
+            seq, |path| unknowns.push(path.to_string())) {
+            Ok(conf) => {
+                dups.retain(|_, v| v.len() > 1);
+                return Ok(conf);
             }
+            _ => {
+                dups.retain(|_, v| v.len() > 1);
+            }
+        }
+        Err(().into())
+    }
+
+    /// try to deserialize a Config from a json value, val is expected to be a
+    /// Value::Object, all first level keys of val are converted to snake_case,
+    /// duplicated and unknown keys are reported
+    pub fn try_deserialize(
+        val: &serde_json::value::Value,
+        dups: &mut std::collections::HashMap<String, Vec<String>>,
+        unknowns: &mut Vec<String>,
+        deprecated: &mut Vec<String>,
+    ) -> Result<Config, SerializeError> {
+        if let serde_json::Value::Object(map) = val {
+            return Self::try_deserialize_vec(
+                &map.iter().map(|(k,v)|(k.clone(), v.clone())).collect(),
+                dups, unknowns, deprecated
+            );
         }
         Err(().into())
     }

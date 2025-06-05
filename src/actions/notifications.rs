@@ -5,7 +5,6 @@
 use crate::actions::{FileWatch, InitActionContext, VersionOrdering,
                      ContextDefinition};
 use crate::file_management::CanonPath;
-use crate::server::message::Request;
 use crate::span::{Span};
 use crate::vfs::{Change, VfsSpan};
 use crate::lsp_data::*;
@@ -34,14 +33,30 @@ impl BlockingNotificationAction for Initialized {
     // Respond to the `initialized` notification.
     fn handle<O: Output>(
         _params: Self::Params,
-        ctx: &mut InitActionContext,
+        ctx: &mut InitActionContext<O>,
         out: O,
     ) -> Result<(), ResponseError> {
-        // TODO: register any dynamic capabilities
+        // These are the requirements for the pull-variant of
+        // configuration update
+        // - Dynamically registered DidChangeConfiguration
+        // - ConfigurationRequest support
+        if ctx.client_capabilities.did_change_configuration_support()
+            == (true, true)
+            && ctx.client_capabilities.configuration_support() {
+                const CONFIG_ID: &str = "dls-config";
+                let reg_params = RegistrationParams {
+                    registrations: vec![Registration {
+                            id: CONFIG_ID.to_owned(),
+                        method: <DidChangeConfiguration as LSPNotification>
+                            ::METHOD.to_owned(),
+                        register_options: None,
+                    }],
+                };
+                ctx.send_request::<RegisterCapability>(reg_params, &out);
+            }
 
         // Register files we watch for changes based on config
         const WATCH_ID: &str = "dls-watch";
-        let id = out.provide_id();
         let reg_params = RegistrationParams {
             registrations: vec![Registration {
                 id: WATCH_ID.to_owned(),
@@ -51,9 +66,7 @@ impl BlockingNotificationAction for Initialized {
                     |fw|fw.watchers_config()),
             }],
         };
-
-        let request = Request::<RegisterCapability>::new(id, reg_params);
-        out.request(request);
+        ctx.send_request::<RegisterCapability>(reg_params, &out);
         Ok(())
     }
 }
@@ -61,7 +74,7 @@ impl BlockingNotificationAction for Initialized {
 impl BlockingNotificationAction for DidOpenTextDocument {
     fn handle<O: Output>(
         params: Self::Params,
-        ctx: &mut InitActionContext,
+        ctx: &mut InitActionContext<O>,
         out: O,
     ) -> Result<(), ResponseError> {
         debug!("on_open: {:?}", params.text_document.uri);
@@ -80,7 +93,7 @@ impl BlockingNotificationAction for DidOpenTextDocument {
 impl BlockingNotificationAction for DidCloseTextDocument {
     fn handle<O: Output>(
         params: Self::Params,
-        ctx: &mut InitActionContext,
+        ctx: &mut InitActionContext<O>,
         out: O,
     ) -> Result<(), ResponseError> {
         debug!("on_close: {:?}", params.text_document.uri);
@@ -94,7 +107,7 @@ impl BlockingNotificationAction for DidCloseTextDocument {
 impl BlockingNotificationAction for DidChangeTextDocument {
     fn handle<O: Output>(
         params: Self::Params,
-        ctx: &mut InitActionContext,
+        ctx: &mut InitActionContext<O>,
         out: O,
     ) -> Result<(), ResponseError> {
         debug!("on_change: {:?}, thread: {:?}", params, thread::current().id());
@@ -152,7 +165,7 @@ impl BlockingNotificationAction for DidChangeTextDocument {
 impl BlockingNotificationAction for Cancel {
     fn handle<O: Output>(
         _params: CancelParams,
-        _ctx: &mut InitActionContext,
+        _ctx: &mut InitActionContext<O>,
         _out: O,
     ) -> Result<(), ResponseError> {
         // Nothing to do.
@@ -163,10 +176,23 @@ impl BlockingNotificationAction for Cancel {
 impl BlockingNotificationAction for DidChangeConfiguration {
     fn handle<O: Output>(
         params: DidChangeConfigurationParams,
-        ctx: &mut InitActionContext,
+        ctx: &mut InitActionContext<O>,
         out: O,
     ) -> Result<(), ResponseError> {
         debug!("config change: {:?}", params.settings);
+        // New style config update, send re-config request
+        if params.settings.is_null() || params.settings.as_object().
+            map_or(false, |o|o.is_empty()) {
+            let config_params = lsp_types::ConfigurationParams {
+                items: vec![lsp_types::ConfigurationItem {
+                    scope_uri: None,
+                    section: Some("simics-modeling.dls".to_string()),
+                }],
+            };
+            ctx.send_request::<lsp_types::request::WorkspaceConfiguration>(
+                config_params, &out);
+            return Ok(());
+        }
         use std::collections::HashMap;
         let mut dups = HashMap::new();
         let mut unknowns = vec![];
@@ -188,9 +214,9 @@ impl BlockingNotificationAction for DidChangeConfiguration {
                 return Err(().into());
             }
         };
-
+        let old = ctx.config.lock().unwrap().clone();
         ctx.config.lock().unwrap().update(new_config);
-        ctx.maybe_changed_config(&out);
+        ctx.maybe_changed_config(old, &out);
 
         Ok(())
     }
@@ -199,7 +225,7 @@ impl BlockingNotificationAction for DidChangeConfiguration {
 impl BlockingNotificationAction for DidSaveTextDocument {
     fn handle<O: Output>(
         params: DidSaveTextDocumentParams,
-        ctx: &mut InitActionContext,
+        ctx: &mut InitActionContext<O>,
         out: O,
     ) -> Result<(), ResponseError> {
         let file_path = parse_file_path!(&params.text_document.uri, "on_save")?;
@@ -217,12 +243,12 @@ impl BlockingNotificationAction for DidSaveTextDocument {
 impl BlockingNotificationAction for DidChangeWatchedFiles {
     fn handle<O: Output>(
         params: DidChangeWatchedFilesParams,
-        ctx: &mut InitActionContext,
+        ctx: &mut InitActionContext<O>,
         out: O,
     ) -> Result<(), ResponseError> {
         if let Some(file_watch) = FileWatch::new(ctx) {
             if params.changes.iter().any(|c| file_watch.is_relevant(c)) {
-                ctx.maybe_changed_config(&out);
+                ctx.update_compilation_info(&out);
             }
         }
         Ok(())
@@ -233,7 +259,7 @@ impl BlockingNotificationAction for DidChangeWorkspaceFolders {
     // Respond to the `initialized` notification.
     fn handle<O: Output>(
         params: DidChangeWorkspaceFoldersParams,
-        ctx: &mut InitActionContext,
+        ctx: &mut InitActionContext<O>,
         _out: O,
     ) -> Result<(), ResponseError> {
         let added = params.event.added;
@@ -286,7 +312,7 @@ impl LSPNotification for ChangeActiveContexts {
 impl BlockingNotificationAction for ChangeActiveContexts {
     fn handle<O: Output>(
         params: ChangeActiveContextsParams,
-        ctx: &mut InitActionContext,
+        ctx: &mut InitActionContext<O>,
         out: O) -> Result<(), ResponseError> {
         debug!("ChangeActiveContexts: {:?}", params);
         let contexts: Vec<ContextDefinition> = params.active_contexts
