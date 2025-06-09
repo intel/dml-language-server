@@ -4,6 +4,8 @@
 -->
 # Change Log
 
+## 0.9.11
+
 ## 0.9.10
 - Added indentation-style rules to the lint module with configurable indent size as specified in [example_lint_cfg.json](./example_files/example_lint_cfg.README)
 - Added "explicit\_param\_decl" as a know provisional (NOTE: the provisionals
