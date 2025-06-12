@@ -4,6 +4,8 @@
 -->
 # Change Log
 
+## 0.9.12
+
 ## 0.9.11
 - Fixed deadlock when a configuration update happens
 
