@@ -597,7 +597,7 @@ impl <O: Output> InitActionContext<O> {
         }
         let mut lint_reissue = LintReissueRequirement::None;
         {
-            let config = self.config.lock().unwrap();
+            let config = self.config.lock().unwrap().clone();
             if config.compile_info_path != old_config.compile_info_path {
                 self.update_compilation_info(out);
             }
