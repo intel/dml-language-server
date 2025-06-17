@@ -1345,11 +1345,12 @@ impl DeclarationSpan for Variable {
     }
 }
 
-fn to_variable_structure<'a>(content: &structure::VariableContent,
-                             kind: VariableDeclKind,
-                             report: &mut Vec<LocalDMLError>,
-                             file: FileSpec<'a>) -> Option<Variable> {
-    let values = if let Some((_, init_ast)) = &content.initializer {
+pub fn to_variable_structure<'a>(decls: &structure::VarDecl,
+                                 initializer: Option<&misc::Initializer>,
+                                 kind: VariableDeclKind,
+                                 report: &mut Vec<LocalDMLError>,
+                                 file: FileSpec<'a>) -> Option<Variable> {
+    let values = if let Some(init_ast) = initializer {
         init_ast.with_content(
             |con|to_initializer(con, report, file),
             vec![])
@@ -1357,7 +1358,7 @@ fn to_variable_structure<'a>(content: &structure::VariableContent,
         vec![]
     };
     // I _think_ we will always have a real content here
-    let vars = match &content.cdecl {
+    let vars = match decls {
         structure::VarDecl::One(decl) => {
             vec![to_variable_decl_structure(decl, kind, report, file)?]
         },
@@ -1369,11 +1370,10 @@ fn to_variable_structure<'a>(content: &structure::VariableContent,
         }
     };
 
-    if let Some((assign, init_ast)) = &content.initializer {
+    if let Some(init) = initializer {
         if vars.len() != values.len() {
             report.push(LocalDMLError {
-                range: init_ast.with_content(
-                    |i|i.range(), assign.range()),
+                range: init.range(),
                 description: "Wrong number of \
                               initializers in declaration".to_string(),
             });
@@ -1383,7 +1383,11 @@ fn to_variable_structure<'a>(content: &structure::VariableContent,
     Some(Variable {
         vars,
         values,
-        span: ZeroSpan::from_range(content.range(), file.path),
+        span: ZeroSpan::from_range(
+            initializer.map_or_else(
+                ||decls.range(),
+                |i|ZeroRange::combine(decls.range(), i.range())),
+            file.path),
     })
 }
 
@@ -1578,7 +1582,9 @@ fn to_objectstatement<'a>(content: &structure::DMLObjectContent,
                 Export::to_structure(con, report, file)?))),
         structure::DMLObjectContent::Extern(con) =>
             DMLStatementKind::Statement(DMLStatement::Object(DMLObject::Extern(
-                to_variable_structure(con, VariableDeclKind::Extern,
+                to_variable_structure(&con.cdecl,
+                                      con.initializer.as_ref().map(|(_,i)|i),
+                                      VariableDeclKind::Extern,
                                       report, file)?))),
         structure::DMLObjectContent::Event(con) =>
             DMLStatementKind::Statement(DMLStatement::Object(
@@ -1650,11 +1656,15 @@ fn to_objectstatement<'a>(content: &structure::DMLObjectContent,
                     to_register(con, report, file)?))),
         structure::DMLObjectContent::Saved(con) =>
             DMLStatementKind::Statement(DMLStatement::Object(DMLObject::Saved(
-                to_variable_structure(con, VariableDeclKind::Saved,
+                to_variable_structure(&con.cdecl,
+                                      con.initializer.as_ref().map(|(_,i)|i),
+                                      VariableDeclKind::Saved,
                                       report, file)?))),
         structure::DMLObjectContent::Session(con) =>
             DMLStatementKind::Statement(DMLStatement::Object(DMLObject::Session(
-                to_variable_structure(con, VariableDeclKind::Session,
+                to_variable_structure(&con.cdecl,
+                                      con.initializer.as_ref().map(|(_,i)|i),
+                                      VariableDeclKind::Session,
                                       report, file)?))),
         structure::DMLObjectContent::Subdevice(con) =>
             DMLStatementKind::Statement(DMLStatement::Object(
