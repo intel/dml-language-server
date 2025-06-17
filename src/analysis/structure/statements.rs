@@ -213,9 +213,9 @@ impl DeclarationSpan for Switch {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct While {
-    cond: Expression,
-    body: Statement,
-    span: ZeroSpan,
+    pub cond: Expression,
+    pub body: Statement,
+    pub span: ZeroSpan,
 }
 
 impl While {
@@ -240,9 +240,9 @@ impl DeclarationSpan for While {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct DoWhile {
-    cond: Expression,
-    body: Statement,
-    span: ZeroSpan,
+    pub cond: Expression,
+    pub body: Statement,
+    pub span: ZeroSpan,
 }
 
 impl DoWhile {
@@ -280,11 +280,11 @@ pub enum ForPre {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct For {
-    pre: Option<ForPre>,
-    cond: Option<Expression>,
-    post: Vec<ForPostElement>,
-    body: Statement,
-    span: ZeroSpan,
+    pub pre: Option<ForPre>,
+    pub cond: Option<Expression>,
+    pub post: Vec<ForPostElement>,
+    pub body: Statement,
+    pub span: ZeroSpan,
 }
 
 fn to_forpost<'a>(content: &statement::ForPost,
@@ -370,9 +370,9 @@ pub enum AfterExpression {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct After {
-    after: Option<AfterExpression>,
-    call: Expression,
-    span: ZeroSpan,
+    pub after: Option<AfterExpression>,
+    pub call: Expression,
+    pub span: ZeroSpan,
 }
 
 impl After {
@@ -420,8 +420,8 @@ impl DeclarationSpan for After {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Return {
-    ret: Option<Initializer>,
-    span: ZeroSpan,
+    pub ret: Option<Initializer>,
+    pub span: ZeroSpan,
 }
 
 impl Return {
@@ -445,7 +445,7 @@ impl DeclarationSpan for Return {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Continue {
-    span: ZeroSpan,
+    pub span: ZeroSpan,
 }
 
 impl Continue {
@@ -468,7 +468,7 @@ impl DeclarationSpan for Continue {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Break {
-    span: ZeroSpan,
+    pub span: ZeroSpan,
 }
 
 impl DeclarationSpan for Break {
@@ -491,9 +491,9 @@ impl Break {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TryCatch {
-    tryblock: Statement,
-    catchblock: Statement,
-    span: ZeroSpan,
+    pub tryblock: Statement,
+    pub catchblock: Statement,
+    pub span: ZeroSpan,
 }
 
 impl TryCatch {
@@ -519,7 +519,7 @@ impl DeclarationSpan for TryCatch {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Throw {
-    span: ZeroSpan,
+    pub span: ZeroSpan,
 }
 
 impl Throw {
@@ -558,12 +558,12 @@ pub enum LogKind {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Log {
-    kind: LogKind,
-    level: Option<LogLevel>,
-    flags: Option<Expression>,
-    message: Expression,
-    args: Vec<Expression>,
-    span: ZeroSpan,
+    pub kind: LogKind,
+    pub level: Option<LogLevel>,
+    pub flags: Option<Expression>,
+    pub message: Expression,
+    pub args: Vec<Expression>,
+    pub span: ZeroSpan,
 }
 
 impl Log {
@@ -630,8 +630,8 @@ impl DeclarationSpan for Log {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Assert {
-    expression: Expression,
-    span: ZeroSpan,
+    pub expression: Expression,
+    pub span: ZeroSpan,
 }
 
 impl Assert {
@@ -656,8 +656,8 @@ impl DeclarationSpan for Assert {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Delete {
-    expression: Expression,
-    span: ZeroSpan,
+    pub expression: Expression,
+    pub span: ZeroSpan,
 }
 
 impl Delete {
@@ -682,8 +682,8 @@ impl DeclarationSpan for Delete {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Error {
-    message: Option<Expression>,
-    span: ZeroSpan,
+    pub message: Option<Expression>,
+    pub span: ZeroSpan,
 }
 
 impl Error {
@@ -749,9 +749,9 @@ fn to_statement_variable_decl<'a>(content: &statement::VariableDeclContent,
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Local {
-    declarations: Vec<(DMLType, DMLString)>,
-    initializer: Option<Initializer>,
-    span: ZeroSpan,
+    pub declarations: Vec<(DMLType, DMLString)>,
+    pub initializer: Option<Initializer>,
+    pub span: ZeroSpan,
 }
 
 impl DeclarationSpan for Local {
@@ -762,9 +762,9 @@ impl DeclarationSpan for Local {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Saved {
-    declarations: Vec<(DMLType, DMLString)>,
-    initializer: Option<Initializer>,
-    span: ZeroSpan,
+    pub declarations: Vec<(DMLType, DMLString)>,
+    pub initializer: Option<Initializer>,
+    pub span: ZeroSpan,
 }
 
 impl DeclarationSpan for Saved {
@@ -775,9 +775,9 @@ impl DeclarationSpan for Saved {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Session {
-    declarations: Vec<(DMLType, DMLString)>,
-    initializer: Option<Initializer>,
-    span: ZeroSpan,
+    pub declarations: Vec<(DMLType, DMLString)>,
+    pub initializer: Option<Initializer>,
+    pub span: ZeroSpan,
 }
 
 impl DeclarationSpan for Session {
@@ -795,10 +795,10 @@ pub enum AssignOp {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct AssignOpStatement {
-    assignee: Expression,
-    operation: AssignOp,
-    assigner: Expression,
-    span: ZeroSpan,
+    pub assignee: Expression,
+    pub operation: AssignOp,
+    pub assigner: Expression,
+    pub span: ZeroSpan,
 }
 
 impl DeclarationSpan for AssignOpStatement {
@@ -854,9 +854,9 @@ pub enum Assigner {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct AssignStatement {
-    assignees: Vec<Expression>,
-    assigner: Assigner,
-    span: ZeroSpan,
+    pub assignees: Vec<Expression>,
+    pub assigner: Assigner,
+    pub span: ZeroSpan,
 }
 
 fn target_to_vec<'a>(content: &statement::AssignTarget,
@@ -922,12 +922,12 @@ impl DeclarationSpan for AssignStatement {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct HashSelect {
-    ident: DMLString,
-    inexpr: Expression,
-    whereexpr: Expression,
-    selectbranch: Statement,
-    elsebranch: Statement,
-    span: ZeroSpan,
+    pub ident: DMLString,
+    pub inexpr: Expression,
+    pub whereexpr: Expression,
+    pub selectbranch: Statement,
+    pub elsebranch: Statement,
+    pub span: ZeroSpan,
 }
 
 impl HashSelect {
@@ -963,8 +963,8 @@ impl DeclarationSpan for HashSelect {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct CompoundStatement {
-    statements: Vec<Statement>,
-    span: ZeroSpan,
+    pub statements: Vec<Statement>,
+    pub span: ZeroSpan,
 }
 
 impl CompoundStatement {
