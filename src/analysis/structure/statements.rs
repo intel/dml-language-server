@@ -8,12 +8,14 @@ use crate::analysis::{DeclarationSpan,
 
 use crate::analysis::symbols::{StructureSymbol,
                                SymbolContainer};
-use crate::analysis::structure::types::{DMLType, deconstruct_cdecl};
+use crate::analysis::structure::objects::{Variable,
+                                          VariableDeclKind,
+                                          to_variable_structure};
 use crate::analysis::structure::expressions::{DMLString, ExpressionKind,
                                               Expression, Initializer};
-use crate::analysis::parsing::{structure, statement};
+use crate::analysis::parsing::{structure, statement, misc};
 use crate::analysis::parsing::lexer::TokenKind;
-use crate::analysis::parsing::tree::{ZeroSpan, TreeElement};
+use crate::analysis::parsing::tree::{LeafToken, ZeroSpan, TreeElement};
 use crate::analysis::FileSpec;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -274,7 +276,7 @@ pub enum ForPostElement {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ForPre {
-    Local(DMLString, DMLType, Option<Initializer>),
+    Declaration(Variable),
     Post(Vec<ForPostElement>),
 }
 
@@ -330,17 +332,11 @@ impl For {
             ||vec![],
             |post|to_forpost(post, report, file));
         let pre = content.pre.as_ref().and_then(|pre|match pre {
-            statement::ForPre::Local(_, cdecl, maybe_init) => {
-                let (name, typed) = cdecl.with_content(
-                    |con|deconstruct_cdecl(con, report, file),
-                    (None, None));
-                let init = maybe_init.as_ref().and_then(
-                    |(_,i)|Initializer::to_initializer(i, report, file));
-                match (name, typed) {
-                    (Some(n), Some(t)) => Some(ForPre::Local(n, t, init)),
-                    _ => None,
-                }
-            },
+            statement::ForPre::Declaration(kind, vardecls, maybe_init) =>
+                to_variable(kind, vardecls,
+                            maybe_init.as_ref().map(|(_, init)|init),
+                            report, file)
+                .map(ForPre::Declaration),
             statement::ForPre::Post(p) => Some(ForPre::Post(
                 to_forpost(p, report, file))),
         });
@@ -707,83 +703,38 @@ impl DeclarationSpan for Error {
     }
 }
 
+fn to_variable<'a>(leaf_for_kind: &LeafToken,
+                   decls: &structure::VarDecl,
+                   inits: Option<&misc::Initializer>,
+                   report: &mut Vec<LocalDMLError>,
+                   file: FileSpec<'a>) -> Option<Variable> {
+    let kind = if let Some(kind_str) = leaf_for_kind.read_leaf(file.file) {
+        match kind_str.as_str() {
+            "session" => VariableDeclKind::Session,
+            "saved" => VariableDeclKind::Saved,
+            "local" => VariableDeclKind::Local,
+            e => {
+                error!("Internal error: Unexpected declaration kind {}", e);
+                return None;
+            },
+        }
+    } else {
+        // Normally this is cleanly unexpected
+        error!("Internal error: Could not read declaration kind");
+        return None;
+    };
+    to_variable_structure(decls, inits, kind, report, file)
+}
+
 fn to_statement_variable_decl<'a>(content: &statement::VariableDeclContent,
                                   report: &mut Vec<LocalDMLError>,
                                   file: FileSpec<'a>) -> Option<Statement> {
-    let decls = match &content.decls {
-        structure::VarDecl::One(decl) => vec![decl],
-        structure::VarDecl::Many(_, decllist, _) =>
-            decllist.iter().map(|(decl, _)|decl).collect()
-    };
-    let declarations = decls.into_iter().filter_map(
-        |decl|decl.with_content(
-            |cdecl|match deconstruct_cdecl(cdecl, report, file) {
-                (Some(t),Some(d)) => Some((t, d)),
-                _ => None,
-            }, None)).map(|(a, b)|(b, a)).collect();
-    let initializer = content.initializer.as_ref().and_then(
-        |(_,init)|Initializer::to_initializer(init, report, file));
-    // TODO: Is this a reasonable spot to show errors about initializer length
-    // mismatch?
-    let span = ZeroSpan::from_range(content.range(), file.path);
-    // Guaranteed by parser
-    match content.kind.get_token().unwrap().kind {
-        TokenKind::Local => StatementKind::Local(
-            Local {
-                declarations, initializer, span,
-            }),
-        TokenKind::Session => StatementKind::Session(
-            Session {
-                declarations, initializer, span,
-            }),
-        TokenKind::Saved => StatementKind::Saved(
-            Saved {
-                declarations, initializer, span,
-            }),
-        e => {
-            error!("Unexpected variable statement token kind {:?}", e);
-            return None;
-        }
-    }.into()
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Local {
-    pub declarations: Vec<(DMLType, DMLString)>,
-    pub initializer: Option<Initializer>,
-    pub span: ZeroSpan,
-}
-
-impl DeclarationSpan for Local {
-    fn span(&self) -> &ZeroSpan {
-        &self.span
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Saved {
-    pub declarations: Vec<(DMLType, DMLString)>,
-    pub initializer: Option<Initializer>,
-    pub span: ZeroSpan,
-}
-
-impl DeclarationSpan for Saved {
-    fn span(&self) -> &ZeroSpan {
-        &self.span
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Session {
-    pub declarations: Vec<(DMLType, DMLString)>,
-    pub initializer: Option<Initializer>,
-    pub span: ZeroSpan,
-}
-
-impl DeclarationSpan for Session {
-    fn span(&self) -> &ZeroSpan {
-        &self.span
-    }
+    StatementKind::VariableDecl(to_variable(
+        &content.kind,
+        &content.decls,
+        content.initializer.as_ref().map(|(_,i)|i),
+        report,
+        file)?).into()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -1036,9 +987,7 @@ pub enum StatementKind {
     Assert(Assert),
     Delete(Delete),
     Error(Error),
-    Session(Session),
-    Saved(Saved),
-    Local(Local),
+    VariableDecl(Variable),
     Assign(AssignStatement),
     AssignOp(AssignOpStatement),
     Expression(ExpressionStatement),
@@ -1067,9 +1016,7 @@ impl DeclarationSpan for StatementKind {
             StatementKind::Assert(stmnt) => stmnt.span(),
             StatementKind::Error(stmnt) => stmnt.span(),
             StatementKind::Delete(stmnt) => stmnt.span(),
-            StatementKind::Session(stmnt) => stmnt.span(),
-            StatementKind::Saved(stmnt) => stmnt.span(),
-            StatementKind::Local(stmnt) => stmnt.span(),
+            StatementKind::VariableDecl(stmnt) => stmnt.span(),
             StatementKind::Assign(stmnt) => stmnt.span(),
             StatementKind::AssignOp(stmnt) => stmnt.span(),
             StatementKind::Expression(stmnt) => stmnt.span(),

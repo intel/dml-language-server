@@ -15,7 +15,7 @@ use crate::analysis::templating::methods::{DMLMethodRef};
 use crate::analysis::templating::types::DMLResolvedType;
 use crate::analysis::templating::traits::DMLTemplate;
 
-#[derive(PartialEq, Eq, Debug, Clone, Copy, Hash)]
+#[derive(PartialEq, Eq, Debug, Clone, Copy, Hash, PartialOrd, Ord)]
 pub enum DMLSymbolKind {
     CompObject(CompObjectKind),
     Parameter,

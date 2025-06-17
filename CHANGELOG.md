@@ -10,6 +10,8 @@
 - Linting warnings can now annotate their messages with which linting rule enforces it. You can turn this off by setting 'annotate_lints' to 'false' in your lint config file
 - Minor fixes to the description of linting messages
 - Fixed an issue where diagnostics would sometime be reported within the wrong file
+- Corrected incorrect parsing around tuple-declared 'local' variables in for-loops
+- Added the ability to declare 'saved' or 'session' variables in for-loops
 
 ## 0.9.11
 - Fixed deadlock when a configuration update happens
