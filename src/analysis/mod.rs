@@ -1168,10 +1168,11 @@ impl DeviceAnalysis {
 }
 
 impl DeviceAnalysis {
+    #[allow(clippy::ptr_arg)]
     fn match_references_in_scope<'c>(
         &'c self,
         scope_chain: Vec<&'c dyn Scope>,
-        _report: &Mutex<Vec<DMLError>>,
+        _report: &mut Vec<DMLError>,
         reference_cache: &Mutex<ReferenceCache>) {
         let current_scope = scope_chain.last().unwrap();
         let context_chain: Vec<ContextKey> = scope_chain
@@ -1443,7 +1444,8 @@ impl IsolatedAnalysis {
     }
 }
 
-fn objects_to_symbols(objects: &StructureContainer) -> SymbolStorage {
+fn objects_to_symbols(objects: &StructureContainer,
+                      errors: &mut Vec<DMLError>) -> SymbolStorage {
     let mut storage = SymbolStorage::default();
 
     for obj in objects.values() {
@@ -1454,7 +1456,7 @@ fn objects_to_symbols(objects: &StructureContainer) -> SymbolStorage {
             // Non-shallow objects will be handled by the iteration
             // over objects
             if let DMLObject::ShallowObject(shallow) = subobj {
-                add_new_symbol_from_shallow(shallow, &mut storage);
+                add_new_symbol_from_shallow(shallow, errors, &mut storage);
             }
         }
     }
@@ -1555,7 +1557,9 @@ where K: std::hash::Hash + Eq + Clone,
     false
 }
 
+#[allow(clippy::ptr_arg)]
 fn add_new_symbol_from_shallow(shallow: &DMLShallowObject,
+                               _errors: &mut Vec<DMLError>,
                                storage: &mut SymbolStorage) {
     let (bases, definitions, declarations) = match &shallow.variant {
         DMLShallowObjectVariant::Parameter(param) =>
@@ -1746,23 +1750,15 @@ impl DeviceAnalysis {
             }
         }
 
-        let mut mapped_errors = HashMap::default();
-        for error in errors {
-            let entr: &mut Vec<_> = mapped_errors.entry(error.span.path())
-                .or_default();
-            entr.push(error);
-        }
-
-        trace!("Errors are {:?}", mapped_errors);
-
-        let mut symbol_info = objects_to_symbols(&container);
         info!("Generate symbols");
+        let mut symbol_info = objects_to_symbols(&container, &mut errors);
+
         // TODO: how do we store type info?
         extend_with_templates(&mut symbol_info, &tt_info);
         //extend_with_types(&mut symbols, ??)
         let mut device = DeviceAnalysis {
             name: root.toplevel.device.unwrap().name.val,
-            errors: mapped_errors,
+            errors: HashMap::default(),
             objects: container,
             device_obj: DMLObject::CompObject(device_key),
             templates: tt_info,
@@ -1776,16 +1772,10 @@ impl DeviceAnalysis {
 
         info!("Match references");
         let reference_cache: Mutex<ReferenceCache> = Mutex::default();
-        let new_errors: Mutex<Vec<DMLError>> = Mutex::default();
         for scope_chain in all_scopes(&bases) {
             device.match_references_in_scope(scope_chain,
-                                             &new_errors,
+                                             &mut errors,
                                              &reference_cache);
-        }
-        for err in new_errors.into_inner().unwrap() {
-            device.errors.entry(err.span.path())
-                .or_default()
-                .push(err);
         }
 
         info!("Inverse map");
@@ -1815,6 +1805,13 @@ impl DeviceAnalysis {
                                     |spec|*spec.loc_span())));
                 }
         }
+
+        for error in errors {
+            device.errors.entry(error.span.path())
+                .or_default()
+                .push(error);
+        }
+        trace!("Errors are {:?}", device.errors);
 
         info!("Done with device");
         Ok(device)
