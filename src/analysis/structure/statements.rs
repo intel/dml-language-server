@@ -52,7 +52,7 @@ impl DeclarationSpan for ForEach {
 pub struct If {
     pub condition: Expression,
     pub ifbody: Statement,
-    pub elsebody: Statement,
+    pub elsebody: Option<Statement>,
     pub span: ZeroSpan,
 }
 
@@ -67,7 +67,7 @@ impl If {
             report,
             file)?;
         let elsebody = content.elsebranch.as_ref().and_then(
-            |(_, elbody)|StatementKind::to_statement(elbody, report, file))?;
+            |(_, elbody)|StatementKind::to_statement(elbody, report, file));
         let span = ZeroSpan::from_range(content.range(), file.path);
         StatementKind::If(If {
             condition, ifbody, elsebody, span
@@ -85,7 +85,7 @@ impl DeclarationSpan for If {
 pub struct HashIf {
     pub condition: Expression,
     pub ifbody: Statement,
-    pub elsebody: Statement,
+    pub elsebody: Option<Statement>,
     pub span: ZeroSpan,
 }
 
@@ -99,7 +99,7 @@ impl HashIf {
                                                 report,
                                                 file)?;
         let elsebody = content.elsebranch.as_ref().and_then(
-            |(_, content)|StatementKind::to_statement(content, report, file))?;
+            |(_, content)|StatementKind::to_statement(content, report, file));
         let span = ZeroSpan::from_range(content.range(), file.path);
         StatementKind::HashIf(HashIf {
             condition, ifbody, elsebody, span,
