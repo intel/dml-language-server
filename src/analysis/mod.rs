@@ -21,11 +21,12 @@ use std::sync::Mutex;
 
 use itertools::Itertools;
 
-use lsp_types::{Diagnostic, DiagnosticRelatedInformation, DiagnosticSeverity};
+use lsp_types::{DiagnosticSeverity};
 use logos::Logos;
 use log::{debug, error, info, trace};
 use rayon::prelude::*;
 
+use crate::actions::SourcedDMLError;
 use crate::actions::analysis_storage::TimestampedStorage;
 use crate::analysis::symbols::{SimpleSymbol, DMLSymbolKind, Symbol,
                                SymbolSource};
@@ -67,7 +68,6 @@ use crate::analysis::templating::types::DMLResolvedType;
 use crate::file_management::{PathResolver, CanonPath};
 
 use crate::vfs::{TextFile, Error};
-use crate::lsp_data::ls_util::{dls_to_range, dls_to_location};
 
 #[derive(Clone, Copy)]
 pub struct FileSpec<'a> {
@@ -229,19 +229,11 @@ impl Hash for DMLError {
 }
 
 impl DMLError {
-    pub fn to_diagnostic(&self) -> Diagnostic {
-        Diagnostic::new(
-            dls_to_range(self.span.range),
-            self.severity, None, None,
-            self.description.clone(),
-            Some(
-                self.related.iter().map(
-                    |(span, desc)|DiagnosticRelatedInformation {
-                        location: dls_to_location(span),
-                        message: desc.clone(),
-                    }).collect()),
-            None
-        )
+    pub fn with_source(self, source: &'static str) -> SourcedDMLError {
+        SourcedDMLError {
+            error: self,
+            source,
+        }
     }
 }
 
@@ -259,10 +251,6 @@ impl LocalDMLError {
             severity: Some(DiagnosticSeverity::ERROR),
             related: vec![],
         }
-    }
-    pub fn to_diagnostic(&self) -> Diagnostic {
-        Diagnostic::new_simple(dls_to_range(self.range),
-                               self.description.clone())
     }
     pub fn warning_with_file<F: Into<PathBuf>>(self, file: F) -> DMLError {
         DMLError {
