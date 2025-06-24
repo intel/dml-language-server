@@ -31,6 +31,7 @@ use crate::file_management::{PathResolver, CanonPath};
 use crate::lint::{LintCfg, maybe_parse_lint_cfg};
 use crate::lsp_data;
 use crate::lsp_data::*;
+use crate::lsp_data::ls_util::{dls_to_range, dls_to_location};
 use crate::server::{Output, ServerToHandle, error_message,
                     Request, RequestId, SentRequest};
 use crate::server::message::RawResponse;
@@ -305,6 +306,31 @@ impl ContextDefinition {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourcedDMLError {
+    pub error: DMLError,
+    pub source: &'static str,
+}
+
+impl SourcedDMLError {
+    pub fn to_diagnostic(&self) -> Diagnostic {
+        Diagnostic::new(
+            dls_to_range(self.error.span.range),
+            self.error.severity,
+            None,
+            Some(self.source.to_string()),
+            self.error.description.clone(),
+            Some(
+                self.error.related.iter().map(
+                    |(span, desc)|DiagnosticRelatedInformation {
+                        location: dls_to_location(span),
+                        message: desc.clone(),
+                    }).collect()),
+            None
+        )
+    }
+}
+
 pub type ActiveDeviceContexts = HashSet<ContextDefinition>;
 
 impl <O: Output> InitActionContext<O> {
@@ -452,22 +478,24 @@ impl <O: Output> InitActionContext<O> {
             .collect();
         let direct_opens = self.direct_opens.lock().unwrap();
         for file in files {
-            let mut sorted_errors: Vec<DMLError> =
-                isolated.get(file).into_iter().flatten()
-                .chain(device.get(file).into_iter().flatten())
+            let mut sorted_errors: Vec<SourcedDMLError> =
+                isolated.get(file).into_iter().flatten().cloned()
+                .map(|e|e.with_source("dml"))
+                .chain(device.get(file).into_iter().flatten().cloned()
+                       .map(|e|e.with_source("dml")))
                 .chain(
                     lint.get(file).into_iter().flatten()
                         .filter(
                             |_|!config.lint_direct_only
                                 || direct_opens.contains(
                                     &file.clone().into())
-                        ))
-                .cloned()
+                        ).cloned()
+                        .map(|e|e.with_source("dml-lint")))
                 .collect();
             debug!("Reporting errors for {:?}", file);
             // Sort by line
             sorted_errors.sort_unstable_by(
-                |e1, e2|if e1.span.range > e2.span.range {
+                |e1, e2|if e1.error.span.range > e2.error.span.range {
                     Ordering::Greater
                 } else {
                     Ordering::Less
@@ -477,7 +505,7 @@ impl <O: Output> InitActionContext<O> {
                     PublishDiagnosticsParams::new(
                         url,
                         sorted_errors.iter()
-                            .map(DMLError::to_diagnostic).collect(),
+                            .map(SourcedDMLError::to_diagnostic).collect(),
                         None)),
                 // The Url crate does not report interesting errors
                 Err(_) => error!("Could not convert {:?} to Url", file),

@@ -5,6 +5,7 @@
 # Change Log
 
 ## 0.9.12
+- Diagnostics sent from the server will now indicate their source as 'dml' or 'dml-lint'
 
 ## 0.9.11
 - Fixed deadlock when a configuration update happens
