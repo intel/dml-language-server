@@ -104,6 +104,43 @@ fn funcall_broken_after_paren_exception_correct() {
     assert_snippet(FUNCALL_BROKEN_AFTER_PAREN_EXCEPTION_CORRECT, vec![], &rules);
 }
 
+static FUNCALL_BROKEN_AFTER_PAREN_EXCEPTION_INCORRECT: &str = "
+method effect() {
+    callback(
+        0xABC,
+            identifier,
+    false);
+}
+";
+#[test]
+fn funcall_broken_after_paren_exception_incorrect() {
+    let rules = set_up();
+    let expected_errors = define_expected_errors!(
+        RuleType::LL6,
+        (4, 4, 12, 22),
+        (5, 5, 4, 9),
+    );
+    assert_snippet(FUNCALL_BROKEN_AFTER_PAREN_EXCEPTION_INCORRECT, expected_errors, &rules);
+}
+
+static FUNCALL_BROKEN_AFTER_PARENT_INCORRECT_FIRST_LINE: &str = "
+method effect() {
+    callback(
+               0xABC,
+        identifier,
+        false);
+}
+";
+#[test]
+fn funcall_broken_after_paren_incorrect_first_line() {
+    let rules = set_up();
+    let expected_errors = define_expected_errors!(
+        RuleType::LL6,
+        (3, 3, 15, 20)
+    );
+    assert_snippet(FUNCALL_BROKEN_AFTER_PARENT_INCORRECT_FIRST_LINE, expected_errors, &rules);
+}
+
 static FUNCALL_NESTED_PAREN_CORRECT: &str = "
 method effect() {
     callback(another_cb(varname,
@@ -361,8 +398,7 @@ fn switch_paren_incorrect() {
 }
 
 static NESTED_PAREN_EXPR_CORRECT: &str = "
-param result = (
-                (reg0.val
+param result = ((reg0.val
                  * reg1.enable.val)
                 &
                 mask_reg
@@ -377,8 +413,7 @@ fn nested_paren_expr_correct(){
 }
 
 static NESTED_PAREN_EXPR_INCORRECT: &str = "
-param result = (
-    (reg0.val
+param result = ((reg0.val
      * reg1.enable.val)
                 &
                  mask_reg
@@ -391,8 +426,8 @@ fn nested_paren_expr_incorrect(){
     let rules = set_up();
     let expected_errors = define_expected_errors!(
         RuleType::IN5,
-        (2, 2, 4, 5),
-        (5, 5, 17, 25),
+        (2, 2, 5, 6),
+        (4, 4, 17, 25),
     );
     assert_snippet(NESTED_PAREN_EXPR_INCORRECT, expected_errors, &rules);
 }

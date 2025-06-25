@@ -25,7 +25,7 @@ use crate::lint::{DMLStyleError,
                                     CurrentRules},
                                     AuxParams};
 use crate::lint::rules::indentation::IndentParenExprArgs;
-use crate::lint::rules::linebreaking::FuncCallBreakOnOpeningParenArgs;
+use crate::lint::rules::linebreaking::FuncCallBreakOnOpenParenArgs;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct UnaryExpressionContent {
@@ -221,7 +221,7 @@ impl TreeElement for FunctionCallContent {
         rules.sp_punct.check(acc, SpPunctArgs::from_function_call(self));
         rules.indent_paren_expr.check(acc, IndentParenExprArgs::from_function_call(self));
         rules.func_call_break_on_opening_paren
-            .check(acc, FuncCallBreakOnOpeningParenArgs::from_function_call(self, aux.depth));
+            .check(acc, FuncCallBreakOnOpenParenArgs::from_function_call(self, aux.depth));
     }
 }
 
