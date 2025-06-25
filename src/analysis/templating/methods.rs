@@ -4,6 +4,8 @@ use std::sync::Arc;
 use lsp_types::DiagnosticSeverity;
 
 use crate::analysis::parsing::tree::ZeroSpan;
+use crate::analysis::symbols::{DMLSymbolKind, MakeSymbolContainer,
+                               StructureSymbol, SymbolContainer};
 use crate::analysis::structure::expressions::DMLString;
 use crate::analysis::structure::types::DMLType;
 use crate::analysis::structure::objects::{MaybeAbstract, MethodArgument,
@@ -19,6 +21,12 @@ use crate::analysis::templating::traits::{DMLTrait};
 pub enum DMLMethodArg {
     Typed(Declaration),
     Inline(DMLString),
+}
+
+impl StructureSymbol for DMLMethodArg {
+    fn kind(&self) -> DMLSymbolKind {
+        DMLSymbolKind::MethodArg
+    }
 }
 
 impl DMLNamed for DMLMethodArg {
@@ -117,6 +125,14 @@ pub struct MethodDecl {
     pub return_types: Vec<DMLResolvedType>,
     pub body: Statement,
     pub span: ZeroSpan,
+}
+
+impl SymbolContainer for MethodDecl {
+    fn symbols(&self) -> Vec<&dyn StructureSymbol> {
+        let mut symbols = self.method_args.to_symbols();
+        symbols.append(&mut self.body.symbols());
+        symbols
+    }
 }
 
 impl MaybeAbstract for MethodDecl {

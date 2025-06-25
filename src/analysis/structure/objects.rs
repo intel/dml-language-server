@@ -996,10 +996,6 @@ pub struct Method {
     pub references: Vec<Reference>,
 }
 
-impl SymbolContainer for Method {
-    fn symbols(&self) -> Vec<&dyn StructureSymbol> { vec![] }
-}
-
 impl DeclarationSpan for Method {
     fn span(&self) -> &ZeroSpan {
         self.object.span()
@@ -1023,7 +1019,9 @@ impl Scope for Method {
         ContextKey::Structure(SimpleSymbol::make(self, self.kind()))
     }
     fn defined_symbols(&self) -> Vec<&dyn StructureSymbol> {
-        self.arguments.to_symbols()
+        let mut symbols = self.arguments.to_symbols();
+        symbols.append(&mut self.body.symbols());
+        symbols
     }
     fn defined_scopes(&self) -> Vec<&dyn Scope> {
         vec![]
