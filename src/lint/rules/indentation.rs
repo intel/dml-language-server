@@ -505,9 +505,14 @@ impl IndentParenExprRule {
         args: Option<IndentParenExprArgs>) {
         if !self.enabled { return; }
         let Some(args) = args else { return; };
+        if args.members_ranges.is_empty() { return; }
         let expected_line_start = args.lparen.col_start.0 + 1;
         let mut last_row = args.lparen.row_start.0;
-
+        if last_row != args.members_ranges.first().unwrap().row_start.0 {
+            // If the first member is not on the same line as the lparen,
+            // then it is not a continuation line, so we do not check it.
+            return;
+        }
         for member_range in args.members_ranges {
             if member_range.row_start.0 != last_row {
                 last_row = member_range.row_start.0;

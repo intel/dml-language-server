@@ -2,7 +2,7 @@ use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 use log::{debug, error, trace};
-use rules::linebreaking::FuncCallBreakOnOpeningParenOptions;
+use rules::linebreaking::FuncCallBreakOnOpenParenOptions;
 use serde::{Deserialize, Serialize};
 use rules::{instantiate_rules, CurrentRules, RuleType};
 use rules::{spacing::{SpBraceOptions, SpPunctOptions, NspFunparOptions,
@@ -77,7 +77,7 @@ pub struct LintCfg {
     #[serde(default)]
     pub indent_continuation_line: Option<IndentContinuationLineOptions>,
     #[serde(default)]
-    pub func_call_break_on_opening_paren: Option<FuncCallBreakOnOpeningParenOptions>,
+    pub func_call_break_on_open_paren: Option<FuncCallBreakOnOpenParenOptions>,
 }
 
 impl Default for LintCfg {
@@ -98,7 +98,7 @@ impl Default for LintCfg {
             indent_switch_case: Some(IndentSwitchCaseOptions{indentation_spaces: INDENTATION_LEVEL_DEFAULT}),
             indent_empty_loop: Some(IndentEmptyLoopOptions{indentation_spaces: INDENTATION_LEVEL_DEFAULT}),
             indent_continuation_line: Some(IndentContinuationLineOptions{indentation_spaces: INDENTATION_LEVEL_DEFAULT}),
-            func_call_break_on_opening_paren: Some(FuncCallBreakOnOpeningParenOptions{}),
+            func_call_break_on_open_paren: Some(FuncCallBreakOnOpenParenOptions{indentation_spaces: INDENTATION_LEVEL_DEFAULT}),
         }
     }
 }

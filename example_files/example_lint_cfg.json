@@ -13,5 +13,6 @@
     "indent_paren_expr": {},
     "indent_switch_case": {},
     "indent_empty_loop": {},
-    "indent_continuation_line": {}
+    "indent_continuation_line": {},
+    "func_call_break_on_open_paren": {}
 }
