@@ -12,6 +12,8 @@
 - Fixed an issue where diagnostics would sometime be reported within the wrong file
 - Corrected incorrect parsing around tuple-declared 'local' variables in for-loops
 - Added the ability to declare 'saved' or 'session' variables in for-loops
+- Added functionality for goto-def/decl/ref to or from variables declared
+  within a function scope.
 
 ## 0.9.11
 - Fixed deadlock when a configuration update happens
