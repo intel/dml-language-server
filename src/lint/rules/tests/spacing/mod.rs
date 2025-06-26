@@ -1,8 +1,13 @@
+use crate::lint::rules::tests::common::assert_snippet;
+use crate::lint::rules::instantiate_rules;
+use crate::lint::LintCfg;
 mod nsp_funpar;
 mod nsp_inparen;
+mod nsp_ptrdecl;
 mod nsp_trailing;
 mod nsp_unary;
 mod sp_braces;
+mod sp_ptrdecl;
 mod sp_punct;
 
 // Put whitespace (space or newline):

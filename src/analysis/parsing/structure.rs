@@ -16,10 +16,7 @@ use crate::analysis::parsing::parser::{doesnt_understand_tokens,
                                        FileParser, Parse, ParseContext,
                                        FileInfo};
 use crate::analysis::LocalDMLError;
-use crate::lint::rules::spacing::{SpBracesArgs,
-                                  NspInparenArgs,
-                                  NspFunparArgs,
-                                  SpPunctArgs};
+use crate::lint::rules::spacing::{NspFunparArgs, NspInparenArgs, SpBracesArgs, SpPunctArgs};
 use crate::lint::rules::indentation::{IndentCodeBlockArgs, IndentClosingBraceArgs, IndentParenExprArgs};
 use crate::lint::{rules::CurrentRules, AuxParams, DMLStyleError};
 use crate::analysis::reference::{Reference, ReferenceKind};

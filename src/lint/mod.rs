@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use lazy_static::lazy_static;
 use log::{debug, error, trace};
+use rules::spacing::{SpPtrDeclOptions, NspPtrDeclOptions};
 use serde::{Deserialize, Serialize};
 use regex::Regex;
 use rules::{instantiate_rules, CurrentRules, RuleType};
@@ -63,6 +64,10 @@ pub struct LintCfg {
     #[serde(default)]
     pub sp_punct: Option<SpPunctOptions>,
     #[serde(default)]
+    pub sp_ptrdecl: Option<SpPtrDeclOptions>,
+    #[serde(default)]
+    pub nsp_ptrdecl: Option<NspPtrDeclOptions>,
+    #[serde(default)]
     pub nsp_funpar: Option<NspFunparOptions>,
     #[serde(default)]
     pub nsp_inparen: Option<NspInparenOptions>,
@@ -114,6 +119,8 @@ impl Default for LintCfg {
         LintCfg {
             sp_brace: Some(SpBraceOptions{}),
             sp_punct: Some(SpPunctOptions{}),
+            sp_ptrdecl: Some(SpPtrDeclOptions{}),
+            nsp_ptrdecl: Some(NspPtrDeclOptions{}),
             nsp_funpar: Some(NspFunparOptions{}),
             nsp_inparen: Some(NspInparenOptions{}),
             nsp_unary: Some(NspUnaryOptions{}),
