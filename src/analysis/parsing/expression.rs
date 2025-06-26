@@ -24,7 +24,8 @@ use crate::lint::{DMLStyleError,
                                     SpPunctArgs},
                                     CurrentRules},
                                     AuxParams};
-use crate::lint::rules::indentation::{IndentParenExprArgs};
+use crate::lint::rules::indentation::IndentParenExprArgs;
+use crate::lint::rules::linebreaking::FuncCallBreakOnOpenParenArgs;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct UnaryExpressionContent {
@@ -214,11 +215,13 @@ impl TreeElement for FunctionCallContent {
                 noderef, ReferenceKind::Callable));
         }
     }
-    fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, _aux: AuxParams) {
+    fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, aux: AuxParams) {
         rules.nsp_funpar.check(acc, NspFunparArgs::from_function_call(self));
         rules.nsp_inparen.check(acc, NspInparenArgs::from_function_call(self));
         rules.sp_punct.check(acc, SpPunctArgs::from_function_call(self));
         rules.indent_paren_expr.check(acc, IndentParenExprArgs::from_function_call(self));
+        rules.func_call_break_on_opening_paren
+            .check(acc, FuncCallBreakOnOpenParenArgs::from_function_call(self, aux.depth));
     }
 }
 
