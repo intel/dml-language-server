@@ -568,7 +568,7 @@ impl SpPtrDeclRule {
                 if ranges.operator_ranges.iter().any(|op_range| {
                     !has_space_between(&ranges.type_name_range, op_range)
                 }) {
-                    self.push_err(acc, ranges.type_name_range);
+                    acc.push(self.create_err(ranges.type_name_range));
                 }
             } 
         }
@@ -623,7 +623,7 @@ impl NspPtrDeclRule {
                     None => return,
                     Some(op_range) => {
                         if has_space_between(&op_range, &ranges.identifier_range) {
-                            self.push_err(acc, ranges.identifier_range);
+                            acc.push(self.create_err(ranges.identifier_range));
                         }
                     }
                 }

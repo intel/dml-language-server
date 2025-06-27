@@ -5,6 +5,8 @@
     "nsp_inparen": {},
     "nsp_unary": {},
     "nsp_trailing": {},
+    "nsp_ptrdecl": {},
+    "sp_ptrdecl": {},
     "long_lines": { "max_length": 80 },
     "indent_size": { "indentation_spaces": 4 },
     "indent_no_tabs": {},
