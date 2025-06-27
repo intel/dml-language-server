@@ -48,7 +48,7 @@ fn nsp_ptrdecl_correct() {
 fn nsp_ptrdcl_incorrect_param() {
     let mut rules = set_up();
     let expected_errors = define_expected_errors!(
-        RuleType::SpPtrDecl,
+        RuleType::NspPtrDecl,
         (1, 1, 43, 52),
     );
     assert_snippet(NSP_PTRDECL_INCORRECT_PARAM, expected_errors, &rules);
