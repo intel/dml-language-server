@@ -17,6 +17,17 @@
          clippy::needless_lifetimes,
          clippy::only_used_in_recursion)]
 
+// TODO: replace internal error panics with internal log errors where
+// possible
+macro_rules! internal_error {
+    ( $mess:expr, $( $arg:expr ),* ) => {
+        error!("Internal Error: {}", format!($mess, $( $arg ),*));
+    };
+    ( $mess:expr ) => {
+        error!("Internal Error: {}", $mess);
+    }
+}
+
 #[macro_use]
 pub mod actions;
 pub mod analysis;

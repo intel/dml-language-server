@@ -714,13 +714,13 @@ fn to_variable<'a>(leaf_for_kind: &LeafToken,
             "saved" => VariableDeclKind::Saved,
             "local" => VariableDeclKind::Local,
             e => {
-                error!("Internal error: Unexpected declaration kind {}", e);
+                internal_error!("Unexpected declaration kind {}", e);
                 return None;
             },
         }
     } else {
         // Normally this is cleanly unexpected
-        error!("Internal error: Could not read declaration kind");
+        internal_error!("Could not read declaration kind");
         return None;
     };
     to_variable_structure(decls, inits, kind, report, file)
