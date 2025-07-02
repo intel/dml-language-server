@@ -546,10 +546,11 @@ impl DeviceAnalysis {
                     |obj|match obj.resolve(&self.objects) {
                         DMLResolvedObject::CompObject(robj) => Some(robj),
                         DMLResolvedObject::ShallowObject(sobj) => {
-                            error!("Internal Error: \
-                                    Wanted to find context {:?} in {:?} \
-                                    which is not \
-                                    a composite object", sobj, context_chain);
+                            internal_error!(
+                                "Internal Error: \
+                                 Wanted to find context {:?} in {:?} \
+                                 which is not \
+                                 a composite object", sobj, context_chain);
                             None
                         }
                     }).collect(),
@@ -580,8 +581,9 @@ impl DeviceAnalysis {
                        -> Option<Vec<DMLObject>> {
         // Should be guaranteed by caller responsibility
         if context_chain.is_empty() {
-            error!("Internal Error: context chain invariant broken at {:?}",
-                   curr_obj.identity());
+            internal_error!(
+                "context chain invariant broken at {:?}",
+                curr_obj.identity());
         }
 
         let (first, rest) = context_chain.split_first().unwrap();
@@ -599,10 +601,10 @@ impl DeviceAnalysis {
                                 vec![found_obj.clone()]
                             }
                         else {
-                            error!("Internal Error: Context chain \
-                                    suggested {:?} should be a method, \
-                                    but it wasn't",
-                                   found_obj.resolve(&self.objects));
+                            internal_error!(
+                                "Context chain suggested {:?} should be a \
+                                 method, but it wasn't",
+                                found_obj.resolve(&self.objects));
                             vec![]
                         }
                     }
@@ -632,15 +634,15 @@ impl DeviceAnalysis {
                             limitations);
                     }
                     else {
-                        error!("Internal Error: No template->objects map for\
-                                {:?}", sym);
+                        internal_error!(
+                            "No template->objects map for {:?}", sym);
                         vec![]
                     }
                 } else {
-                    error!("Internal Error: \
-                            Wanted to find context {:?} in {:?} which is not \
-                            a known template object",
-                           first, curr_obj);
+                    internal_error!(
+                        "Wanted to find context {:?} in {:?} which is not \
+                         a known template object",
+                        first, curr_obj);
                     return None;
                 },
             ContextKey::AllWithTemplate(_, templates) =>
@@ -985,8 +987,7 @@ impl DeviceAnalysis {
             // TODO: Do we need to fall back on globals here? Can we get an
             // identifier from a spot that is generic enough to refer to a
             // global, but also is in a context where a global makes sense?
-            error!("Internal Error: Failed to find objects matching {:?}",
-                   sym);
+            internal_error!("Failed to find objects matching {:?}", sym);
             vec![]
         }
     }
@@ -1011,7 +1012,7 @@ impl DeviceAnalysis {
                     ReferenceMatch::NotFound(vec![]),
             }
         } else {
-            error!("Internal Error?: Circular noderef resolve");
+            internal_error!("Circular noderef resolve");
             ReferenceMatch::NotFound(vec![])
         }
     }
@@ -1066,8 +1067,8 @@ impl DeviceAnalysis {
         match &reference.kind {
             ReferenceKind::Template |
             ReferenceKind::Type => {
-                error!("Internal Error: Attempted to do a contexted lookup \
-                        of a global reference {:?}", reference);
+                internal_error!("Attempted to do a contexted lookup \
+                                 of a global reference {:?}", reference);
                 return ReferenceMatch::NotFound(vec![]);
             },
             _ => (),
@@ -1487,7 +1488,7 @@ fn extend_with_templates(storage: &mut SymbolStorage,
             let loc = new_templ.lock().unwrap().loc;
             if let Some(prev) = storage.template_symbols
                 .insert(loc, new_templ) {
-                    error!("Internal Error: Unexpectedly two template symbols
+                    internal_error!("Unexpectedly two template symbols
                         defined in the same location");
                     error!("Previous was {:?}", prev);
                     error!("New is {:?}", storage.template_symbols.get(&loc));
@@ -1548,9 +1549,9 @@ where K: std::hash::Hash + Eq + Clone,
         // some meta-info
         if !old.lock().unwrap().equivalent(
             &map.get(&key).unwrap().lock().unwrap()) {
-            error!("Unexpected Internal Error: Overwrote previous symbol \
-                    {:?} with non-similar symbol {:?}",
-                   old, map.get(&key));
+            internal_error!(
+                "Overwrote previous symbol {:?} with non-similar symbol {:?}",
+                old, map.get(&key));
             return true;
         }
     }
