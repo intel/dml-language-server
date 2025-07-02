@@ -995,11 +995,9 @@ impl DeviceAnalysis {
                                      symbol: &'t SymbolRef,
                                      node: &NodeRef)
                                      -> ReferenceMatch {
-        if let Ok(sym) = symbol.lock() {
+        if let Ok(sym) = symbol.try_lock() {
             match &sym.source {
-                SymbolSource::DMLObject(key) => {
-                    self.resolve_noderef_in_obj(key, node)
-                },
+                SymbolSource::DMLObject(key) => self.resolve_noderef_in_obj(key, node),
                 // TODO: Cannot be resolved without constant folding
                 SymbolSource::MethodArg(_method, _name) =>
                     ReferenceMatch::NotFound(vec![]),
