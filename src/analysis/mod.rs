@@ -996,24 +996,24 @@ impl DeviceAnalysis {
                                      symbol: &'t SymbolRef,
                                      node: &NodeRef)
                                      -> ReferenceMatch {
-        if let Ok(sym) = symbol.lock() {
-            match &sym.source {
-                SymbolSource::DMLObject(key) => {
-                    self.resolve_noderef_in_obj(key, node)
-                },
-                // TODO: Cannot be resolved without constant folding
-                SymbolSource::MethodArg(_method, _name) =>
-                    ReferenceMatch::NotFound(vec![]),
-                // TODO: Fix once type system is sorted
-                SymbolSource::Type(_typed) =>
-                    ReferenceMatch::NotFound(vec![]),
-                // TODO: Handle lookups inside templates
-                SymbolSource::Template(_templ) =>
-                    ReferenceMatch::NotFound(vec![]),
-            }
-        } else {
-            internal_error!("Circular noderef resolve");
-            ReferenceMatch::NotFound(vec![])
+        let sym = symbol.lock().unwrap();
+        match &sym.source {
+            SymbolSource::DMLObject(obj) => {
+                // The performance overhead is cloning here
+                // is _probably_ smaller than the one of holding the key
+                let obj_copy = obj.clone();
+                drop(sym);
+                self.resolve_noderef_in_obj(&obj_copy, node)
+            },
+            // TODO: Cannot be resolved without constant folding
+            SymbolSource::MethodArg(_method, _name) =>
+                ReferenceMatch::NotFound(vec![]),
+            // TODO: Fix once type system is sorted
+            SymbolSource::Type(_typed) =>
+                ReferenceMatch::NotFound(vec![]),
+            // TODO: Handle lookups inside templates
+            SymbolSource::Template(_templ) =>
+                ReferenceMatch::NotFound(vec![]),
         }
     }
 
@@ -1119,6 +1119,28 @@ impl DeviceAnalysis {
         reference: &VariableReference,
         reference_cache: &Mutex<ReferenceCache>)
         -> ReferenceMatch {
+        let mut recursive_cache = HashSet::default();
+        self.find_target_for_reference_without_loop(context_chain,
+                                                    reference,
+                                                    reference_cache,
+                                                    &mut recursive_cache)
+    }
+
+    fn find_target_for_reference_without_loop<'t>(
+        &self,
+        context_chain: &'t [ContextKey],
+        reference: &'t VariableReference,
+        reference_cache: &Mutex<ReferenceCache>,
+        recursive_cache: &'t mut HashSet<(&'t [ContextKey],
+                                          &'t VariableReference)>)
+        -> ReferenceMatch {
+        // Prevent us from calling into the exact same reference lookup twice
+        // within one lookup.
+        if !recursive_cache.insert((context_chain, reference)) {
+            internal_error!("Recursive reference lookup detected at \
+                             {:?} under {:?}", reference, context_chain);
+            return ReferenceMatch::NotFound(vec![]);
+        }
         let index_key = (context_chain.to_vec(),
                          reference.clone());
         {
