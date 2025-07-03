@@ -2,6 +2,7 @@ use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 use log::{debug, error, trace};
+use rules::spacing::{SpPtrDeclOptions, NspPtrDeclOptions};
 use serde::{Deserialize, Serialize};
 use rules::{instantiate_rules, CurrentRules, RuleType};
 use rules::{spacing::{SpBraceOptions, SpPunctOptions, NspFunparOptions,
@@ -50,6 +51,10 @@ pub struct LintCfg {
     #[serde(default)]
     pub sp_punct: Option<SpPunctOptions>,
     #[serde(default)]
+    pub sp_ptrdecl: Option<SpPtrDeclOptions>,
+    #[serde(default)]
+    pub nsp_ptrdecl: Option<NspPtrDeclOptions>,
+    #[serde(default)]
     pub nsp_funpar: Option<NspFunparOptions>,
     #[serde(default)]
     pub nsp_inparen: Option<NspInparenOptions>,
@@ -80,6 +85,8 @@ impl Default for LintCfg {
         LintCfg {
             sp_brace: Some(SpBraceOptions{}),
             sp_punct: Some(SpPunctOptions{}),
+            sp_ptrdecl: Some(SpPtrDeclOptions{}),
+            nsp_ptrdecl: Some(NspPtrDeclOptions{}),
             nsp_funpar: Some(NspFunparOptions{}),
             nsp_inparen: Some(NspInparenOptions{}),
             nsp_unary: Some(NspUnaryOptions{}),
@@ -189,41 +196,6 @@ pub mod tests {
     use std::str::FromStr;
     use crate::{analysis::{parsing::{parser::FileInfo, structure::{self, TopAst}}, FileSpec}, vfs::TextFile};
 
-    pub static SOURCE: &str = "
-    dml 1.4;
-
-    bank sb_cr {
-        group monitor {    
-
-            register MKTME_KEYID_MASK {
-                method get() -> (uint64) {
-                    local uint64 physical_address_mask = mse.srv10nm_mse_mktme.get_key_addr_mask();
-                    this.Mask.set(physical_address_mask);
-                    this.function_with_args('some_string',
-                                    integer,
-                                    floater);
-                    return this.val;
-                }
-            }
-
-            register TDX_KEYID_MASK {
-                method get() -> (uint64) {
-                    local uint64 tdx_keyid_mask = mse.srv10nm_mse_tdx.get_key_addr_mask();
-                    local uint64 some_uint = (is_this_real) ? then_you_might_like_this_value : or_this_one;
-                    this.Mask.set(tdx_keyid_mask);
-                    return this.val;
-                }
-            }
-        }
-    }   
-
-    /*
-        This is ONEEEE VEEEEEERY LLOOOOOOONG COOOMMMEENTT ON A SINGLEEEE LINEEEEEEEEEEEEEE
-        and ANOTHEEEER VEEEEEERY LLOOOOOOONG COOOMMMEENTT ON A SINGLEEEE LINEEEEEEEEEEEEEE
-    */
-
-    ";
-
     pub fn create_ast_from_snippet(source: &str) -> TopAst {
         use logos::Logos;
         use crate::analysis::parsing::lexer::TokenKind;
@@ -250,18 +222,5 @@ pub mod tests {
                                    EXAMPLE_CFG);
         let example_cfg = parse_lint_cfg(example_path.into()).unwrap();
         assert_eq!(example_cfg, LintCfg::default());
-    }
-
-    #[test]
-    #[ignore]
-    fn test_main() {
-        use crate::lint::{begin_style_check, LintCfg};
-        use crate::lint::rules:: instantiate_rules;
-        let ast = create_ast_from_snippet(SOURCE);
-        let cfg = LintCfg::default();
-        let rules = instantiate_rules(&cfg);
-        let _lint_errors = begin_style_check(ast, SOURCE.to_string(), &rules);
-        assert!(_lint_errors.is_ok());
-        assert!(!_lint_errors.unwrap().is_empty());
     }
 }
