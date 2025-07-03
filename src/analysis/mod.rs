@@ -1038,6 +1038,8 @@ impl DeviceAnalysis {
             // TODO: Cannot be resolved without constant folding
             SymbolSource::MethodArg(_method, _name) =>
                 ReferenceMatch::NotFound(vec![]),
+            SymbolSource::MethodLocal(_method, _name) =>
+                ReferenceMatch::NotFound(vec![]),
             // TODO: Fix once type system is sorted
             SymbolSource::Type(_typed) =>
                 ReferenceMatch::NotFound(vec![]),
@@ -1231,6 +1233,7 @@ impl DeviceAnalysis {
         let mut recursive_cache = HashSet::default();
         self.find_target_for_reference_without_loop(context_chain,
                                                     reference,
+                                                    method_structure,
                                                     reference_cache,
                                                     &mut recursive_cache)
     }
@@ -1239,6 +1242,7 @@ impl DeviceAnalysis {
         &self,
         context_chain: &'t [ContextKey],
         reference: &'t VariableReference,
+        method_structure: &HashMap<ZeroSpan, RangeEntry>,
         reference_cache: &Mutex<ReferenceCache>,
         recursive_cache: &'t mut HashSet<(&'t [ContextKey],
                                           &'t VariableReference)>)
@@ -1255,7 +1259,14 @@ impl DeviceAnalysis {
         {
             if let Some(cached_result) = reference_cache.lock().unwrap()
                 .get(index_key.clone()) {
-                    return cached_result.clone();
+                    // TODO: Caching currently does not work for references
+                    // within method bodies, as the same reference in different
+                    // locations may have different scopes
+                    if !context_chain.last()
+                        .and_then(|c|c.kind())
+                        .map_or(false, |k|k == DMLSymbolKind::Method) {
+                            return cached_result.clone();
+                        }
                 }
         }
 
