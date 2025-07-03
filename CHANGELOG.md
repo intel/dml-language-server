@@ -6,6 +6,7 @@
 
 ## 0.9.12
 - Diagnostics sent from the server will now indicate their source as 'dml' or 'dml-lint'
+- Added 'simics\_util\_vect' as a known provisional (with no DLS semantics)
 
 ## 0.9.11
 - Fixed deadlock when a configuration update happens
