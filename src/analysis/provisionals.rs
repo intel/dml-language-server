@@ -15,6 +15,7 @@ use crate::analysis::FileSpec;
 pub enum Provisional {
     // TODO: implement the neccessary checks for explicit params
     ExplicitParamDecl,
+    SimicsUtilVect,
 }
 
 impl fmt::Display for Provisional {
@@ -69,6 +70,7 @@ mod test {
     fn test_provisionals_parsing() {
         for (s, p) in [
             ("explicit_param_decl", Provisional::ExplicitParamDecl),
+            ("simics_util_vect", Provisional::SimicsUtilVect),
         ] {
             assert_eq!(Provisional::from_str(s), Ok(p));
         }
