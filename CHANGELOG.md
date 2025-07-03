@@ -6,6 +6,9 @@
 
 ## 0.9.12
 - Diagnostics sent from the server will now indicate their source as 'dml' or 'dml-lint'
+- Corrected incorrect parsing around tuple-declared 'local' variables in for-loops
+- Added the ability to declare 'saved' or 'session' variables in for-loops
+- Added the ability to goto-def and goto-ref on variables declared within method scopes
 
 ## 0.9.11
 - Fixed deadlock when a configuration update happens

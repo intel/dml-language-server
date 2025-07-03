@@ -8,27 +8,59 @@ use crate::analysis::{DeclarationSpan,
 
 use crate::analysis::symbols::{StructureSymbol,
                                SymbolContainer};
-use crate::analysis::structure::types::{DMLType, deconstruct_cdecl};
+use crate::analysis::structure::objects::{Variable,
+                                          VariableDeclKind,
+                                          to_variable_structure};
 use crate::analysis::structure::expressions::{DMLString, ExpressionKind,
                                               Expression, Initializer};
-use crate::analysis::parsing::{structure, statement};
+use crate::analysis::parsing::{structure, statement, misc};
 use crate::analysis::parsing::lexer::TokenKind;
-use crate::analysis::parsing::tree::{ZeroSpan, TreeElement};
-use crate::analysis::FileSpec;
+use crate::analysis::parsing::tree::{LeafToken, ZeroSpan, TreeElement};
+use crate::analysis::{DMLNamed, DMLSymbolKind, FileSpec};
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ForEachIdentifier(DMLString);
+
+impl DeclarationSpan for ForEachIdentifier {
+    fn span(&self) -> &ZeroSpan {
+        self.0.span()
+    }
+}
+
+impl DMLNamed for ForEachIdentifier {
+    fn name(&self) -> &DMLString {
+        &self.0
+    }
+}
+
+impl StructureSymbol for ForEachIdentifier {
+    fn kind(&self) -> DMLSymbolKind {
+        DMLSymbolKind::Local
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ForEach {
-    pub identifier: DMLString,
+    pub identifier: ForEachIdentifier,
     pub inexpr: Expression,
     pub body: Statement,
     pub span: ZeroSpan,
+}
+
+impl SymbolContainer for ForEach {
+    fn symbols(&self) -> Vec<&dyn StructureSymbol> {
+        let mut subs = self.body.symbols();
+        subs.push(&self.identifier as & dyn StructureSymbol);
+        subs
+    }
 }
 
 impl ForEach {
     fn to_statement<'a>(content: &statement::ForeachContent,
                         report: &mut Vec<LocalDMLError>,
                         file: FileSpec<'a>) -> Option<Statement> {
-        let identifier = DMLString::from_token(&content.ident, file)?;
+        let identifier = ForEachIdentifier(
+            DMLString::from_token(&content.ident, file)?);
         let inexpr = ExpressionKind::to_expression(
             &content.expression, report, file)?;
         let body = StatementKind::to_statement(
@@ -50,8 +82,16 @@ impl DeclarationSpan for ForEach {
 pub struct If {
     pub condition: Expression,
     pub ifbody: Statement,
-    pub elsebody: Statement,
+    pub elsebody: Option<Statement>,
     pub span: ZeroSpan,
+}
+
+impl SymbolContainer for If {
+    fn symbols(&self) -> Vec<&dyn StructureSymbol> {
+        let mut subs = self.ifbody.symbols();
+        subs.append(&mut self.elsebody.symbols());
+        subs
+    }
 }
 
 impl If {
@@ -65,7 +105,7 @@ impl If {
             report,
             file)?;
         let elsebody = content.elsebranch.as_ref().and_then(
-            |(_, elbody)|StatementKind::to_statement(elbody, report, file))?;
+            |(_, elbody)|StatementKind::to_statement(elbody, report, file));
         let span = ZeroSpan::from_range(content.range(), file.path);
         StatementKind::If(If {
             condition, ifbody, elsebody, span
@@ -83,8 +123,16 @@ impl DeclarationSpan for If {
 pub struct HashIf {
     pub condition: Expression,
     pub ifbody: Statement,
-    pub elsebody: Statement,
+    pub elsebody: Option<Statement>,
     pub span: ZeroSpan,
+}
+
+impl SymbolContainer for HashIf {
+    fn symbols(&self) -> Vec<&dyn StructureSymbol> {
+        let mut subs = self.ifbody.symbols();
+        subs.append(&mut self.elsebody.symbols());
+        subs
+    }
 }
 
 impl HashIf {
@@ -97,7 +145,7 @@ impl HashIf {
                                                 report,
                                                 file)?;
         let elsebody = content.elsebranch.as_ref().and_then(
-            |(_, content)|StatementKind::to_statement(content, report, file))?;
+            |(_, content)|StatementKind::to_statement(content, report, file));
         let span = ZeroSpan::from_range(content.range(), file.path);
         StatementKind::HashIf(HashIf {
             condition, ifbody, elsebody, span,
@@ -117,6 +165,14 @@ pub struct HashIfCase {
     pub truecases: Vec<SwitchCase>,
     pub falsecases: Vec<SwitchCase>,
     pub span: ZeroSpan,
+}
+
+impl SymbolContainer for HashIfCase {
+    fn symbols(&self) -> Vec<&dyn StructureSymbol> {
+        let mut subs = self.truecases.symbols();
+        subs.append(&mut self.falsecases.symbols());
+        subs
+    }
 }
 
 impl HashIfCase {
@@ -152,6 +208,16 @@ pub enum SwitchCase {
     Default(ZeroSpan),
 }
 
+impl SymbolContainer for SwitchCase {
+    fn symbols(&self) -> Vec<&dyn StructureSymbol> {
+        match self {
+            SwitchCase::Statement(stmnt) => stmnt.symbols(),
+            SwitchCase::HashIf(ifc) => ifc.symbols(),
+            _ => vec![],
+        }
+    }
+}
+
 impl SwitchCase {
     fn to_case<'a>(content: &statement::SwitchCase,
                    report: &mut Vec<LocalDMLError>,
@@ -173,6 +239,8 @@ impl SwitchCase {
     }
 }
 
+
+
 impl DeclarationSpan for SwitchCase {
     fn span(&self) -> &ZeroSpan {
         match self {
@@ -189,6 +257,12 @@ pub struct Switch {
     pub expr: Expression,
     pub cases: Vec<SwitchCase>,
     pub span: ZeroSpan,
+}
+
+impl SymbolContainer for Switch {
+    fn symbols(&self) -> Vec<&dyn StructureSymbol> {
+        self.cases.symbols()
+    }
 }
 
 impl Switch {
@@ -213,9 +287,15 @@ impl DeclarationSpan for Switch {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct While {
-    cond: Expression,
-    body: Statement,
-    span: ZeroSpan,
+    pub cond: Expression,
+    pub body: Statement,
+    pub span: ZeroSpan,
+}
+
+impl SymbolContainer for While {
+    fn symbols(&self) -> Vec<&dyn StructureSymbol> {
+        self.body.symbols()
+    }
 }
 
 impl While {
@@ -240,9 +320,15 @@ impl DeclarationSpan for While {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct DoWhile {
-    cond: Expression,
-    body: Statement,
-    span: ZeroSpan,
+    pub cond: Expression,
+    pub body: Statement,
+    pub span: ZeroSpan,
+}
+
+impl SymbolContainer for DoWhile {
+    fn symbols(&self) -> Vec<&dyn StructureSymbol> {
+        self.body.symbols()
+    }
 }
 
 impl DoWhile {
@@ -274,17 +360,34 @@ pub enum ForPostElement {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ForPre {
-    Local(DMLString, DMLType, Option<Initializer>),
+    Declaration(Variable),
     Post(Vec<ForPostElement>),
+}
+
+impl SymbolContainer for ForPre {
+    fn symbols(&self) -> Vec<&dyn StructureSymbol> {
+        match self {
+            ForPre::Declaration(var) => var.symbols(),
+            _ => vec![],
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct For {
-    pre: Option<ForPre>,
-    cond: Option<Expression>,
-    post: Vec<ForPostElement>,
-    body: Statement,
-    span: ZeroSpan,
+    pub pre: Option<ForPre>,
+    pub cond: Option<Expression>,
+    pub post: Vec<ForPostElement>,
+    pub body: Statement,
+    pub span: ZeroSpan,
+}
+
+impl SymbolContainer for For {
+    fn symbols(&self) -> Vec<&dyn StructureSymbol> {
+        let mut symbols = self.pre.symbols();
+        symbols.append(&mut self.body.symbols());
+        symbols
+    }
 }
 
 fn to_forpost<'a>(content: &statement::ForPost,
@@ -330,17 +433,11 @@ impl For {
             ||vec![],
             |post|to_forpost(post, report, file));
         let pre = content.pre.as_ref().and_then(|pre|match pre {
-            statement::ForPre::Local(_, cdecl, maybe_init) => {
-                let (name, typed) = cdecl.with_content(
-                    |con|deconstruct_cdecl(con, report, file),
-                    (None, None));
-                let init = maybe_init.as_ref().and_then(
-                    |(_,i)|Initializer::to_initializer(i, report, file));
-                match (name, typed) {
-                    (Some(n), Some(t)) => Some(ForPre::Local(n, t, init)),
-                    _ => None,
-                }
-            },
+            statement::ForPre::Declaration(kind, vardecls, maybe_init) =>
+                to_variable(kind, vardecls,
+                            maybe_init.as_ref().map(|(_, init)|init),
+                            report, file)
+                .map(ForPre::Declaration),
             statement::ForPre::Post(p) => Some(ForPre::Post(
                 to_forpost(p, report, file))),
         });
@@ -370,9 +467,9 @@ pub enum AfterExpression {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct After {
-    after: Option<AfterExpression>,
-    call: Expression,
-    span: ZeroSpan,
+    pub after: Option<AfterExpression>,
+    pub call: Expression,
+    pub span: ZeroSpan,
 }
 
 impl After {
@@ -420,8 +517,8 @@ impl DeclarationSpan for After {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Return {
-    ret: Option<Initializer>,
-    span: ZeroSpan,
+    pub ret: Option<Initializer>,
+    pub span: ZeroSpan,
 }
 
 impl Return {
@@ -445,7 +542,7 @@ impl DeclarationSpan for Return {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Continue {
-    span: ZeroSpan,
+    pub span: ZeroSpan,
 }
 
 impl Continue {
@@ -468,7 +565,7 @@ impl DeclarationSpan for Continue {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Break {
-    span: ZeroSpan,
+    pub span: ZeroSpan,
 }
 
 impl DeclarationSpan for Break {
@@ -491,9 +588,17 @@ impl Break {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TryCatch {
-    tryblock: Statement,
-    catchblock: Statement,
-    span: ZeroSpan,
+    pub tryblock: Statement,
+    pub catchblock: Statement,
+    pub span: ZeroSpan,
+}
+
+impl SymbolContainer for TryCatch {
+    fn symbols(&self) -> Vec<&dyn StructureSymbol> {
+        let mut symbols = self.tryblock.symbols();
+        symbols.append(&mut self.catchblock.symbols());
+        symbols
+    }
 }
 
 impl TryCatch {
@@ -519,7 +624,7 @@ impl DeclarationSpan for TryCatch {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Throw {
-    span: ZeroSpan,
+    pub span: ZeroSpan,
 }
 
 impl Throw {
@@ -558,12 +663,12 @@ pub enum LogKind {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Log {
-    kind: LogKind,
-    level: Option<LogLevel>,
-    flags: Option<Expression>,
-    message: Expression,
-    args: Vec<Expression>,
-    span: ZeroSpan,
+    pub kind: LogKind,
+    pub level: Option<LogLevel>,
+    pub flags: Option<Expression>,
+    pub message: Expression,
+    pub args: Vec<Expression>,
+    pub span: ZeroSpan,
 }
 
 impl Log {
@@ -630,8 +735,8 @@ impl DeclarationSpan for Log {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Assert {
-    expression: Expression,
-    span: ZeroSpan,
+    pub expression: Expression,
+    pub span: ZeroSpan,
 }
 
 impl Assert {
@@ -656,8 +761,8 @@ impl DeclarationSpan for Assert {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Delete {
-    expression: Expression,
-    span: ZeroSpan,
+    pub expression: Expression,
+    pub span: ZeroSpan,
 }
 
 impl Delete {
@@ -682,8 +787,8 @@ impl DeclarationSpan for Delete {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Error {
-    message: Option<Expression>,
-    span: ZeroSpan,
+    pub message: Option<Expression>,
+    pub span: ZeroSpan,
 }
 
 impl Error {
@@ -707,83 +812,38 @@ impl DeclarationSpan for Error {
     }
 }
 
+fn to_variable<'a>(leaf_for_kind: &LeafToken,
+                   decls: &structure::VarDecl,
+                   inits: Option<&misc::Initializer>,
+                   report: &mut Vec<LocalDMLError>,
+                   file: FileSpec<'a>) -> Option<Variable> {
+    let kind = if let Some(kind_str) = leaf_for_kind.read_leaf(file.file) {
+        match kind_str.as_str() {
+            "session" => VariableDeclKind::Session,
+            "saved" => VariableDeclKind::Saved,
+            "local" => VariableDeclKind::Local,
+            e => {
+                internal_error!("Unexpected declaration kind {}", e);
+                return None;
+            },
+        }
+    } else {
+        // Normally this is cleanly unexpected
+        internal_error!("Could not read declaration kind");
+        return None;
+    };
+    to_variable_structure(decls, inits, kind, report, file)
+}
+
 fn to_statement_variable_decl<'a>(content: &statement::VariableDeclContent,
                                   report: &mut Vec<LocalDMLError>,
                                   file: FileSpec<'a>) -> Option<Statement> {
-    let decls = match &content.decls {
-        structure::VarDecl::One(decl) => vec![decl],
-        structure::VarDecl::Many(_, decllist, _) =>
-            decllist.iter().map(|(decl, _)|decl).collect()
-    };
-    let declarations = decls.into_iter().filter_map(
-        |decl|decl.with_content(
-            |cdecl|match deconstruct_cdecl(cdecl, report, file) {
-                (Some(t),Some(d)) => Some((t, d)),
-                _ => None,
-            }, None)).map(|(a, b)|(b, a)).collect();
-    let initializer = content.initializer.as_ref().and_then(
-        |(_,init)|Initializer::to_initializer(init, report, file));
-    // TODO: Is this a reasonable spot to show errors about initializer length
-    // mismatch?
-    let span = ZeroSpan::from_range(content.range(), file.path);
-    // Guaranteed by parser
-    match content.kind.get_token().unwrap().kind {
-        TokenKind::Local => StatementKind::Local(
-            Local {
-                declarations, initializer, span,
-            }),
-        TokenKind::Session => StatementKind::Session(
-            Session {
-                declarations, initializer, span,
-            }),
-        TokenKind::Saved => StatementKind::Saved(
-            Saved {
-                declarations, initializer, span,
-            }),
-        e => {
-            error!("Unexpected variable statement token kind {:?}", e);
-            return None;
-        }
-    }.into()
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Local {
-    declarations: Vec<(DMLType, DMLString)>,
-    initializer: Option<Initializer>,
-    span: ZeroSpan,
-}
-
-impl DeclarationSpan for Local {
-    fn span(&self) -> &ZeroSpan {
-        &self.span
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Saved {
-    declarations: Vec<(DMLType, DMLString)>,
-    initializer: Option<Initializer>,
-    span: ZeroSpan,
-}
-
-impl DeclarationSpan for Saved {
-    fn span(&self) -> &ZeroSpan {
-        &self.span
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Session {
-    declarations: Vec<(DMLType, DMLString)>,
-    initializer: Option<Initializer>,
-    span: ZeroSpan,
-}
-
-impl DeclarationSpan for Session {
-    fn span(&self) -> &ZeroSpan {
-        &self.span
-    }
+    StatementKind::VariableDecl(to_variable(
+        &content.kind,
+        &content.decls,
+        content.initializer.as_ref().map(|(_,i)|i),
+        report,
+        file)?).into()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -795,10 +855,10 @@ pub enum AssignOp {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct AssignOpStatement {
-    assignee: Expression,
-    operation: AssignOp,
-    assigner: Expression,
-    span: ZeroSpan,
+    pub assignee: Expression,
+    pub operation: AssignOp,
+    pub assigner: Expression,
+    pub span: ZeroSpan,
 }
 
 impl DeclarationSpan for AssignOpStatement {
@@ -854,9 +914,9 @@ pub enum Assigner {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct AssignStatement {
-    assignees: Vec<Expression>,
-    assigner: Assigner,
-    span: ZeroSpan,
+    pub assignees: Vec<Expression>,
+    pub assigner: Assigner,
+    pub span: ZeroSpan,
 }
 
 fn target_to_vec<'a>(content: &statement::AssignTarget,
@@ -921,20 +981,45 @@ impl DeclarationSpan for AssignStatement {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct HashSelectIdent(DMLString);
+
+impl DMLNamed for HashSelectIdent {
+    fn name(&self) -> &DMLString {
+        &self.0
+    }
+}
+
+impl StructureSymbol for HashSelectIdent {
+    fn kind(&self) -> DMLSymbolKind {
+        DMLSymbolKind::Local
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct HashSelect {
-    ident: DMLString,
-    inexpr: Expression,
-    whereexpr: Expression,
-    selectbranch: Statement,
-    elsebranch: Statement,
-    span: ZeroSpan,
+    pub ident: HashSelectIdent,
+    pub inexpr: Expression,
+    pub whereexpr: Expression,
+    pub selectbranch: Statement,
+    pub elsebranch: Statement,
+    pub span: ZeroSpan,
+}
+
+impl SymbolContainer for HashSelect {
+    fn symbols(&self) -> Vec<&dyn StructureSymbol> {
+        let mut symbols = vec![&self.ident as &dyn StructureSymbol];
+        symbols.append(&mut self.selectbranch.symbols());
+        symbols.append(&mut self.elsebranch.symbols());
+        symbols
+    }
 }
 
 impl HashSelect {
     fn to_statement<'a>(content: &statement::HashSelectContent,
                         report: &mut Vec<LocalDMLError>,
                         file: FileSpec<'a>) -> Option<Statement> {
-        let ident = DMLString::from_token(&content.ident, file)?;
+        let ident = HashSelectIdent(
+            DMLString::from_token(&content.ident, file)?);
         let inexpr = ExpressionKind::to_expression(
             &content.inexpression, report, file)?;
         let whereexpr = ExpressionKind::to_expression(
@@ -963,8 +1048,14 @@ impl DeclarationSpan for HashSelect {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct CompoundStatement {
-    statements: Vec<Statement>,
-    span: ZeroSpan,
+    pub statements: Vec<Statement>,
+    pub span: ZeroSpan,
+}
+
+impl SymbolContainer for CompoundStatement {
+    fn symbols(&self) -> Vec<&dyn StructureSymbol> {
+        self.statements.symbols()
+    }
 }
 
 impl CompoundStatement {
@@ -1036,9 +1127,7 @@ pub enum StatementKind {
     Assert(Assert),
     Delete(Delete),
     Error(Error),
-    Session(Session),
-    Saved(Saved),
-    Local(Local),
+    VariableDecl(Variable),
     Assign(AssignStatement),
     AssignOp(AssignOpStatement),
     Expression(ExpressionStatement),
@@ -1067,9 +1156,7 @@ impl DeclarationSpan for StatementKind {
             StatementKind::Assert(stmnt) => stmnt.span(),
             StatementKind::Error(stmnt) => stmnt.span(),
             StatementKind::Delete(stmnt) => stmnt.span(),
-            StatementKind::Session(stmnt) => stmnt.span(),
-            StatementKind::Saved(stmnt) => stmnt.span(),
-            StatementKind::Local(stmnt) => stmnt.span(),
+            StatementKind::VariableDecl(stmnt) => stmnt.span(),
             StatementKind::Assign(stmnt) => stmnt.span(),
             StatementKind::AssignOp(stmnt) => stmnt.span(),
             StatementKind::Expression(stmnt) => stmnt.span(),
@@ -1081,7 +1168,20 @@ impl DeclarationSpan for StatementKind {
 
 impl SymbolContainer for StatementKind {
     fn symbols(&self) -> Vec<&dyn StructureSymbol> {
-        vec![]
+        match self {
+            StatementKind::ForEach(stmnt) => stmnt.symbols(),
+            StatementKind::HashIf(stmnt) => stmnt.symbols(),
+            StatementKind::If(stmnt) => stmnt.symbols(),
+            StatementKind::Switch(stmnt) => stmnt.symbols(),
+            StatementKind::While(stmnt) => stmnt.symbols(),
+            StatementKind::For(stmnt) => stmnt.symbols(),
+            StatementKind::DoWhile(stmnt) => stmnt.symbols(),
+            StatementKind::HashSelect(stmnt) => stmnt.symbols(),
+            StatementKind::TryCatch(stmnt) => stmnt.symbols(),
+            StatementKind::VariableDecl(stmnt) => stmnt.symbols(),
+            StatementKind::Compound(stmnt) => stmnt.symbols(),
+            _ => vec![],
+        }
     }
 }
 

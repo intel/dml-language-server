@@ -18,7 +18,7 @@ use crate::analysis::parsing::expression::{Expression,
                                            MemberLiteralContent,
                                            ExpressionContent,
                                            ParenExpressionContent};
-use crate::analysis::parsing::misc::{Initializer, InitializerContent, CDecl,
+use crate::analysis::parsing::misc::{Initializer, InitializerContent,
                                      SingleInitializerContent,
                                      ident_filter, objident_filter};
 use crate::analysis::parsing::structure::{parse_vardecl, VarDecl};
@@ -661,28 +661,28 @@ impl TreeElement for ForPostElement {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ForPre {
-    Local(LeafToken, CDecl, Option<(LeafToken, Initializer)>),
+    Declaration(LeafToken, VarDecl, Option<(LeafToken, Initializer)>),
     Post(ForPost),
 }
 
 impl TreeElement for ForPre {
     fn range(&self) -> ZeroRange {
         match self {
-            Self::Local(loc, cdecl, init) =>
-                Range::combine(Range::combine(loc.range(), cdecl.range()),
+            Self::Declaration(loc, vardecls, init) =>
+                Range::combine(Range::combine(loc.range(), vardecls.range()),
                                init.range()),
             Self::Post(forpost) => forpost.range(),
         }
     }
     fn subs(&self) -> TreeElements<'_> {
         match self {
-            Self::Local(loc, cdecl, init) =>
-                create_subs!(loc, cdecl, init),
+            Self::Declaration(loc, vardecls, init) =>
+                create_subs!(loc, vardecls, init),
             Self::Post(forpost) => create_subs!(forpost),
         }
     }
     fn post_parse_sanity(&self, _file: &TextFile) -> Vec<LocalDMLError> {
-        if let ForPre::Local(_, cdecl, _) = self {
+        if let ForPre::Declaration(_, cdecl, _) = self {
             cdecl.ensure_named()
         } else {
             vec![]
@@ -814,18 +814,19 @@ fn parse_forpost(context: &ParseContext, stream: &mut FileParser<'_>, file_info:
 fn parse_forpre(context: &ParseContext, stream: &mut FileParser<'_>, file_info: &FileInfo) -> ForPre {
     let mut new_context = context.enter_context(doesnt_understand_tokens);
     match new_context.peek_kind(stream) {
-        Some(TokenKind::Local) => {
-            let local = new_context.expect_next_kind(stream, TokenKind::Local);
-            let decl = CDecl::parse(&new_context, stream, file_info);
+        Some(TokenKind::Local | TokenKind::Saved | TokenKind::Session) => {
+            let decl_kind = new_context.next_leaf(stream);
+            let decls = parse_vardecl(&new_context, stream, file_info);
             let initializer = match new_context.peek_kind(stream) {
                 Some(TokenKind::Assign) => {
-                    let assign = new_context.next_leaf(stream);
-                    let init = Initializer::parse(&new_context, stream, file_info);
-                    Some((assign, init))
+                    let equals = new_context.next_leaf(stream);
+                    let init = Initializer::parse(
+                        &new_context, stream, file_info);
+                    Some((equals, init))
                 },
-                _ => None
+                _ => None,
             };
-            ForPre::Local(local, decl, initializer)
+            ForPre::Declaration(decl_kind, decls, initializer)
         },
         _ => ForPre::Post(parse_forpost(&new_context, stream, file_info)),
     }
