@@ -1233,7 +1233,13 @@ impl DeviceAnalysis {
         {
             if let Some(cached_result) = reference_cache.lock().unwrap()
                 .get(index_key.clone()) {
-                    return cached_result.clone();
+                    // TODO: Caching currently does not work for references
+                    // within method bodies, as the same reference in different
+                    // locations may have different scopes
+                    if !context_chain.last().unwrap().kind()
+                        .map_or(false, |k|k == DMLSymbolKind::Method) {
+                            return cached_result.clone();
+                        }
                 }
         }
 
