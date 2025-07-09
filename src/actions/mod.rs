@@ -1375,18 +1375,24 @@ fn find_word_at_pos(line: &str, pos: Column) -> (Column, Column) {
 // /// Client file-watching request / filtering logic
 #[derive(Debug, Clone)]
 pub struct FileWatch {
-    file_path: PathBuf,
+    file_paths: Vec<PathBuf>,
 }
 
 impl FileWatch {
     /// Construct a new `FileWatch`.
     pub fn new<O: Output>(ctx: &InitActionContext<O>) -> Option<Self> {
+        let mut file_paths = vec![];
         match ctx.config.lock() {
             Ok(config) => {
-                config.compile_info_path.as_ref().map(
-                    |c| FileWatch {
-                        file_path: c.clone()
-                    })
+                if let Some(compile_info) = config.compile_info_path.as_ref() {
+                    file_paths.push(compile_info.clone());
+                }
+                if let Some(lint_cfg_path) = config.lint_cfg_path.as_ref() {
+                    file_paths.push(lint_cfg_path.clone());
+                }
+                Some(FileWatch {
+                    file_paths,
+                })
             },
             Err(e) => {
                 error!("Unable to access configuration: {:?}", e);
@@ -1403,7 +1409,9 @@ impl FileWatch {
     fn relevant_change_kind(&self, change_uri: &Uri,
                             _kind: FileChangeType) -> bool {
         let path = change_uri.as_str();
-        self.file_path.to_str().map_or(false, |fp|fp == path)
+        self.file_paths.iter()
+            .filter_map(|p|p.to_str())
+            .any(|our_path|our_path == path)
     }
 
     #[inline]
@@ -1430,8 +1438,10 @@ impl FileWatch {
                                 kind: Some(kind) }
         }
 
-        let watchers = vec![watcher(
-            self.file_path.to_string_lossy().to_string())];
+        let watchers: Vec<_> = self.file_paths.iter()
+            .map(|p|p.to_string_lossy().to_string())
+            .map(watcher)
+            .collect();
         let watchers = DidChangeWatchedFilesRegistrationOptions {
             watchers,
         };
