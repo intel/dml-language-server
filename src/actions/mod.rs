@@ -16,6 +16,10 @@ use std::fs;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
+use lsp_types::notification::{DidChangeWatchedFiles};
+use lsp_types::request::{RegisterCapability, UnregisterCapability};
+use lsp_types::Unregistration;
+
 use crate::actions::analysis_storage::AnalysisStorage;
 use crate::actions::analysis_queue::AnalysisQueue;
 use crate::actions::progress::{AnalysisProgressNotifier,
@@ -32,6 +36,7 @@ use crate::lint::{LintCfg, maybe_parse_lint_cfg};
 use crate::lsp_data;
 use crate::lsp_data::*;
 use crate::lsp_data::ls_util::{dls_to_range, dls_to_location};
+
 use crate::server::{Output, ServerToHandle, error_message,
                     Request, RequestId, SentRequest};
 use crate::server::message::RawResponse;
@@ -255,6 +260,7 @@ pub struct InitActionContext<O: Output> {
 
     pub config: Arc<Mutex<Config>>,
     pub lint_config: Arc<Mutex<LintCfg>>,
+    pub active_watch: Arc<Mutex<Option<FileWatch>>>,
     pub sent_warnings: Arc<Mutex<HashSet<(u64, PathBuf)>>>,
     jobs: Arc<Mutex<Jobs>>,
     pub client_capabilities: Arc<lsp_data::ClientCapabilities>,
@@ -358,6 +364,7 @@ impl <O: Output> InitActionContext<O> {
             quiescent: Arc::new(AtomicBool::new(false)),
             prev_changes: Arc::default(),
             client_capabilities: Arc::new(client_capabilities),
+            active_watch: Arc::default(),
             has_notified_missing_builtins: false,
             //client_supports_cmd_run,
             active_waits: Arc::default(),
@@ -688,6 +695,49 @@ impl <O: Output> InitActionContext<O> {
                 }
                 self.report_errors(out);
             },
+        }
+        self.update_file_watchers(out);
+    }
+
+
+    const WATCH_ID: &str = "dls-watch";
+    pub fn update_file_watchers(&self, out: &O) {
+        if self.active_watch.lock().unwrap().take().is_some() {
+            self.send_request::<UnregisterCapability>(
+                UnregistrationParams {
+                    unregisterations: vec![Unregistration {
+                        id: Self::WATCH_ID.to_string(),
+                        method: <DidChangeWatchedFiles
+                            as LSPNotification>::METHOD
+                            .to_string(),
+                    }]
+                },
+                out);
+        } else {
+            self.register_new_watchers(out);
+        }
+    }
+
+    pub fn register_new_watchers(&self, out: &O) {
+        let mut watchers = self.active_watch.lock().unwrap();
+        if let Some(previous) = watchers.take() {
+            error!("Wanted to register new watchers, but the previous ones \
+                    were not cleared. (were: {:?})", previous);
+        }
+        *watchers = FileWatch::new(self);
+        if let Some(watchers_spec) = watchers.as_ref() {
+            let reg_params = RegistrationParams {
+                registrations: vec![Registration {
+                    id: Self::WATCH_ID.to_string(),
+                    method: <DidChangeWatchedFiles as LSPNotification>
+                        ::METHOD.to_string(),
+                    register_options: Some(watchers_spec.watchers_config()),
+                }],
+            };
+            self.send_request::<RegisterCapability>(reg_params, out);
+        } else {
+            error!("Failed to register file watchers with config: {:?}",
+                   self.config.lock().unwrap());
         }
     }
 
@@ -1323,6 +1373,7 @@ fn find_word_at_pos(line: &str, pos: Column) -> (Column, Column) {
 }
 
 // /// Client file-watching request / filtering logic
+#[derive(Debug, Clone)]
 pub struct FileWatch {
     file_path: PathBuf,
 }
@@ -1381,7 +1432,9 @@ impl FileWatch {
 
         let watchers = vec![watcher(
             self.file_path.to_string_lossy().to_string())];
-
-        json!({ "watchers": watchers })
+        let watchers = DidChangeWatchedFilesRegistrationOptions {
+            watchers,
+        };
+        json!(watchers)
     }
 }
