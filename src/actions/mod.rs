@@ -1429,12 +1429,12 @@ impl FileWatch {
     /// Returns json config for desired file watches
     pub fn watchers_config(&self) -> serde_json::Value {
         fn watcher(pat: String) -> FileSystemWatcher {
-            FileSystemWatcher { glob_pattern: GlobPattern::String(pat),
+            FileSystemWatcher { glob_pattern: GlobPattern::Relative(pat),
                                 kind: None }
         }
         fn _watcher_with_kind(pat: String, kind: WatchKind)
                              -> FileSystemWatcher {
-            FileSystemWatcher { glob_pattern: GlobPattern::String(pat),
+            FileSystemWatcher { glob_pattern: GlobPattern::Relative(pat),
                                 kind: Some(kind) }
         }
 
