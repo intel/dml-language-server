@@ -1372,26 +1372,90 @@ fn find_word_at_pos(line: &str, pos: Column) -> (Column, Column) {
     (span::Column::new_zero_indexed(start), span::Column::new_zero_indexed(end))
 }
 
+#[derive(Debug, Clone)]
+pub struct FileWatchSpec {
+    full: CanonPath,
+    base: WorkspaceFolder,
+    relative: String,
+}
+
 // /// Client file-watching request / filtering logic
 #[derive(Debug, Clone)]
 pub struct FileWatch {
-    file_paths: Vec<PathBuf>,
+    file_paths: Vec<FileWatchSpec>,
 }
 
 impl FileWatch {
     /// Construct a new `FileWatch`.
     pub fn new<O: Output>(ctx: &InitActionContext<O>) -> Option<Self> {
-        let mut file_paths = vec![];
+        let mut file_paths: HashMap<CanonPath, bool> = HashMap::default();
         match ctx.config.lock() {
             Ok(config) => {
                 if let Some(compile_info) = config.compile_info_path.as_ref() {
-                    file_paths.push(compile_info.clone());
+                    if let Some(canon_path) =
+                        CanonPath::from_path_buf(compile_info.clone()) {
+                            file_paths.insert(canon_path, false);
+                        } else {
+                            error!("Could not watch compilation info {:?}, \
+                                    not a canonizable path", compile_info);
+                        }
                 }
                 if let Some(lint_cfg_path) = config.lint_cfg_path.as_ref() {
-                    file_paths.push(lint_cfg_path.clone());
+                    if let Some(canon_path) =
+                        CanonPath::from_path_buf(lint_cfg_path.clone()) {
+                            file_paths.insert(canon_path, false);
+                        } else {
+                            error!("Could not watch lint config path {:?}, \
+                                    not a canonizable path", lint_cfg_path);
+                        }
+                }
+                fn path_to_relative(path: CanonPath,
+                                    roots: &Vec<Workspace>,
+                                    hit_paths: &mut HashMap<CanonPath,
+                                                            bool>)
+                                    -> Option<Vec<FileWatchSpec>> {
+                    let mut globs = vec![];
+                    for root in roots {
+                        let root_path =
+                            parse_file_path!(&root.uri, "workspace").ok()?;
+                        let root_canon_path =
+                            CanonPath::from_path_buf(root_path)?;
+                        info!("watch {:?} under {:?}", path, root);
+                        if let Ok(relative_path) = path
+                            .strip_prefix(root_canon_path.as_path()) {
+                                hit_paths.insert(path.clone(),  true);
+                                globs.push(
+                                    FileWatchSpec {
+                                        full: root_canon_path,
+                                        base: root.clone(),
+                                        relative: relative_path
+                                            .to_string_lossy().to_string(),
+                                    }
+                                );
+                            }
+                    }
+                    Some(globs)
+                }
+
+                let watch_paths: Vec<_> = {
+                    let lock_workspaces = ctx.workspace_roots.lock().unwrap();
+                    file_paths.keys().cloned()
+                        .collect::<Vec<_>>().into_iter()
+                        .flat_map(|post_path|path_to_relative(
+                            post_path,
+                            &lock_workspaces,
+                            &mut file_paths))
+                        .flatten()
+                        .collect()
+                };
+                for (path, watched) in &file_paths {
+                    if !watched {
+                        error!("Could not watch {:?}, not under any \
+                                workspace root", path);
+                    }
                 }
                 Some(FileWatch {
-                    file_paths,
+                    file_paths: watch_paths,
                 })
             },
             Err(e) => {
@@ -1403,14 +1467,12 @@ impl FileWatch {
 
     /// Returns if a file change is relevant to the files we
     /// actually wanted to watch
-    /// Implementation note: This is expected to be called a
-    /// large number of times in a loop so should be fast / avoid allocation.
     #[inline]
     fn relevant_change_kind(&self, change_uri: &Uri,
                             _kind: FileChangeType) -> bool {
         let path = change_uri.as_str();
         self.file_paths.iter()
-            .filter_map(|p|p.to_str())
+            .filter_map(|ws|ws.full.to_str())
             .any(|our_path|our_path == path)
     }
 
@@ -1428,19 +1490,20 @@ impl FileWatch {
 
     /// Returns json config for desired file watches
     pub fn watchers_config(&self) -> serde_json::Value {
-        fn watcher(pat: String) -> FileSystemWatcher {
-            FileSystemWatcher { glob_pattern: GlobPattern::Relative(pat),
-                                kind: None }
-        }
-        fn _watcher_with_kind(pat: String, kind: WatchKind)
-                             -> FileSystemWatcher {
-            FileSystemWatcher { glob_pattern: GlobPattern::Relative(pat),
-                                kind: Some(kind) }
+        fn watcher(base: WorkspaceFolder, pat: String) -> FileSystemWatcher {
+            FileSystemWatcher {
+                glob_pattern: GlobPattern::Relative(
+                    RelativePattern {
+                        base_uri: OneOf::Left(base),
+                        pattern: "./".to_string() + &pat,
+                    }),
+                kind: Some(WatchKind::all()),
+            }
         }
 
         let watchers: Vec<_> = self.file_paths.iter()
-            .map(|p|p.to_string_lossy().to_string())
-            .map(watcher)
+            .map(|ws|watcher(ws.base.clone(),
+                             ws.relative.clone()))
             .collect();
         let watchers = DidChangeWatchedFilesRegistrationOptions {
             watchers,

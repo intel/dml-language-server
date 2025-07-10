@@ -56,6 +56,9 @@ impl CanonPath {
     pub fn as_path(&self) -> &Path {
         self.0.as_path()
     }
+    pub fn as_path_buf(self) -> PathBuf {
+        self.0
+    }
 }
 
 /// This is how we resolve relative paths to in-workspace full paths
