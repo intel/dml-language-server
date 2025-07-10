@@ -54,19 +54,7 @@ impl BlockingNotificationAction for Initialized {
                 };
                 ctx.send_request::<RegisterCapability>(reg_params, &out);
             }
-
-        // Register files we watch for changes based on config
-        const WATCH_ID: &str = "dls-watch";
-        let reg_params = RegistrationParams {
-            registrations: vec![Registration {
-                id: WATCH_ID.to_owned(),
-                method: <DidChangeWatchedFiles as LSPNotification>
-                    ::METHOD.to_owned(),
-                register_options: FileWatch::new(ctx).map(
-                    |fw|fw.watchers_config()),
-            }],
-        };
-        ctx.send_request::<RegisterCapability>(reg_params, &out);
+        ctx.update_file_watchers(&out);
         Ok(())
     }
 }
