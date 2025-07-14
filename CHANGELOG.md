@@ -6,6 +6,7 @@
 
 ## 0.9.12
 - Diagnostics sent from the server will now indicate their source as 'dml' or 'dml-lint'
+- Linting warnings can now annotate their messages with which linting rule enforces it. You can turn this off by setting 'annotate_lints' to 'false' in your lint config file.
 
 ## 0.9.11
 - Fixed deadlock when a configuration update happens

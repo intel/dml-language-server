@@ -12,5 +12,6 @@
     "indent_closing_brace": {},
     "indent_paren_expr": {},
     "indent_switch_case": {},
-    "indent_empty_loop": {}
+    "indent_empty_loop": {},
+    "annotate_lints": true
 }
