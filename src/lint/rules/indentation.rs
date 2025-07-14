@@ -75,7 +75,7 @@ impl Rule for LongLinesRule {
         "LONG_LINE"
     }
     fn description() -> &'static str {
-        "Line length is above the threshold"
+        "Line length is above the threshold."
     }
     fn get_rule_type() -> RuleType {
         RuleType::LL1
@@ -223,8 +223,8 @@ impl Rule for IndentCodeBlockRule {
         "INDENT_CODE_BLOCK"
     }
     fn description() -> &'static str {
-        "Previous line contains an openning brace and current line is not one\
-         level of indentation ahead of past line"
+        "Previous line contains an opening brace and current line is not one \
+         level of indentation ahead of past line."
     }
     fn get_rule_type() -> RuleType {
         RuleType::IN3
@@ -512,7 +512,7 @@ impl Rule for IndentParenExprRule {
         "INDENT_PAREN_EXPR"
     }
     fn description() -> &'static str {
-        "Continuation line broken inside a parenthesized expression not\
+        "Continuation line broken inside a parenthesized expression not \
          indented to line up with the corresponding parenthesis."
     }
     fn get_rule_type() -> RuleType {
@@ -683,7 +683,7 @@ impl Rule for IndentEmptyLoopRule {
     }
     fn description() -> &'static str {
         "When the body of a while or for loop is left empty, \
-        indent the semicolon to the appropriate statement level"
+        indent the semicolon to the appropriate statement level."
     }
     fn get_rule_type() -> RuleType {
         RuleType::IN10

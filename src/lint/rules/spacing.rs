@@ -118,7 +118,7 @@ impl Rule for SpBracesRule {
         "SP_BRACE"
     }
     fn description() -> &'static str {
-        "Missing space around brace"
+        "Missing space around brace."
     }
     fn get_rule_type() -> RuleType {
         RuleType::SpBraces
@@ -262,7 +262,7 @@ impl Rule for SpPunctRule {
         "SP_PUNCT"
     }
     fn description() -> &'static str {
-        "Missing space after punctuation mark"
+        "Missing space after punctuation mark."
     }
     fn get_rule_type() -> RuleType {
         RuleType::SpPunct
@@ -413,7 +413,7 @@ impl Rule for NspInparenRule {
         "NSP_INPAREN"
     }
     fn description() -> &'static str {
-        "There should be no space after opening or before closing () / []"
+        "There should be no space after opening or before closing () / []."
     }
     fn get_rule_type() -> RuleType {
         RuleType::NspInparen
@@ -463,7 +463,7 @@ impl Rule for NspUnaryRule {
         "NSP_UNARY"
     }
     fn description() -> &'static str {
-        "There should be no space between unary operator and its operand"
+        "There should be no space between unary operator and its operand."
     }
     fn get_rule_type() -> RuleType {
         RuleType::NspUnary
@@ -495,7 +495,7 @@ impl Rule for NspTrailingRule {
         "NSP_TRAILING"
     }
     fn description() -> &'static str {
-        "Found trailing whitespace on row"
+        "Found trailing whitespace on row."
     }
     fn get_rule_type() -> RuleType {
         RuleType::NspTrailing
