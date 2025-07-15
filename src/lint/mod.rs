@@ -131,7 +131,7 @@ impl LinterAnalysis {
         debug!("local linting for: {:?}", path);
         let canonpath: CanonPath = path.into();
         let rules =  instantiate_rules(&cfg);
-        let local_lint_errors = begin_style_check(original_analysis.ast, file.text, &rules)?;
+        let local_lint_errors = begin_style_check(original_analysis.ast, &file.text, &rules)?;
         let mut lint_errors = vec![];
         for entry in local_lint_errors {
             let ident = entry.rule_ident;
@@ -153,7 +153,7 @@ impl LinterAnalysis {
     }
 }
 
-pub fn begin_style_check(ast: TopAst, file: String, rules: &CurrentRules) -> Result<Vec<DMLStyleError>, Error> {
+pub fn begin_style_check(ast: TopAst, file: &str, rules: &CurrentRules) -> Result<Vec<DMLStyleError>, Error> {
     let mut linting_errors: Vec<DMLStyleError> = vec![];
     ast.style_check(&mut linting_errors, rules, AuxParams { depth: 0 });
 
@@ -275,7 +275,7 @@ pub mod tests {
         let ast = create_ast_from_snippet(SOURCE);
         let cfg = LintCfg::default();
         let rules = instantiate_rules(&cfg);
-        let _lint_errors = begin_style_check(ast, SOURCE.to_string(), &rules);
+        let _lint_errors = begin_style_check(ast, SOURCE, &rules);
         assert!(_lint_errors.is_ok());
         assert!(!_lint_errors.unwrap().is_empty());
     }
