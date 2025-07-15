@@ -155,7 +155,7 @@ impl LinterAnalysis {
 
 pub fn begin_style_check(ast: TopAst, file: String, rules: &CurrentRules) -> Result<Vec<DMLStyleError>, Error> {
     let mut linting_errors: Vec<DMLStyleError> = vec![];
-    ast.style_check(&mut linting_errors, rules, AuxParams { depth: 0 });      
+    ast.style_check(&mut linting_errors, rules, AuxParams { depth: 0 });
 
     // Per line checks
     let lines: Vec<&str> = file.lines().collect();
@@ -208,7 +208,7 @@ pub mod tests {
     dml 1.4;
 
     bank sb_cr {
-        group monitor {    
+        group monitor {
 
             register MKTME_KEYID_MASK {
                 method get() -> (uint64) {
@@ -230,7 +230,7 @@ pub mod tests {
                 }
             }
         }
-    }   
+    }
 
     /*
         This is ONEEEE VEEEEEERY LLOOOOOOONG COOOMMMEENTT ON A SINGLEEEE LINEEEEEEEEEEEEEE
