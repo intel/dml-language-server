@@ -1,4 +1,4 @@
 #[macro_use]
-mod common;
+pub mod common;
 mod indentation;
 mod spacing;
