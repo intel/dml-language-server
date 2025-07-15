@@ -628,7 +628,7 @@ impl IndentEmptyLoopArgs {
                 semicolon_range: semicolon.range(),
                 expected_depth: depth + 1
             });
-            
+
         }
         None
     }
@@ -640,7 +640,7 @@ impl IndentEmptyLoopArgs {
                 semicolon_range: semicolon.range(),
                 expected_depth: depth + 1
             });
-            
+
         }
         None
     }
