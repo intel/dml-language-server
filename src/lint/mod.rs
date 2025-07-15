@@ -268,15 +268,14 @@ pub mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_main() {
         use crate::lint::{begin_style_check, LintCfg};
         use crate::lint::rules:: instantiate_rules;
         let ast = create_ast_from_snippet(SOURCE);
         let cfg = LintCfg::default();
         let rules = instantiate_rules(&cfg);
-        let _lint_errors = begin_style_check(ast, SOURCE, &rules);
-        assert!(_lint_errors.is_ok());
-        assert!(!_lint_errors.unwrap().is_empty());
+        let lint_errors = begin_style_check(ast, SOURCE, &rules);
+        assert!(lint_errors.is_ok());
+        assert!(!lint_errors.unwrap().is_empty());
     }
 }
