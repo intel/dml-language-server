@@ -62,7 +62,7 @@ pub trait Rule {
     }
 }
 
-#[derive(PartialEq, Debug, Clone, Eq, Hash)]
+#[derive(Copy, PartialEq, Debug, Clone, Eq, Hash)]
 pub enum RuleType {
     SpBraces,
     SpPunct,
@@ -77,5 +77,41 @@ pub enum RuleType {
     IN5,
     IN6,
     IN9,
-    IN10
+    IN10,
+    Configuration,
+}
+
+impl RuleType {
+    pub fn from_str(val: &str) -> Option<RuleType> {
+        macro_rules! get_rule_type {
+            ($v: expr, $rule_class: ty) => {
+                if <$rule_class>::name() == $v {
+                    Some(<$rule_class>::get_rule_type())
+                } else {
+                    None
+                }
+            };
+            ($v: expr, $rule_class: ty, $($remain_classes:ty),+) => {
+                if <$rule_class>::name() == $v {
+                    Some(<$rule_class>::get_rule_type())
+                } else {
+                    get_rule_type!($v, $($remain_classes),+)
+                }
+            };
+        }
+        get_rule_type!(val,
+                       LongLinesRule,
+                       IndentNoTabRule,
+                       IndentCodeBlockRule,
+                       IndentClosingBraceRule,
+                       IndentParenExprRule,
+                       IndentSwitchCaseRule,
+                       IndentEmptyLoopRule,
+                       SpBracesRule,
+                       SpPunctRule,
+                       NspFunparRule,
+                       NspInparenRule,
+                       NspUnaryRule,
+                       NspTrailingRule)
+    }
 }
