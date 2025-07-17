@@ -72,7 +72,7 @@ impl LongLinesRule {
 }
 impl Rule for LongLinesRule {
     fn name() -> &'static str {
-        "LONG_LINE"
+        "long_lines"
     }
     fn description() -> &'static str {
         "Line length is above the threshold."
@@ -109,7 +109,7 @@ impl IndentNoTabRule {
 }
 impl Rule for IndentNoTabRule {
     fn name() -> &'static str {
-        "INDENT_NO_TABS"
+        "indent_no_tabs"
     }
     fn description() -> &'static str {
         "Tab characters (ASCII 9) should never be used to indent lines."
@@ -220,7 +220,7 @@ impl IndentCodeBlockRule {
 
 impl Rule for IndentCodeBlockRule {
     fn name() -> &'static str {
-        "INDENT_CODE_BLOCK"
+        "indent_code_block"
     }
     fn description() -> &'static str {
         "Previous line contains an opening brace and current line is not one \
@@ -244,7 +244,7 @@ pub struct IndentClosingBraceOptions {
 
 impl Rule for IndentClosingBraceRule {
     fn name() -> &'static str {
-        "INDENT_CLOSING_BRACE"
+        "indent_closing_brace"
     }
     fn description() -> &'static str {
         "Closing braces at the beginning of a line should be aligned to the corresponding \
@@ -509,7 +509,7 @@ impl IndentParenExprRule {
 
 impl Rule for IndentParenExprRule {
     fn name() -> &'static str {
-        "INDENT_PAREN_EXPR"
+        "indent_paren_expr"
     }
     fn description() -> &'static str {
         "Continuation line broken inside a parenthesized expression not \
@@ -591,7 +591,7 @@ impl IndentSwitchCaseRule {
 
 impl Rule for IndentSwitchCaseRule {
     fn name() -> &'static str {
-        "IndentSwitchCase"
+        "indent_switch_case"
     }
     fn description() -> &'static str {
         "Case labels should be indented at the same level as the switch keyword, \
@@ -679,7 +679,7 @@ impl IndentEmptyLoopRule {
 
 impl Rule for IndentEmptyLoopRule {
     fn name() -> &'static str {
-        "IN10_INDENTATION_EMPTY_LOOP"
+        "indent_empty_loop"
     }
     fn description() -> &'static str {
         "When the body of a while or for loop is left empty, \
