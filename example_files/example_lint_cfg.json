@@ -1,6 +1,8 @@
 {
     "sp_brace": {},
     "sp_punct": {},
+    "sp_binop": {},
+    "sp_ternary" : {},
     "nsp_funpar": {},
     "nsp_inparen": {},
     "nsp_unary": {},

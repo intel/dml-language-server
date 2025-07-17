@@ -3,6 +3,8 @@
 Below are listed the currently supported rules for linting:
 
 ## Spacing
+- SpBinop, `sp_binop`: spaces around binary operators except for derefencing operators (dot `a.b` and arrow `a->b` )
+- SpTernary, `sp_ternary`: spaces around `?` and `:` in ternary conditional expressions
 - SpBraces, `sp_brace`: spaces around braces (`{` and `}`)
 - SpPunct, `sp_punct`: spaces after but not before colon, semicolon and comma
 - NspFunpar, `nsp_funpar`: no spaces between a function/method name and its opening parenthesis
