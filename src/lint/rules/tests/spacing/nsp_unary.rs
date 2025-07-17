@@ -4,7 +4,7 @@ use crate::lint::rules::RuleType;
 //  NSP.unary between a unary operator and its operand
 static NO_SPACE_UNARY_INCORRECT: &str = "
 method this_is_some_method(conf_object_t *dummy_obj) {
-    if(! dummy_obj)
+    if (! dummy_obj)
         return;
     local uint64 p = & dummy_obj;
     p ++;
@@ -17,7 +17,7 @@ fn no_space_unary_incorrect() {
     let mut rules = set_up();
     let expected_errors = define_expected_errors!(
         RuleType::NspUnary,
-        (2, 2, 8, 9),
+        (2, 2, 9, 10),
         (4, 4, 22, 23),
         (5, 5, 5, 6),
         (6, 6, 6, 7),
@@ -31,7 +31,7 @@ fn no_space_unary_incorrect() {
 
 static NO_SPACE_UNARY_CORRECT: &str = "
 method this_is_some_method(conf_object_t *dummy_obj) {
-    if(!dummy_obj)
+    if (!dummy_obj)
         return;
     local uint64 p = &dummy_obj;
     p++;

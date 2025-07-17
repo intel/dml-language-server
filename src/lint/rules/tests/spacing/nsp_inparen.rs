@@ -4,7 +4,7 @@ use crate::lint::rules::RuleType;
 //  NSP.inparen immediately inside parentheses or brackets
 static NO_SPACE_INPAREN_METHOD_FUNC_INDEX_INCORRECT: &str = "
 method this_is_some_method( conf_object_t *dummy_obj ) {
-    if( !dummy_obj[ 0 ] )
+    if ( !dummy_obj[ 0 ] )
         return;
 }
 ";
@@ -15,10 +15,10 @@ fn no_space_inparen_method_func_index_incorrect() {
         RuleType::NspInparen,
         (1, 1, 27, 28),
         (1, 1, 52, 53),
-        (2, 2, 7, 8),
-        (2, 2, 23, 24),
-        (2, 2, 19, 20),
-        (2, 2, 21, 22),
+        (2, 2, 8, 9),
+        (2, 2, 24, 25),
+        (2, 2, 20, 21),
+        (2, 2, 22, 23),
     );
     assert_snippet(NO_SPACE_INPAREN_METHOD_FUNC_INDEX_INCORRECT, expected_errors, &rules);
     // Test rule disable
@@ -29,7 +29,7 @@ fn no_space_inparen_method_func_index_incorrect() {
 //  NSP.inparen immediately inside parentheses or brackets
 static NO_SPACE_INPAREN_METHOD_FUNC_INDEX_CORRECT: &str = "
 method this_is_some_method(conf_object_t *dummy_obj) {
-    if(!dummy_obj[0])
+    if (!dummy_obj[0])
         return;
 }
 ";

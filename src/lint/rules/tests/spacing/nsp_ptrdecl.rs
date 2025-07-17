@@ -1,36 +1,9 @@
 use crate::lint::rules::tests::common::{set_up, assert_snippet};
 use crate::lint::rules::RuleType;
 
-#[allow(dead_code)]
 static NSP_PTRDECL_CORRECT: &str = "
 method this_is_some_method(conf_object_t *dummy_obj) {
-    if(!dummy_obj) {
-        return;
-    }
-}";
-
-#[allow(dead_code)]
-static NSP_PTRDECL_INCORRECT_PARAM: &str = "
-method this_is_some_method(conf_object_t * dummy_obj) {
-    if(!dummy_obj) {
-        return;
-    }
-}";
-
-#[allow(dead_code)]
-static NSP_PTRDECL_INCORRECT_STATEMENT: &str = "
-method this_is_some_method(conf_object_t *dummy_obj) {
-    local conf_object_t * conf = dummy_obj;
-    if(!conf) {
-        return;
-    }
-}";
-
-#[allow(dead_code)]
-static NSP_PTRDECL_MULTIPLE_POINTER_SYMBOLS: &str = "
-method this_is_some_method(conf_object_t **dummy_obj) {
-    local conf_object_t ** conf = dummy_obj;
-    if(!conf) {
+    if (!dummy_obj) {
         return;
     }
 }";
@@ -44,6 +17,13 @@ fn nsp_ptrdecl_correct() {
     assert_snippet(NSP_PTRDECL_CORRECT, vec![], &rules);
 }
 
+static NSP_PTRDECL_INCORRECT_PARAM: &str = "
+method this_is_some_method(conf_object_t * dummy_obj) {
+    if (!dummy_obj) {
+        return;
+    }
+}";
+
 #[test]
 fn nsp_ptrdcl_incorrect_param() {
     let mut rules = set_up();
@@ -56,6 +36,15 @@ fn nsp_ptrdcl_incorrect_param() {
     rules.nsp_ptrdecl.enabled = false;
     assert_snippet(NSP_PTRDECL_INCORRECT_PARAM, vec![], &rules);
 }
+
+static NSP_PTRDECL_INCORRECT_STATEMENT: &str = "
+method this_is_some_method(conf_object_t *dummy_obj) {
+    local conf_object_t * conf = dummy_obj;
+    if (!conf) {
+        return;
+    }
+}";
+
 #[test]
 fn nsp_ptrdecl_incorrect_statement() {
     let mut rules = set_up();
@@ -68,6 +57,14 @@ fn nsp_ptrdecl_incorrect_statement() {
     rules.nsp_ptrdecl.enabled = false;
     assert_snippet(NSP_PTRDECL_INCORRECT_STATEMENT, vec![], &rules);
 }
+
+static NSP_PTRDECL_MULTIPLE_POINTER_SYMBOLS: &str = "
+method this_is_some_method(conf_object_t **dummy_obj) {
+    local conf_object_t ** conf = dummy_obj;
+    if (!conf) {
+        return;
+    }
+}";
 
 #[test]
 fn nsp_ptrdecl_multiple_symbols() {
