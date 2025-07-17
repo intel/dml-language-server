@@ -5,7 +5,7 @@ use crate::lint::rules::RuleType;
 static SP_PUNCT_INCORRECT: &str = "
 method this_is_some_method(bool flag ,int8 var) {
     local int this_some_integer = 0x666 ;
-    if(this_some_integer == 0x666)
+    if (this_some_integer == 0x666)
         return;
     some_func(arg1 ,arg2 ,arg3 ,arg4);
 }
@@ -34,7 +34,7 @@ fn sp_punct_incorrect() {
 static SP_PUNCT_CORRECT: &str = "
 method this_is_some_method(bool flag, int8 var) {
     local int this_some_integer = 0x666;
-    if(this_some_integer == 0x666)
+    if (this_some_integer == 0x666)
         return;
     some_func(arg1, arg2, arg3, arg4);
 }

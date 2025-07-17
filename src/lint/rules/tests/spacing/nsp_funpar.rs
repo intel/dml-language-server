@@ -5,7 +5,7 @@ use crate::lint::rules::RuleType;
 //  NSP.funpar between a function/method name and its opening parenthesis
 static NO_SPACE_METHOD_FUNC_INCORRECT: &str = "
 method this_is_some_method (conf_object_t *dummy_obj) {
-    if(!dummy_obj)
+    if (!dummy_obj)
         other_method_called ();
 }
 ";
@@ -25,7 +25,7 @@ fn no_space_method_func_incorrect() {
 
 static NO_SPACE_METHOD_FUNC_CORRECT: &str = "
 method this_is_some_method(conf_object_t *dummy_obj) {
-    if(!dummy_obj)
+    if (!dummy_obj)
         other_method_called();
 }
 ";
