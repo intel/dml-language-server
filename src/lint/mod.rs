@@ -5,11 +5,11 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use lazy_static::lazy_static;
 use log::{debug, error, trace};
-use rules::spacing::{SpPtrDeclOptions, NspPtrDeclOptions};
 use serde::{Deserialize, Serialize};
 use regex::Regex;
 use rules::{instantiate_rules, CurrentRules, RuleType};
-use rules::{spacing::{SpBraceOptions, SpPunctOptions, NspFunparOptions,
+use rules::{spacing::{SpBraceOptions, SpPunctOptions, SpBinopOptions, NspFunparOptions,
+                      SpTernaryOptions, SpPtrDeclOptions, NspPtrDeclOptions,
                       NspInparenOptions, NspUnaryOptions, NspTrailingOptions},
                       indentation::{LongLineOptions, IndentSizeOptions, IndentCodeBlockOptions,
                                     IndentNoTabOptions, IndentClosingBraceOptions, IndentParenExprOptions, IndentSwitchCaseOptions, IndentEmptyLoopOptions},
@@ -63,6 +63,10 @@ pub struct LintCfg {
     pub sp_brace: Option<SpBraceOptions>,
     #[serde(default)]
     pub sp_punct: Option<SpPunctOptions>,
+    #[serde(default)]
+    pub sp_binop: Option<SpBinopOptions>,
+    #[serde(default)]
+    pub sp_ternary: Option<SpTernaryOptions>,
     #[serde(default)]
     pub sp_ptrdecl: Option<SpPtrDeclOptions>,
     #[serde(default)]
@@ -119,6 +123,8 @@ impl Default for LintCfg {
         LintCfg {
             sp_brace: Some(SpBraceOptions{}),
             sp_punct: Some(SpPunctOptions{}),
+            sp_binop: Some(SpBinopOptions{}),
+            sp_ternary: Some(SpTernaryOptions{}),
             sp_ptrdecl: Some(SpPtrDeclOptions{}),
             nsp_ptrdecl: Some(NspPtrDeclOptions{}),
             nsp_funpar: Some(NspFunparOptions{}),
