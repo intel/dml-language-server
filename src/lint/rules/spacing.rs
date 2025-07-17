@@ -115,10 +115,10 @@ impl SpBracesRule {
 
 impl Rule for SpBracesRule {
     fn name() -> &'static str {
-        "SP_BRACE"
+        "sp_brace"
     }
     fn description() -> &'static str {
-        "Missing space around brace"
+        "Missing space around brace."
     }
     fn get_rule_type() -> RuleType {
         RuleType::SpBraces
@@ -259,10 +259,10 @@ impl SpPunctRule {
 
 impl Rule for SpPunctRule {
     fn name() -> &'static str {
-        "SP_PUNCT"
+        "sp_punct"
     }
     fn description() -> &'static str {
-        "Missing space after punctuation mark"
+        "Missing space after punctuation mark."
     }
     fn get_rule_type() -> RuleType {
         RuleType::SpPunct
@@ -309,7 +309,7 @@ impl NspFunparRule {
 }
 impl Rule for NspFunparRule {
     fn name() -> &'static str {
-        "NSP_FUNPAR"
+        "nsp_funpar"
     }
     fn description() -> &'static str {
         "There should be no space between a method/function name and its opening parenthesis."
@@ -410,10 +410,10 @@ impl NspInparenRule {
 }
 impl Rule for NspInparenRule {
     fn name() -> &'static str {
-        "NSP_INPAREN"
+        "nsp_inparen"
     }
     fn description() -> &'static str {
-        "There should be no space after opening or before closing () / []"
+        "There should be no space after opening or before closing () / []."
     }
     fn get_rule_type() -> RuleType {
         RuleType::NspInparen
@@ -460,10 +460,10 @@ impl NspUnaryRule {
 }
 impl Rule for NspUnaryRule {
     fn name() -> &'static str {
-        "NSP_UNARY"
+        "nsp_unary"
     }
     fn description() -> &'static str {
-        "There should be no space between unary operator and its operand"
+        "There should be no space between unary operator and its operand."
     }
     fn get_rule_type() -> RuleType {
         RuleType::NspUnary
@@ -492,10 +492,10 @@ impl NspTrailingRule {
 }
 impl Rule for NspTrailingRule {
     fn name() -> &'static str {
-        "NSP_TRAILING"
+        "nsp_trailing"
     }
     fn description() -> &'static str {
-        "Found trailing whitespace on row"
+        "Found trailing whitespace on row."
     }
     fn get_rule_type() -> RuleType {
         RuleType::NspTrailing

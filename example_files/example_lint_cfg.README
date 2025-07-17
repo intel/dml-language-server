@@ -24,5 +24,6 @@
     "indent_size": { "indentation_spaces": 4 },
     "indent_tabs": {},
     "indent_code_block": {}
-    
+    // When not set to false, lints will report which rule enforce them
+    "annotate_lints": true,
 }
