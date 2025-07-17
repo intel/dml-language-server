@@ -114,7 +114,7 @@ impl SpReservedRule {
 
 impl Rule for SpReservedRule {
     fn name() -> &'static str {
-        "SP_RESERVED"
+        "sp_reserved"
     }
     fn description() -> &'static str {
         "Missing space around reserved words"
@@ -270,7 +270,7 @@ impl SpBinopRule {
 }
 impl Rule for SpBinopRule {
     fn name() -> &'static str {
-        "SP_BINOP"
+        "sp_binop"
     }
     fn description() -> &'static str {
         "Missing space around binary operator"
@@ -330,7 +330,7 @@ impl SpTernaryRule {
 }
 impl Rule for SpTernaryRule {
     fn name() -> &'static str {
-        "SP_TERNARY"
+        "sp_ternary"
     }
     fn description() -> &'static str {
         "Missing space around ? or : in conditional expression"
@@ -725,7 +725,7 @@ pub struct SpPtrDeclOptions {}
 
 impl Rule for SpPtrDeclRule {
     fn name() -> &'static str {
-        "SP_PTRDECL"
+        "sp_ptrdecl"
     }
     fn description() -> &'static str {
         "There should be a space between type and * marking a pointer"
@@ -815,7 +815,7 @@ impl NspPtrDeclArgs {
 
 impl Rule for NspPtrDeclRule {
     fn name() -> &'static str {
-        "NSP_PTRDECL"
+        "nsp_ptrdecl"
     }
     fn description() -> &'static str {
         "There should be no space after the * marking a pointer in a declaration"
