@@ -4,12 +4,23 @@ pub mod indentation;
 #[cfg(test)]
 pub mod tests;
 
-use spacing::{NspFunparRule, NspInparenRule, NspTrailingRule, NspUnaryRule, SpBracesRule, SpBinopRule, SpTernaryRule, SpPtrDeclRule, NspPtrDeclRule, SpPunctRule};
+use spacing::{NspFunparRule,
+              NspInparenRule,
+              NspTrailingRule,
+              NspUnaryRule,
+              SpBracesRule,
+              SpBinopRule,
+              SpTernaryRule,
+              SpPtrDeclRule,
+              NspPtrDeclRule,
+              SpPunctRule,
+              SpReservedRule};
 use indentation::{LongLinesRule, IndentNoTabRule, IndentCodeBlockRule, IndentClosingBraceRule, IndentParenExprRule, IndentSwitchCaseRule, IndentEmptyLoopRule};
 use crate::lint::{LintCfg, DMLStyleError};
 use crate::analysis::{LocalDMLError, parsing::tree::ZeroRange};
 
 pub struct CurrentRules {
+    pub sp_reserved: SpReservedRule,
     pub sp_brace: SpBracesRule,
     pub sp_punct: SpPunctRule,
     pub sp_binop: SpBinopRule,
@@ -31,6 +42,7 @@ pub struct CurrentRules {
 
 pub fn  instantiate_rules(cfg: &LintCfg) -> CurrentRules {
     CurrentRules {
+        sp_reserved: SpReservedRule { enabled: cfg.sp_reserved.is_some() },
         sp_brace: SpBracesRule { enabled: cfg.sp_brace.is_some() },
         sp_punct: SpPunctRule { enabled: cfg.sp_punct.is_some() },
         sp_binop: SpBinopRule { enabled: cfg.sp_binop.is_some() },
@@ -70,6 +82,7 @@ pub trait Rule {
 
 #[derive(Copy, PartialEq, Debug, Clone, Eq, Hash)]
 pub enum RuleType {
+    SpReserved,
     SpBraces,
     SpPunct,
     SpBinop,

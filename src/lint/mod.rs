@@ -8,11 +8,20 @@ use log::{debug, error, trace};
 use serde::{Deserialize, Serialize};
 use regex::Regex;
 use rules::{instantiate_rules, CurrentRules, RuleType};
-use rules::{spacing::{SpBraceOptions, SpPunctOptions, SpBinopOptions, NspFunparOptions,
-                      SpTernaryOptions, SpPtrDeclOptions, NspPtrDeclOptions,
-                      NspInparenOptions, NspUnaryOptions, NspTrailingOptions},
-                      indentation::{LongLineOptions, IndentSizeOptions, IndentCodeBlockOptions,
-                                    IndentNoTabOptions, IndentClosingBraceOptions, IndentParenExprOptions, IndentSwitchCaseOptions, IndentEmptyLoopOptions},
+use rules::{spacing::{SpReservedOptions,
+                      SpBraceOptions,
+                      SpPunctOptions,
+                      SpBinopOptions,
+                      NspFunparOptions,
+                      SpTernaryOptions,
+                      SpPtrDeclOptions,
+                      NspPtrDeclOptions,
+                      NspInparenOptions,
+                      NspUnaryOptions,
+                      NspTrailingOptions},
+            indentation::{LongLineOptions, IndentSizeOptions, IndentCodeBlockOptions,
+                          IndentNoTabOptions, IndentClosingBraceOptions, IndentParenExprOptions,
+                          IndentSwitchCaseOptions, IndentEmptyLoopOptions},
                     };
 use crate::analysis::{DMLError, IsolatedAnalysis, LocalDMLError, ZeroRange};
 use crate::analysis::parsing::tree::TreeElement;
@@ -59,6 +68,8 @@ pub fn maybe_parse_lint_cfg<O: Output>(path: PathBuf, out: &O) -> Option<LintCfg
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct LintCfg {
+    #[serde(default)]
+    pub sp_reserved: Option<SpReservedOptions>,
     #[serde(default)]
     pub sp_brace: Option<SpBraceOptions>,
     #[serde(default)]
@@ -121,6 +132,7 @@ fn get_true() -> bool {
 impl Default for LintCfg {
     fn default() -> LintCfg {
         LintCfg {
+            sp_reserved: Some(SpReservedOptions{}),
             sp_brace: Some(SpBraceOptions{}),
             sp_punct: Some(SpPunctOptions{}),
             sp_binop: Some(SpBinopOptions{}),
@@ -423,7 +435,13 @@ pub mod tests {
         let example_path = format!("{}{}",
                                    env!("CARGO_MANIFEST_DIR"),
                                    EXAMPLE_CFG);
+<<<<<<< HEAD
         let (example_cfg, unknowns) = parse_lint_cfg(example_path.into()).unwrap();
+=======
+        let example_cfg = parse_lint_cfg(example_path.into()).unwrap();
+        println!("Example LintCfg: {:#?}", example_cfg);
+        println!("LintCfg::default(): {:#?}", LintCfg::default());
+>>>>>>> 736fdc7 (Add SP Reserved spacing rule (#21))
         assert_eq!(example_cfg, LintCfg::default());
         // Assert that there are no unknown fields in the example config:
         assert!(unknowns.is_empty(), "Example config should not have unknown fields: {:?}", unknowns);

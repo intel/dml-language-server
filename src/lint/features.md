@@ -3,6 +3,7 @@
 Below are listed the currently supported rules for linting:
 
 ## Spacing
+- SpReserved, `sp_reserved`: around reserved words, such as `if`, `else`, `default`, `size`, `const` and `in`, except when a reserved word is used as an identifier (e.g., `local uint8 *data;`). Currently supported reserved words: `if`, `for` and `while`.
 - SpBinop, `sp_binop`: spaces around binary operators except for derefencing operators (dot `a.b` and arrow `a->b` )
 - SpTernary, `sp_ternary`: spaces around `?` and `:` in ternary conditional expressions
 - SpBraces, `sp_brace`: spaces around braces (`{` and `}`)
