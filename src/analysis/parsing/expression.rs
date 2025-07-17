@@ -21,6 +21,8 @@ use crate::lint::{DMLStyleError,
                   rules::{spacing::{NspFunparArgs,
                                     NspInparenArgs,
                                     NspUnaryArgs,
+                                    SpBinopArgs,
+                                    SpTernaryArgs,
                                     SpPunctArgs},
                                     CurrentRules},
                                     AuxParams};
@@ -92,6 +94,9 @@ impl TreeElement for BinaryExpressionContent {
     fn subs(&self) -> TreeElements<'_> {
         create_subs!(&self.left, &self.operation, &self.right)
     }
+    fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, _aux: AuxParams) {
+        rules.sp_binop.check(acc, SpBinopArgs::from_binary_expression_content(self));
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -150,6 +155,9 @@ impl TreeElement for TertiaryExpressionContent {
     fn subs(&self) -> TreeElements<'_> {
         create_subs!(&self.left, &self.left_operation,
                      &self.middle, &self.right_operation, &self.right)
+    }
+    fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, _aux: AuxParams) {
+        rules.sp_ternary.check(acc, SpTernaryArgs::from_tertiary_expression_content(self));
     }
 }
 
