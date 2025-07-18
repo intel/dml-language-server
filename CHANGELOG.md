@@ -10,6 +10,8 @@
 - Linting warnings can now annotate their messages with which linting rule enforces it. You can turn this off by setting 'annotate_lints' to 'false' in your lint config file
 - Minor fixes to the description of linting messages
 - Fixed an issue where diagnostics would sometime be reported within the wrong file
+- You can now annotate dml source to disable reporting of specific lints for specific files or lines,
+  see [USAGE.md](USAGE.md) for instructions on how to use it
 
 ## 0.9.11
 - Fixed deadlock when a configuration update happens

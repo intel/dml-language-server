@@ -9,7 +9,7 @@ editors, and other tools with information about DML device and common code.
 It currently supports basic syntax error reporting, symbol search,
 'goto-definition', 'goto-implementation', 'goto-reference', and 'goto-base'.
 It also has some basic configurable linting support, in the form of warning
-messages.
+messages. For user-targeted instructions, see [USAGE.md](USAGE.md).
 
 Future planned features are extended semantic and type analysis, basic
 refactoring patterns, improved language construct templates, renaming

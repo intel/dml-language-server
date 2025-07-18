@@ -31,10 +31,10 @@ macro_rules! define_expected_errors {
 pub fn run_linter(source_code: &str, rules: &CurrentRules)
     -> Result<Vec<DMLStyleError>, Error>
 {
-    print!("\nSnippet to test on:\n{}\n", source_code);
+    //print!("\nSnippet to test on:\n{}\n", source_code);
     let ast = create_ast_from_snippet(source_code);
-    print!("Resulting AST:\n{:#?}\n", ast);
-    begin_style_check(ast, source_code.to_string(), rules)
+    //print!("Resulting AST:\n{:#?}\n", ast);
+    begin_style_check(ast, source_code, rules)
 }
 
 pub fn assert_snippet(source_code: &str, expected_errors: usize, rules: &CurrentRules) {
