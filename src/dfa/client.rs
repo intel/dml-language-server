@@ -39,7 +39,7 @@ pub struct Diagnostic {
 impl From<lsp_types::Diagnostic> for Diagnostic {
     fn from(diag: lsp_types::Diagnostic) -> Diagnostic {
         Diagnostic {
-            line: diag.range.start.line,
+            line: diag.range.start.line + 1,
             desc: diag.message,
         }
     }
