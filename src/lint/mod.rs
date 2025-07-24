@@ -78,6 +78,12 @@ pub struct LintCfg {
     pub indent_continuation_line: Option<IndentContinuationLineOptions>,
     #[serde(default)]
     pub func_call_break_on_open_paren: Option<FuncCallBreakOnOpenParenOptions>,
+    #[serde(default = "get_true")]
+    pub annotate_lints: bool,
+}
+
+fn get_true() -> bool {
+    true
 }
 
 impl Default for LintCfg {
@@ -99,6 +105,7 @@ impl Default for LintCfg {
             indent_empty_loop: Some(IndentEmptyLoopOptions{indentation_spaces: INDENTATION_LEVEL_DEFAULT}),
             indent_continuation_line: Some(IndentContinuationLineOptions{indentation_spaces: INDENTATION_LEVEL_DEFAULT}),
             func_call_break_on_open_paren: Some(FuncCallBreakOnOpenParenOptions{indentation_spaces: INDENTATION_LEVEL_DEFAULT}),
+            annotate_lints: true,
         }
     }
 }
@@ -107,6 +114,7 @@ impl Default for LintCfg {
 #[derive(Debug, Clone)]
 pub struct DMLStyleError {
     pub error: LocalDMLError,
+    pub rule_ident: &'static str,
     pub rule_type: RuleType,
 }
 
@@ -134,7 +142,14 @@ impl LinterAnalysis {
         let local_lint_errors = begin_style_check(original_analysis.ast, file.text, &rules)?;
         let mut lint_errors = vec![];
         for entry in local_lint_errors {
-            lint_errors.push(entry.error.warning_with_file(path));
+            let ident = entry.rule_ident;
+            let mut local_err = entry.error.warning_with_file(path);
+            if cfg.annotate_lints {
+                local_err.description = format!("{}: {}",
+                                            ident,
+                                                local_err.description);
+            }
+            lint_errors.push(local_err);
         }
 
         let res = LinterAnalysis {

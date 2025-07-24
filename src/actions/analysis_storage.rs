@@ -725,7 +725,7 @@ impl AnalysisStorage {
             // Only report device errors if this analysis context is active
             if filter.map_or(true, |f|f.contains(&file.clone().into())) {
                 for (dfile, errors) in self.gather_device_errors(file) {
-                    device_errors.entry(file.clone().into())
+                    device_errors.entry(dfile.clone())
                     .or_default()
                     .extend(errors.into_iter());
                     if !self.has_client_file(&PathBuf::from("dml-builtins.dml")) {

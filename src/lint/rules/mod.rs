@@ -62,6 +62,7 @@ pub trait Rule {
                 range,
                 description: Self::description().to_string(),
             },
+            rule_ident: Self::name(),
             rule_type: Self::get_rule_type(),
         }
     }
@@ -85,4 +86,3 @@ pub enum RuleType {
     IN9,
     IN10
 }
-
