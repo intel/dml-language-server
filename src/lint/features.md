@@ -8,9 +8,11 @@ Below are listed the currently supported rules for linting:
 - SpTernary, `sp_ternary`: spaces around `?` and `:` in ternary conditional expressions
 - SpBraces, `sp_brace`: spaces around braces (`{` and `}`)
 - SpPunct, `sp_punct`: spaces after but not before colon, semicolon and comma
+- SpPtrDecl, `sp_ptrdecl`: spaces between a type and the `*` marking a pointer
 - NspFunpar, `nsp_funpar`: no spaces between a function/method name and its opening parenthesis
 - NspInparen, `nsp_inparen`: no spaces immediately inside parentheses or brackets
 - NspUnary, `nsp_unary`: no spaces between a unary operator and its operand
+- NspPtrDecl, `nsp_ptrdecl`: no spaces after the `*` marking a pointer in a declaration
 - NspTrailing, `nsp_trailing`: no spaces between the last token in a line and the corresponding newline `\n`
 
 ## Indentation
