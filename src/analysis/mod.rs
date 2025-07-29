@@ -314,13 +314,13 @@ pub struct IsolatedAnalysis {
     pub errors: Vec<DMLError>,
 }
 
-// Invariant: range covers all ranges in val
+// Invariant: range covers all ranges in sub_ranges
 #[derive(Debug, Clone)]
 pub struct RangeEntry {
     range: ZeroRange,
     symbols: HashMap<String, SymbolRef>,
-    // TODO: If this ends up not being naturally sorted by insertions,
-    // consider replacing with some sort of searchable structure
+    // TODO: Consider replacing with a spatial-search data-structure
+    // e.g. segment or interval tree
     sub_ranges: Vec<RangeEntry>,
 }
 
