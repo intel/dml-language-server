@@ -4,12 +4,14 @@ use std::sync::Arc;
 use lsp_types::DiagnosticSeverity;
 
 use crate::analysis::parsing::tree::ZeroSpan;
+use crate::analysis::symbols::{DMLSymbolKind, MakeSymbolContainer,
+                               StructureSymbol, SymbolContainer};
 use crate::analysis::structure::expressions::DMLString;
 use crate::analysis::structure::types::DMLType;
 use crate::analysis::structure::objects::{MaybeAbstract, MethodArgument,
                                           MethodModifier, Method};
 use crate::analysis::structure::statements::{Statement, StatementKind};
-use crate::analysis::{DMLNamed, DMLError};
+use crate::analysis::{DeclarationSpan, DMLNamed, DMLError};
 use crate::analysis::templating::Declaration;
 use crate::analysis::templating::objects::DMLNamedMember;
 use crate::analysis::templating::types::{eval_type_simple, DMLResolvedType};
@@ -19,6 +21,12 @@ use crate::analysis::templating::traits::{DMLTrait};
 pub enum DMLMethodArg {
     Typed(Declaration),
     Inline(DMLString),
+}
+
+impl StructureSymbol for DMLMethodArg {
+    fn kind(&self) -> DMLSymbolKind {
+        DMLSymbolKind::MethodArg
+    }
 }
 
 impl DMLNamed for DMLMethodArg {
@@ -116,6 +124,15 @@ pub struct MethodDecl {
     pub method_args: Vec<DMLMethodArg>,
     pub return_types: Vec<DMLResolvedType>,
     pub body: Statement,
+    pub span: ZeroSpan,
+}
+
+impl SymbolContainer for MethodDecl {
+    fn symbols(&self) -> Vec<&dyn StructureSymbol> {
+        let mut symbols = self.method_args.to_symbols();
+        symbols.append(&mut self.body.symbols());
+        symbols
+    }
 }
 
 impl MaybeAbstract for MethodDecl {
@@ -135,6 +152,12 @@ impl DMLNamedMember for MethodDecl {
 
     fn location(&self) -> &ZeroSpan {
         &self.name.span
+    }
+}
+
+impl DeclarationSpan for MethodDecl {
+    fn span(&self) -> &ZeroSpan {
+        &self.span
     }
 }
 
@@ -259,6 +282,7 @@ impl MethodDecl {
             throws: content.throws,
             method_args: eval_method_args(&content.arguments, report),
             return_types: eval_method_returns(&content.returns, report),
+            span: *content.span(),
         }
     }
 }
@@ -383,6 +407,15 @@ impl DMLNamedMember for DMLMethodRef {
     }
 }
 
+impl DeclarationSpan for DMLMethodRef {
+    fn span(&self) -> &ZeroSpan {
+        match self {
+            DMLMethodRef::TraitMethod(_, decl) => decl.span(),
+            DMLMethodRef::ConcreteMethod(decl) => decl.span(),
+        }
+    }
+ }
+
 // This is roughly equivalent with a non-codegenned method in DMLC
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DMLConcreteMethod {
@@ -447,5 +480,11 @@ impl MethodDeclaration for DMLConcreteMethod {
 impl MaybeAbstract for DMLConcreteMethod {
     fn is_abstract(&self) -> bool {
         self.decl.is_abstract()
+    }
+}
+
+impl DeclarationSpan for DMLConcreteMethod {
+    fn span(&self) -> &ZeroSpan {
+        self.decl.span()
     }
 }
