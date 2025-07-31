@@ -16,6 +16,8 @@
 - Added the ability to declare 'saved' or 'session' variables in for-loops
 - Added functionality for goto-def/decl/ref to or from variables declared
   within a function scope.
+- You can now annotate dml source to disable reporting of specific lints for specific files or lines,
+  see [USAGE.md](USAGE.md) for instructions on how to use it
 
 ## 0.9.11
 - Fixed deadlock when a configuration update happens
