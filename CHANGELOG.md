@@ -4,6 +4,8 @@
 -->
 # Change Log
 
+## 0.9.13
+
 ## 0.9.12
 - Added 'simics\_util\_vect' as a known provisional (with no DLS semantics)
 - Diagnostics sent from the server will now indicate their source as 'dml' or 'dml-lint'
