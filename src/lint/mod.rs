@@ -1,6 +1,8 @@
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::collections::HashMap;
+use serde_json::Value;
 use log::{debug, error, trace};
 use serde::{Deserialize, Serialize};
 use rules::{instantiate_rules, CurrentRules, RuleType};
@@ -31,6 +33,10 @@ pub fn parse_lint_cfg(path: PathBuf) -> Result<LintCfg, String> {
 pub fn maybe_parse_lint_cfg(path: PathBuf) -> Option<LintCfg> {
     match parse_lint_cfg(path) {
         Ok(mut cfg) => {
+            if !cfg.unknown_fields.is_empty() {
+                // Log the unknown fields as a comma-separated list
+                error!("Unknown lint config fields: {}", cfg.unknown_fields.keys().cloned().collect::<Vec<_>>().join(", "));
+            }
             setup_indentation_size(&mut cfg);
             Some(cfg)
         },
@@ -43,8 +49,9 @@ pub fn maybe_parse_lint_cfg(path: PathBuf) -> Option<LintCfg> {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
-#[serde(deny_unknown_fields)]
 pub struct LintCfg {
+    #[serde(flatten)]
+    pub unknown_fields: HashMap<String, Value>,
     #[serde(default)]
     pub sp_brace: Option<SpBraceOptions>,
     #[serde(default)]
@@ -84,6 +91,7 @@ fn get_true() -> bool {
 impl Default for LintCfg {
     fn default() -> LintCfg {
         LintCfg {
+            unknown_fields: HashMap::new(),
             sp_brace: Some(SpBraceOptions{}),
             sp_punct: Some(SpPunctOptions{}),
             nsp_funpar: Some(NspFunparOptions{}),
