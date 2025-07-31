@@ -22,19 +22,27 @@ use crate::lint::rules::indentation::{MAX_LENGTH_DEFAULT,
                                       INDENTATION_LEVEL_DEFAULT,
                                       setup_indentation_size
                                     };
+use crate::server::{maybe_notify_unknown_lint_fields, Output};                                    
 
-pub fn parse_lint_cfg(path: PathBuf) -> Result<LintCfg, String> {
+pub fn parse_lint_cfg(path: PathBuf) -> Result<(LintCfg, Vec<String>), String> {
     debug!("Reading Lint configuration from {:?}", path);
-    let file_content = fs::read_to_string(path).map_err(
-        |e|e.to_string())?;
+    let file_content = fs::read_to_string(path).map_err(|e| e.to_string())?;
     trace!("Content is {:?}", file_content);
-    serde_json::from_str(&file_content)
-        .map_err(|e|e.to_string())
+    
+    let val: serde_json::Value = serde_json::from_str(&file_content)
+        .map_err(|e| e.to_string())?;
+    
+    let mut unknowns = Vec::new();
+    let cfg = LintCfg::try_deserialize(&val, &mut unknowns)?;
+    
+    Ok((cfg, unknowns))
 }
 
-pub fn maybe_parse_lint_cfg(path: PathBuf) -> Option<LintCfg> {
+pub fn maybe_parse_lint_cfg<O: Output>(path: PathBuf, out: &O) -> Option<LintCfg> {
     match parse_lint_cfg(path) {
-        Ok(mut cfg) => {
+        Ok((mut cfg, unknowns)) => {
+            // Send visible warning to client
+            maybe_notify_unknown_lint_fields(out, &unknowns);
             setup_indentation_size(&mut cfg);
             Some(cfg)
         },
@@ -45,9 +53,10 @@ pub fn maybe_parse_lint_cfg(path: PathBuf) -> Option<LintCfg> {
     }
 }
 
+
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
-#[serde(deny_unknown_fields)]
 pub struct LintCfg {
     #[serde(default)]
     pub sp_brace: Option<SpBraceOptions>,
@@ -79,6 +88,21 @@ pub struct LintCfg {
     pub indent_empty_loop: Option<IndentEmptyLoopOptions>,
     #[serde(default = "get_true")]
     pub annotate_lints: bool,
+}
+
+impl LintCfg {
+    pub fn try_deserialize(
+        val: &serde_json::Value,
+        unknowns: &mut Vec<String>,
+    ) -> Result<LintCfg, String> {
+        // Use serde_ignored to automatically track unknown fields
+        match serde_ignored::deserialize(val, |json_field| {
+            unknowns.push(json_field.to_string());
+        }) {
+            Ok(cfg) => Ok(cfg),
+            Err(e) => Err(e.to_string()),
+        }
+    }
 }
 
 fn get_true() -> bool {
@@ -421,8 +445,47 @@ pub mod tests {
         let example_path = format!("{}{}",
                                    env!("CARGO_MANIFEST_DIR"),
                                    EXAMPLE_CFG);
-        let example_cfg = parse_lint_cfg(example_path.into()).unwrap();
+        let (example_cfg, unknowns) = parse_lint_cfg(example_path.into()).unwrap();
         assert_eq!(example_cfg, LintCfg::default());
+        // Assert that there are no unknown fields in the example config:
+        assert!(unknowns.is_empty(), "Example config should not have unknown fields: {:?}", unknowns);
+    }
+
+    #[test]
+    fn test_unknown_fields_detection() {
+        use crate::lint::LintCfg;
+        
+        // JSON with unknown fields
+        let json_with_unknowns = r#"{
+            "sp_brace": {},
+            "unknown_field_1": true,
+            "indent_size": {"indentation_spaces": 4},
+            "another_unknown": "value"
+        }"#;
+        
+        let val: serde_json::Value = serde_json::from_str(json_with_unknowns).unwrap();
+        let mut unknowns = Vec::new();
+        let result = LintCfg::try_deserialize(&val, &mut unknowns);
+        
+        assert!(result.is_ok());
+        let cfg = result.unwrap();
+        
+        // Assert that unknown fields were detected
+        assert_eq!(unknowns.len(), 2);
+        assert!(unknowns.contains(&"unknown_field_1".to_string()));
+        assert!(unknowns.contains(&"another_unknown".to_string()));
+        
+        // Assert the final LintCfg matches expected json (the known fields)
+        let expected_json = r#"{
+            "sp_brace": {},
+            "indent_size": {"indentation_spaces": 4}
+        }"#;
+        let expected_val: serde_json::Value = serde_json::from_str(expected_json).unwrap();
+        let mut expected_unknowns = Vec::new();
+        let expected_cfg = LintCfg::try_deserialize(&expected_val, &mut expected_unknowns).unwrap();
+        
+        assert_eq!(cfg, expected_cfg);
+        assert!(expected_unknowns.is_empty()); // No unknown fields in the expected config
     }
 
     #[test]

@@ -342,17 +342,14 @@ impl <O: Output> InitActionContext<O> {
         pid: u32,
         _client_supports_cmd_run: bool,
     ) -> InitActionContext<O> {
-        let lint_config = Arc::new(Mutex::new(
-            config.lock().unwrap().lint_cfg_path.clone()
-                .and_then(maybe_parse_lint_cfg)
-                .unwrap_or_default()));
+        
         InitActionContext {
             vfs,
             analysis,
             analysis_queue: Arc::new(AnalysisQueue::init()),
             current_notifier: Arc::default(),
             config,
-            lint_config,
+            lint_config: Arc::new(Mutex::new(LintCfg::default())),
             jobs: Arc::default(),
             direct_opens: Arc::default(),
             quiescent: Arc::new(AtomicBool::new(false)),
@@ -388,7 +385,8 @@ impl <O: Output> InitActionContext<O> {
     fn init(&mut self,
             _init_options: InitializationOptions,
             out: O) {
-        self.update_compilation_info(&out)
+        self.update_compilation_info(&out);
+        self.update_linter_config(&out);
     }
 
     pub fn update_workspaces(&self,
@@ -401,13 +399,17 @@ impl <O: Output> InitActionContext<O> {
         }
     }
 
-    fn update_linter_config(&self, _out: &O) {
+    fn update_linter_config(&self, out: &O) {
         trace!("Updating linter config");
         if let Ok(config) = self.config.lock() {
-            *self.lint_config.lock().unwrap() =
-                config.lint_cfg_path.clone()
-                .and_then(maybe_parse_lint_cfg)
-                .unwrap_or_default();
+            if let Some(ref lint_path) = config.lint_cfg_path {
+                if let Some(cfg) = maybe_parse_lint_cfg(lint_path.clone(), out) {
+                    *self.lint_config.lock().unwrap() = cfg;
+                }
+            } else {
+                // If no lint config path is set, use default
+                *self.lint_config.lock().unwrap() = LintCfg::default();
+            }
         }
     }
 
