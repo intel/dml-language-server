@@ -3,6 +3,7 @@
 use log::error;
 
 use crate::lint::rules::indentation::IndentEmptyLoopArgs;
+use crate::lint::rules::spacing::SpReservedArgs;
 use crate::span::Range;
 use crate::analysis::parsing::lexer::TokenKind;
 use crate::analysis::parsing::statement;
@@ -437,6 +438,7 @@ impl TreeElement for IfContent {
     fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, _aux: AuxParams) {
         rules.nsp_inparen.check(acc, NspInparenArgs::from_if(self));
         rules.indent_paren_expr.check(acc, IndentParenExprArgs::from_if(self));
+        rules.sp_reserved.check(acc, SpReservedArgs::from_if(self));
     }
 }
 
@@ -550,6 +552,7 @@ impl TreeElement for WhileContent {
     fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, aux: AuxParams) {
         rules.indent_paren_expr.check(acc, IndentParenExprArgs::from_while(self));
         rules.indent_empty_loop.check(acc, IndentEmptyLoopArgs::from_while_content(self, aux.depth));
+        rules.sp_reserved.check(acc, SpReservedArgs::from_while(self));
     }
 }
 
@@ -866,6 +869,7 @@ impl TreeElement for ForContent {
     fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, aux: AuxParams) {
         rules.indent_paren_expr.check(acc, IndentParenExprArgs::from_for(self));
         rules.indent_empty_loop.check(acc, IndentEmptyLoopArgs::from_for_content(self, aux.depth));
+        rules.sp_reserved.check(acc, SpReservedArgs::from_for(self));
     }
 }
 
@@ -1284,6 +1288,9 @@ impl TreeElement for AfterContent {
                      &self.colon,
                      &self.callexpression,
                      &self.semi)
+    }
+    fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, _aux: AuxParams) {
+        rules.sp_reserved.check(acc, SpReservedArgs::from_after_content(self));
     }
 }
 
