@@ -36,6 +36,7 @@ pub use crate::lsp_data::request::{
     RangeFormatting,
     References,
     RegisterCapability,
+    UnregisterCapability,
     Rename,
     ResolveCompletionItem as ResolveCompletion,
     WorkspaceConfiguration,
@@ -998,6 +999,15 @@ impl SentRequest for RegisterCapability {
             info!("Successful registration on some capability");
         }
 }
+
+impl SentRequest for UnregisterCapability {
+    type Response = <Self as lsp_data::request::Request>::Result;
+    fn on_response<O: Output>
+        (ctx: &InitActionContext<O>, _response: Self::Response, out: &O) {
+            ctx.register_new_watchers(out)
+        }
+}
+
 
 impl SentRequest for WorkspaceConfiguration {
     type Response = <Self as lsp_data::request::Request>::Result;
