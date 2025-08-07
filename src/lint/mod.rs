@@ -19,18 +19,27 @@ use crate::lint::rules::indentation::{MAX_LENGTH_DEFAULT,
                                       setup_indentation_size
                                     };
 
-pub fn parse_lint_cfg(path: PathBuf) -> Result<LintCfg, String> {
+pub fn parse_lint_cfg(path: PathBuf) -> Result<(LintCfg, Vec<String>), String> {
     debug!("Reading Lint configuration from {:?}", path);
-    let file_content = fs::read_to_string(path).map_err(
-        |e|e.to_string())?;
+    let file_content = fs::read_to_string(path).map_err(|e| e.to_string())?;
     trace!("Content is {:?}", file_content);
-    serde_json::from_str(&file_content)
-        .map_err(|e|e.to_string())
+    
+    let val: serde_json::Value = serde_json::from_str(&file_content)
+        .map_err(|e| e.to_string())?;
+    
+    let mut unknowns = Vec::new();
+    let cfg = LintCfg::try_deserialize(&val, &mut unknowns)?;
+    
+    Ok((cfg, unknowns))
 }
 
 pub fn maybe_parse_lint_cfg(path: PathBuf) -> Option<LintCfg> {
     match parse_lint_cfg(path) {
-        Ok(mut cfg) => {
+        Ok((mut cfg, unknowns)) => {
+            if !unknowns.is_empty() {
+                // Log the unknown fields as a comma-separated list
+                error!("Unknown lint config fields: {}", unknowns.join(", "));
+            }
             setup_indentation_size(&mut cfg);
             Some(cfg)
         },
@@ -43,7 +52,6 @@ pub fn maybe_parse_lint_cfg(path: PathBuf) -> Option<LintCfg> {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
-#[serde(deny_unknown_fields)]
 pub struct LintCfg {
     #[serde(default)]
     pub sp_brace: Option<SpBraceOptions>,
@@ -75,6 +83,32 @@ pub struct LintCfg {
     pub indent_empty_loop: Option<IndentEmptyLoopOptions>,
     #[serde(default = "get_true")]
     pub annotate_lints: bool,
+}
+
+impl LintCfg {
+    pub fn try_deserialize(
+        val: &serde_json::Value,
+        unknowns: &mut Vec<String>,
+    ) -> Result<LintCfg, String> {
+        // Handle unknown fields by collecting field names
+        if let Some(obj) = val.as_object() {
+            let known_fields = [
+                "sp_brace", "sp_punct", "nsp_funpar", "nsp_inparen", 
+                "nsp_unary", "nsp_trailing", "long_lines", "indent_size", 
+                "indent_no_tabs", "indent_code_block", "indent_closing_brace", 
+                "indent_paren_expr", "indent_switch_case", "indent_empty_loop", 
+                "annotate_lints"
+            ];
+            
+            for key in obj.keys() {
+                if !known_fields.contains(&key.as_str()) {
+                    unknowns.push(key.clone());
+                }
+            }
+        }
+        
+        serde_json::from_value(val.clone()).map_err(|e| e.to_string())
+    }
 }
 
 fn get_true() -> bool {
@@ -263,8 +297,10 @@ pub mod tests {
         let example_path = format!("{}{}",
                                    env!("CARGO_MANIFEST_DIR"),
                                    EXAMPLE_CFG);
-        let example_cfg = parse_lint_cfg(example_path.into()).unwrap();
+        let (example_cfg, unknowns) = parse_lint_cfg(example_path.into()).unwrap();
         assert_eq!(example_cfg, LintCfg::default());
+        // Assert that there are no unknown fields in the example config:
+        assert!(unknowns.is_empty(), "Example config should not have unknown fields: {:?}", unknowns);
     }
 
     #[test]
