@@ -11,12 +11,12 @@ method this_is_some_method() {
     }
 }
 ";
-
 #[test]
 fn arithmetic_operator_correct() {
 	let rules = set_up();
 	assert_snippet(ARTITHMETIC_OPERATOR_CORRECT, vec![], &rules);
 }
+
 static ARTITHMETIC_OPERATOR_INCORRECT: &str = "
 method this_is_some_method() {
     local int this_some_integer = 5+6;
@@ -25,7 +25,6 @@ method this_is_some_method() {
     }
 }
 ";
-
 #[test]
 fn arithmetic_operator_incorrect() {
 	let rules = set_up();
@@ -64,7 +63,6 @@ method this_is_some_method() {
     }
 }
 ";
-
 #[test]
 fn rule_disable() {
 	let mut rules = set_up();

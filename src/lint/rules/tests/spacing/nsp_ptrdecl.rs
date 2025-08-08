@@ -7,7 +7,6 @@ method this_is_some_method(conf_object_t *dummy_obj) {
         return;
     }
 }";
-
 #[test]
 fn nsp_ptrdecl_correct() {
     let mut rules = set_up();
@@ -23,7 +22,6 @@ method this_is_some_method(conf_object_t * dummy_obj) {
         return;
     }
 }";
-
 #[test]
 fn nsp_ptrdcl_incorrect_param() {
     let mut rules = set_up();
@@ -44,7 +42,6 @@ method this_is_some_method(conf_object_t *dummy_obj) {
         return;
     }
 }";
-
 #[test]
 fn nsp_ptrdecl_incorrect_statement() {
     let mut rules = set_up();
@@ -65,7 +62,6 @@ method this_is_some_method(conf_object_t **dummy_obj) {
         return;
     }
 }";
-
 #[test]
 fn nsp_ptrdecl_multiple_symbols() {
     let mut rules = set_up();
