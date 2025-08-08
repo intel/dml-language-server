@@ -7,7 +7,6 @@ method this_is_some_method(conf_object_t *dummy_obj) {
         return;
     }
 }";
-
 #[test]
 fn sp_ptrdecl_correct() {
     let mut rules = set_up();
@@ -23,7 +22,6 @@ method this_is_some_method(conf_object_t*dummy_obj) {
         return;
     }
 }";
-
 #[test]
 fn sp_ptrdecl_incorrect_param() {
     let mut rules = set_up();
@@ -44,7 +42,6 @@ method this_is_some_method(conf_object_t *dummy_obj) {
         return;
     }
 }";
-
 #[test]
 fn sp_ptrdecl_incorrect_statement() {
     let mut rules = set_up();
@@ -61,7 +58,6 @@ fn sp_ptrdecl_incorrect_statement() {
 static SP_MULTIPLE_POINTER_SYMBOLS: &str = "
 method this_is_some_method(conf_object_t **dummy_obj) {
 }";
-
 #[test]
 fn sp_ptrdecl_multiple_symbols() {
     let rules = set_up();
