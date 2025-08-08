@@ -136,7 +136,6 @@ method callback() {
     }
 }
 ";
-
 #[test]
 fn if_paren_correct() {
     let rules = set_up();
@@ -371,7 +370,6 @@ param result = (
                 +
                 1);
 ";
-
 #[test]
 fn nested_paren_expr_incorrect(){
     let rules = set_up();

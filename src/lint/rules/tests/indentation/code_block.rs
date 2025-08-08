@@ -187,7 +187,6 @@ method control_device() {
     }
 }
 ";
-
 #[test]
 fn cond_structure_indent_incorrect() {
     let rules = set_up();

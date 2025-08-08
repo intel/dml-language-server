@@ -8,8 +8,6 @@ method this_is_some_method(bool flag) {
     local int this_some_integer = (flag ? 5 : 7);
 }
 ";
-
-
 #[test]
 fn variable_conditional_correct() {
 	let rules = set_up();
@@ -21,8 +19,6 @@ method this_is_some_method(bool flag) {
     local int this_some_integer = (flag?5:7);
 }
 ";
-
-
 #[test]
 fn variable_conditional_incorrect() {
 	let rules = set_up();
@@ -39,7 +35,6 @@ fn variable_conditional_incorrect() {
 static PARAM_CONDITIONAL_CORRECT: &str = "
 param even_or_odd = odd_flag ? 'odd' : 'even';
 ";
-
 #[test]
 fn param_conditional_correct() {
 	let rules = set_up();
@@ -49,7 +44,6 @@ fn param_conditional_correct() {
 static PARAM_CONDITIONAL_INCORRECT: &str = "
 param even_or_odd = odd_flag ?'odd' :'even';
 ";
-
 #[test]
 fn param_conditional_incorrect() {
 	let rules = set_up();
@@ -60,7 +54,6 @@ fn param_conditional_incorrect() {
 	);
 	assert_snippet(PARAM_CONDITIONAL_INCORRECT, expected_errors, &rules);
 }
-
 
 #[test]
 fn rule_disable() {

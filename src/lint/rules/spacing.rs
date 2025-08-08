@@ -27,11 +27,13 @@ pub struct SpReservedOptions {}
 pub struct SpReservedRule {
     pub enabled: bool,
 }
+
 pub struct SpReservedArgs {
     before_range: Option<ZeroRange>,
     token_range: ZeroRange,
     after_range: Option<ZeroRange>,
 }
+
 impl SpReservedArgs {
     pub fn from_after_content(node: &AfterContent) -> Vec<SpReservedArgs> {
         let mut args_list = vec![];
@@ -130,12 +132,14 @@ pub struct SpBraceOptions {}
 pub struct SpBracesRule {
     pub enabled: bool,
 }
+
 pub struct SpBracesArgs {
     body_start: ZeroRange,
     body_end: ZeroRange,
     lbrace: ZeroRange,
     rbrace: ZeroRange,
 }
+
 impl SpBracesArgs {
     pub fn from_compound(node: &CompoundContent) -> Option<SpBracesArgs> {
         if node.statements.is_empty() {
@@ -234,14 +238,17 @@ impl Rule for SpBracesRule {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct SpBinopOptions {}
+
 pub struct SpBinopRule {
     pub enabled: bool,
 }
+
 pub struct SpBinopArgs {
     left: ZeroRange,
     operator:  ZeroRange,
     right: ZeroRange,
 }
+
 impl SpBinopArgs {
     pub fn from_binary_expression_content(node: &BinaryExpressionContent) -> Option<SpBinopArgs> {
         Some(SpBinopArgs {
@@ -251,6 +258,7 @@ impl SpBinopArgs {
         })
     }
 }
+
 impl SpBinopRule {
     pub fn check(&self, acc: &mut Vec<DMLStyleError>,
         ranges: Option<SpBinopArgs>) {
@@ -268,6 +276,7 @@ impl SpBinopRule {
         }
     }
 }
+
 impl Rule for SpBinopRule {
     fn name() -> &'static str {
         "sp_binop"
@@ -280,12 +289,13 @@ impl Rule for SpBinopRule {
     }
 }
 
-
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct SpTernaryOptions {}
+
 pub struct SpTernaryRule {
     pub enabled: bool,
 }
+
 pub struct SpTernaryArgs {
     left: ZeroRange,
     left_op: ZeroRange,
@@ -293,6 +303,7 @@ pub struct SpTernaryArgs {
     right_op: ZeroRange,
     right: ZeroRange,
 }
+
 impl SpTernaryArgs {
     pub fn from_tertiary_expression_content(node: &TertiaryExpressionContent) -> Option<SpTernaryArgs> {
         Some(SpTernaryArgs {
@@ -304,10 +315,12 @@ impl SpTernaryArgs {
         })
     }
 }
+
 fn no_gap(left: ZeroRange, right: ZeroRange) -> bool {
     left.row_end == right.row_start
         && left.col_end == right.col_start
 }
+
 impl SpTernaryRule {
     pub fn check(&self, acc: &mut Vec<DMLStyleError>,
         ranges: Option<SpTernaryArgs>) {
@@ -328,6 +341,7 @@ impl SpTernaryRule {
         }
     }
 }
+
 impl Rule for SpTernaryRule {
     fn name() -> &'static str {
         "sp_ternary"
@@ -346,11 +360,13 @@ pub struct SpPunctOptions {}
 pub struct SpPunctRule {
     pub enabled: bool,
 }
+
 pub struct SpPunctArgs {
     before_range_list: Vec<Range<ZeroIndexed>>,
     punct_range_list: Vec<Range<ZeroIndexed>>,
     after_range_list: Vec<Option<Range<ZeroIndexed>>>,
 }
+
 impl SpPunctArgs {
     pub fn from_method(node: &MethodContent) -> Option<SpPunctArgs> {
         let mut before_range_list = vec![];
@@ -483,14 +499,17 @@ impl Rule for SpPunctRule {
         RuleType::SpPunct
     }
 }
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct NspFunparOptions {}
 
 pub struct NspFunparRule {
     pub enabled: bool,
 }
- // Single ZeroRange required as input for this rule
+
+// Single ZeroRange required as input for this rule
 pub type NspFunparArgs = ZeroRange;
+
 impl NspFunparArgs {
     fn found_gap(fn_name: &ZeroRange, lparen: &ZeroRange)
                  -> Option<NspFunparArgs> {
@@ -512,6 +531,7 @@ impl NspFunparArgs {
         Self::found_gap(&node.fun.range(), &node.lparen.range())
     }
 }
+
 impl NspFunparRule {
     pub fn check(&self,
                  acc: &mut Vec<DMLStyleError>,
@@ -522,6 +542,7 @@ impl NspFunparRule {
         }
     }
 }
+
 impl Rule for NspFunparRule {
     fn name() -> &'static str {
         "nsp_funpar"
@@ -534,19 +555,20 @@ impl Rule for NspFunparRule {
     }
 }
 
-
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct NspInparenOptions {}
 
 pub struct NspInparenRule {
     pub enabled: bool,
 }
+
 pub struct NspInparenArgs {
     opening: ZeroRange,
     content_start: ZeroRange,
     content_end: ZeroRange,
     closing: ZeroRange,
 }
+
 impl NspInparenArgs {
     pub fn from_method(node: &MethodContent) -> Option<NspInparenArgs> {
         let content_start_range;
@@ -600,6 +622,7 @@ impl NspInparenArgs {
         })
     }
 }
+
 impl NspInparenRule {
     pub fn check(&self,
                  acc: &mut Vec<DMLStyleError>,
@@ -623,6 +646,7 @@ impl NspInparenRule {
         }
     }
 }
+
 impl Rule for NspInparenRule {
     fn name() -> &'static str {
         "nsp_inparen"
@@ -641,8 +665,10 @@ pub struct NspUnaryOptions {}
 pub struct NspUnaryRule {
     pub enabled: bool,
 }
+
 // Single ZeroRange required as input for this rule
 pub type NspUnaryArgs = ZeroRange;
+
 impl NspUnaryArgs {
     pub fn from_unary_expr(node: &UnaryExpressionContent)
                            -> Option<NspUnaryArgs> {
@@ -663,6 +689,7 @@ impl NspUnaryArgs {
         } else { None }
     }
 }
+
 impl NspUnaryRule {
     pub fn check(&self,
                  acc: &mut Vec<DMLStyleError>,
@@ -673,6 +700,7 @@ impl NspUnaryRule {
         }
     }
 }
+
 impl Rule for NspUnaryRule {
     fn name() -> &'static str {
         "nsp_unary"
@@ -691,6 +719,7 @@ pub struct NspTrailingOptions {}
 pub struct NspTrailingRule {
     pub enabled: bool,
 }
+
 impl NspTrailingRule {
     pub fn check(&self, acc: &mut Vec<DMLStyleError>, row: usize, line: &str) {
         if !self.enabled { return; }
@@ -705,6 +734,7 @@ impl NspTrailingRule {
         }
     }
 }
+
 impl Rule for NspTrailingRule {
     fn name() -> &'static str {
         "nsp_trailing"
@@ -716,30 +746,14 @@ impl Rule for NspTrailingRule {
         RuleType::NspTrailing
     }
 }
-pub struct SpPtrDeclRule {
-    pub enabled: bool,
-}
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct SpPtrDeclOptions {}
 
-impl Rule for SpPtrDeclRule {
-    fn name() -> &'static str {
-        "sp_ptrdecl"
-    }
-    fn description() -> &'static str {
-        "There should be a space between type and * marking a pointer"
-    }
-    fn get_rule_type() -> RuleType {
-        RuleType::SpPtrDecl
-    }
+pub struct SpPtrDeclRule {
+    pub enabled: bool,
 }
 
-fn has_space_between(range_left: &ZeroRange,
-    range_right: &ZeroRange) -> bool {
-    return !((range_left.row_end == range_right.row_start)
-    && (range_left.col_end == range_right.col_start))
-}
 pub struct SpPtrDeclArgs {
     type_name_range: ZeroRange,
     operator_ranges: Vec<ZeroRange>
@@ -771,6 +785,12 @@ impl SpPtrDeclArgs {
     }
 }
 
+fn has_space_between(range_left: &ZeroRange,
+    range_right: &ZeroRange) -> bool {
+    return !((range_left.row_end == range_right.row_start)
+    && (range_left.col_end == range_right.col_start))
+}
+
 impl SpPtrDeclRule {
     pub fn check(&self, acc: &mut Vec<DMLStyleError>,
         ranges: Option<SpPtrDeclArgs>) {
@@ -789,12 +809,24 @@ impl SpPtrDeclRule {
     }
 }
 
-pub struct NspPtrDeclRule {
-    pub enabled: bool,
+impl Rule for SpPtrDeclRule {
+    fn name() -> &'static str {
+        "sp_ptrdecl"
+    }
+    fn description() -> &'static str {
+        "There should be a space between type and * marking a pointer"
+    }
+    fn get_rule_type() -> RuleType {
+        RuleType::SpPtrDecl
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct NspPtrDeclOptions {}
+
+pub struct NspPtrDeclRule {
+    pub enabled: bool,
+}
 
 pub struct NspPtrDeclArgs {
     rightmost_multiply: Option<ZeroRange>,
@@ -810,18 +842,6 @@ impl NspPtrDeclArgs {
             rightmost_multiply: rightmost_multiply,
             identifier_range: node.decl.range()
         })
-    }
-}
-
-impl Rule for NspPtrDeclRule {
-    fn name() -> &'static str {
-        "nsp_ptrdecl"
-    }
-    fn description() -> &'static str {
-        "There should be no space after the * marking a pointer in a declaration"
-    }
-    fn get_rule_type() -> RuleType {
-        RuleType::NspPtrDecl
     }
 }
 
@@ -843,5 +863,17 @@ impl NspPtrDeclRule {
             } 
         }
         
+    }
+}
+
+impl Rule for NspPtrDeclRule {
+    fn name() -> &'static str {
+        "nsp_ptrdecl"
+    }
+    fn description() -> &'static str {
+        "There should be no space after the * marking a pointer in a declaration"
+    }
+    fn get_rule_type() -> RuleType {
+        RuleType::NspPtrDecl
     }
 }
