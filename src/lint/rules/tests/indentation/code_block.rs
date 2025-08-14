@@ -1,4 +1,4 @@
-use crate::lint::rules::tests::common::{set_up, robust_assert_snippet as assert_snippet};
+use crate::lint::rules::tests::common::{set_up, assert_snippet};
 use crate::lint::rules::RuleType;
 
 static FUNCTION_CONTENTS_INDENT_CORRECT: &str = "
@@ -187,7 +187,6 @@ method control_device() {
     }
 }
 ";
-
 #[test]
 fn cond_structure_indent_incorrect() {
     let rules = set_up();
