@@ -2,12 +2,13 @@ use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 use log::{debug, error, trace};
+use rules::linebreaking::{FuncCallBreakOnOpenParenOptions, MethodOutputBreakOptions};
 use serde::{Deserialize, Serialize};
 use rules::{instantiate_rules, CurrentRules, RuleType};
 use rules::{spacing::{SpBraceOptions, SpPunctOptions, NspFunparOptions,
                       NspInparenOptions, NspUnaryOptions, NspTrailingOptions},
                       indentation::{LongLineOptions, IndentSizeOptions, IndentCodeBlockOptions,
-                                    IndentNoTabOptions, IndentClosingBraceOptions, IndentParenExprOptions, IndentSwitchCaseOptions, IndentEmptyLoopOptions},
+                                    IndentNoTabOptions, IndentClosingBraceOptions, IndentParenExprOptions, IndentSwitchCaseOptions, IndentEmptyLoopOptions, IndentContinuationLineOptions},
                     };
 use crate::analysis::{DMLError, IsolatedAnalysis, LocalDMLError};
 use crate::analysis::parsing::tree::TreeElement;
@@ -73,6 +74,12 @@ pub struct LintCfg {
     pub indent_switch_case: Option<IndentSwitchCaseOptions>,
     #[serde(default)]
     pub indent_empty_loop: Option<IndentEmptyLoopOptions>,
+    #[serde(default)]
+    pub indent_continuation_line: Option<IndentContinuationLineOptions>,
+    #[serde(default)]
+    pub func_call_break_on_open_paren: Option<FuncCallBreakOnOpenParenOptions>,
+    #[serde(default)]
+    pub method_output_break: Option<MethodOutputBreakOptions>,
     #[serde(default = "get_true")]
     pub annotate_lints: bool,
 }
@@ -98,10 +105,14 @@ impl Default for LintCfg {
             indent_paren_expr: Some(IndentParenExprOptions{}),
             indent_switch_case: Some(IndentSwitchCaseOptions{indentation_spaces: INDENTATION_LEVEL_DEFAULT}),
             indent_empty_loop: Some(IndentEmptyLoopOptions{indentation_spaces: INDENTATION_LEVEL_DEFAULT}),
+            indent_continuation_line: Some(IndentContinuationLineOptions{indentation_spaces: INDENTATION_LEVEL_DEFAULT}),
+            func_call_break_on_open_paren: Some(FuncCallBreakOnOpenParenOptions{indentation_spaces: INDENTATION_LEVEL_DEFAULT}),
+            method_output_break: Some(MethodOutputBreakOptions{}),
             annotate_lints: true,
         }
     }
 }
+
 
 #[derive(Debug, Clone)]
 pub struct DMLStyleError {
