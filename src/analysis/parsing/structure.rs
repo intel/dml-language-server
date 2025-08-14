@@ -16,7 +16,7 @@ use crate::analysis::parsing::parser::{doesnt_understand_tokens,
                                        FileParser, Parse, ParseContext,
                                        FileInfo};
 use crate::analysis::LocalDMLError;
-use crate::lint::rules::linebreaking::FuncCallBreakOnOpenParenArgs;
+use crate::lint::rules::linebreaking::{FuncCallBreakOnOpenParenArgs, MethodOutputBreakArgs};
 use crate::lint::rules::spacing::{SpBracesArgs,
                                   NspInparenArgs,
                                   NspFunparArgs,
@@ -242,6 +242,7 @@ impl TreeElement for MethodContent {
         rules.sp_punct.check(acc, SpPunctArgs::from_method(self));
         rules.indent_paren_expr.check(acc, IndentParenExprArgs::from_method(self));
         rules.func_call_break_on_open_paren.check(acc, FuncCallBreakOnOpenParenArgs::from_method(self, _aux.depth));
+        rules.method_output_break.check(acc, MethodOutputBreakArgs::from_method(self));
     }
 }
 
