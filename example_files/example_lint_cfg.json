@@ -20,5 +20,6 @@
     "indent_empty_loop": {},
     "indent_continuation_line": {},
     "func_call_break_on_open_paren": {},
+    "method_output_break": {},
     "annotate_lints": true
 }

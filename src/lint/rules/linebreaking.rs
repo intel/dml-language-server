@@ -14,6 +14,58 @@ fn default_indentation_spaces() -> u32 {
     INDENTATION_LEVEL_DEFAULT
 }
 
+pub struct MethodOutputBreakRule {
+    pub enabled: bool
+}
+
+pub struct MethodOutputBreakArgs {
+    pub before_arrow_range: ZeroRange,
+    pub arrow_range: ZeroRange,
+    pub after_arrow_range: ZeroRange,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct MethodOutputBreakOptions{
+}
+
+impl Rule for MethodOutputBreakRule {
+    fn name() -> &'static str {
+        "method_output_break"
+    }
+    fn description() -> &'static str {
+        "Break long method declarations with output parameters before the arrow."
+    }
+    fn get_rule_type() -> RuleType {
+        RuleType::LL5
+    }
+}
+
+impl MethodOutputBreakArgs {
+    pub fn from_method(node: &MethodContent) -> Option<MethodOutputBreakArgs> {
+        let Some(returns) = &node.returns else { return None; };
+        Some(MethodOutputBreakArgs {
+            before_arrow_range: node.rparen.range(),
+            arrow_range: returns.0.range(),
+            after_arrow_range: returns.1.range(),
+        })
+    }
+}
+
+impl MethodOutputBreakRule {
+    pub fn check(&self, args: Option<MethodOutputBreakArgs>, acc: &mut Vec<DMLStyleError>) {
+        if !self.enabled { return; }
+        let Some(args) = args else { return; };
+        if args.before_arrow_range.row_end.0 == args.after_arrow_range.row_start.0 {
+            // If all parts are on the same line, we don't need to check it.
+            return;
+        }
+        // If the arrow and the return type are not on the same line, report an error.
+        if args.arrow_range.row_start.0 != args.after_arrow_range.row_start.0 {
+            acc.push(self.create_err(args.arrow_range));
+        }
+    }
+}
+
 pub struct FuncCallBreakOnOpenParenRule {
     pub enabled: bool,
     indentation_spaces: u32

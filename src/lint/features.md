@@ -47,5 +47,12 @@ Below are listed the currently supported rules for linting:
 
 ## Line Length
 - **LL1**, `long_lines`: Lines should be kept shorter than 80 characters. This limit can be set to a custom value
+- **LL5**, `method_output_break`: Break long method declarations with output parameters before the arrow.
+```
+    method inquiry_status(uint64 physical_address)
+        -> (uint16 status) {
+        ...
+    }
+```
 
 ##### Check [Issue #76 For remaining and planned checks](https://github.com/intel/dml-language-server/issues/76)
