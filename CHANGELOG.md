@@ -5,6 +5,8 @@
 # Change Log
 
 ## 0.9.13
+- You can now annotate dml source to disable reporting of specific lints for specific files or lines,
+  see [USAGE.md](USAGE.md) for instructions on how to use it
 
 ## 0.9.12
 - Added 'simics\_util\_vect' as a known provisional (with no DLS semantics)
