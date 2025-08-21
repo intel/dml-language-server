@@ -1313,31 +1313,6 @@ fn resolve_parameter(obj_loc: &ZeroSpan,
     )
 }
 
-#[allow(clippy::single_match)]
-fn param_invariants(object:&mut DMLCompositeObject,
-                    report: &mut Vec<DMLError>) {
-    // TODO: Check 'name' parameter towards 'ident' parameter
-    match &object.kind {
-        CompObjectKind::Register => {
-            // NOTE: 'offset' is checked by the requirement of
-            // the register template. Might be better to give
-            // a nicer error here
-            if let Some(_size) = object.get_param("size") {
-                // TODO: verify size is an integer
-            } else {
-                report.push(DMLError {
-                    span: object.declloc,
-                    description: "Missing declaration for 'size' parameter \
-                                  in register".to_string(),
-                    related: vec![],
-                    severity: Some(DiagnosticSeverity::ERROR),
-                });
-            }
-        },
-        _ => (),
-    }
-}
-
 fn create_object_instance(loc: Option<ZeroSpan>,
                           all_decls: Vec<Arc<ObjectSpec>>,
                           identity: &DMLString,
@@ -2255,7 +2230,6 @@ pub fn make_object(loc: ZeroSpan,
     add_subobjs(new_obj_key, subobj_keys, container);
     {
         let new_obj = container.get_mut(new_obj_key).unwrap();
-        param_invariants(new_obj, report);
         let trait_method_map = merge_impl_maps(&identity.val, &loc,
                                                new_obj.templates.values().map(
                                                    |t|&t.traitspec),
