@@ -9,6 +9,8 @@
   has no semantic effect.
 - The parameter declaration patterns ":=" and ": \<type\> = \<val\>" are now
   correctly parsed.
+- Disabled the invariant check for the parameter 'size' to be set on register
+  objects. Will be re-enabled when constant-folding is added to the DLS.
 
 ## 0.9.12
 - Added 'simics\_util\_vect' as a known provisional (with no DLS semantics)

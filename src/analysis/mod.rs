@@ -2229,29 +2229,33 @@ impl DeviceAnalysis {
         Ok(device)
     }
 
+    #[allow(clippy::ptr_arg)]
     fn param_invariants(&self,
                         obj: &DMLCompositeObject,
-                        report: &mut Vec<DMLError>) {
+                        _report: &mut Vec<DMLError>) {
+        #[allow(clippy::single_match)]
         match &obj.kind {
             // TODO: Check 'name' parameter towards 'ident' parameter
             CompObjectKind::Register => {
+                // TODO: Cannot be sufficiently checked until
+                // constant-folding is in
                 // NOTE: 'offset' is checked by the requirement of
                 // the register template. Might be better to give
                 // a nicer error here
-                match self.lookup_def_in_comp_object(
-                    obj, "size", None) {
-                    // TODO: verify size is an integer
-                    ReferenceMatch::Found(_) => (),
-                    _ => {
-                        report.push(DMLError {
-                            span: obj.declloc,
-                            description: "No assignmenton to 'size' parameter \
-                                          in register".to_string(),
-                            related: vec![],
-                            severity: Some(DiagnosticSeverity::ERROR),
-                        });
-                    },
-                }
+                // match self.lookup_def_in_comp_object(
+                //     obj, "size", None) {
+                //     // TODO: verify size is an integer
+                //     ReferenceMatch::Found(_) => (),
+                //     _ => {
+                //         report.push(DMLError {
+                //             span: obj.declloc,
+                //             description: "No assignment to 'size' parameter \
+                //                           in register".to_string(),
+                //             related: vec![],
+                //             severity: Some(DiagnosticSeverity::ERROR),
+                //         });
+                //     },
+                // }
             },
             _ => (),
         }
