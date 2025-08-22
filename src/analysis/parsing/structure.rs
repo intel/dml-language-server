@@ -1384,6 +1384,19 @@ impl TreeElement for HashIfContent {
         }
         errors
     }
+    fn style_check(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, mut aux: AuxParams) {
+        self.evaluate_rules(acc, rules, aux);
+        self.cond.style_check(acc, rules, aux);
+        // if depth=0 for this HashIf statement
+        // then pass 0xffff_ffff interpreted as -1
+        // to child block, so no indentation is applied
+        if aux.depth == 0 {
+            aux.depth = 0xffff_ffff;
+        }
+
+        self.truestatements.style_check(acc, rules, aux);
+        self.elsebranch.style_check(acc, rules, aux);
+    }
 }
 
 impl Parse<DMLObjectContent> for HashIfContent {
