@@ -2028,6 +2028,7 @@ fn add_new_method_scope_symbols(method: &Arc<DMLMethodRef>,
     }
 }
 
+
 impl DeviceAnalysis {
     pub fn new(root: IsolatedAnalysis,
                timed_bases: Vec<TimestampedStorage<IsolatedAnalysis>>,
@@ -2212,6 +2213,10 @@ impl DeviceAnalysis {
                                     |spec|*spec.loc_span())));
                 }
         }
+        info!("Invariant check");
+        for obj in device.objects.values() {
+            device.param_invariants(obj, &mut errors);
+        }
 
         for error in errors {
             device.errors.entry(error.span.path())
@@ -2222,6 +2227,38 @@ impl DeviceAnalysis {
 
         info!("Done with device");
         Ok(device)
+    }
+
+    #[allow(clippy::ptr_arg)]
+    fn param_invariants(&self,
+                        obj: &DMLCompositeObject,
+                        _report: &mut Vec<DMLError>) {
+        #[allow(clippy::single_match)]
+        match &obj.kind {
+            // TODO: Check 'name' parameter towards 'ident' parameter
+            CompObjectKind::Register => {
+                // TODO: Cannot be sufficiently checked until
+                // constant-folding is in
+                // NOTE: 'offset' is checked by the requirement of
+                // the register template. Might be better to give
+                // a nicer error here
+                // match self.lookup_def_in_comp_object(
+                //     obj, "size", None) {
+                //     // TODO: verify size is an integer
+                //     ReferenceMatch::Found(_) => (),
+                //     _ => {
+                //         report.push(DMLError {
+                //             span: obj.declloc,
+                //             description: "No assignmenton to 'size' parameter \
+                //                           in register".to_string(),
+                //             related: vec![],
+                //             severity: Some(DiagnosticSeverity::ERROR),
+                //         });
+                //     },
+                // }
+            },
+            _ => (),
+        }
     }
 }
 
