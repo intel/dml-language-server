@@ -5,6 +5,8 @@
 # Change Log
 
 ## 0.9.13
+- Disabled the invariant check for the parameter 'size' to be set on register
+  objects. Will be re-enabled when constant-folding is added to the DLS.
 
 ## 0.9.12
 - Added 'simics\_util\_vect' as a known provisional (with no DLS semantics)
