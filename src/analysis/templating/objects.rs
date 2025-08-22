@@ -656,7 +656,7 @@ impl DMLNamedMember for DMLShallowObjectVariant {
             DMLShallowObjectVariant::Session(d) |
             DMLShallowObjectVariant::Saved(d) => &d.declaration.name.span,
             DMLShallowObjectVariant::Parameter(p) =>
-                p.get_likely_definition().span(),
+                p.get_likely_definition().loc_span(),
             DMLShallowObjectVariant::Constant(c) =>
                 c.loc_span(),
             DMLShallowObjectVariant::Hook(h) =>
