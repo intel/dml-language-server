@@ -951,7 +951,6 @@ fn add_template_specs(obj_specs: &mut Vec<Arc<ObjectSpec>>,
     while let Some((_, tpl)) = queue.pop() {
         // TODO: here we would have to consider cond when conditional
         // is/imports exist
-        
         if used_templates.contains(&tpl.name) {
             continue;
         }
@@ -961,6 +960,7 @@ fn add_template_specs(obj_specs: &mut Vec<Arc<ObjectSpec>>,
         let mut modifications = vec![];
         if let Some(templ_specs) = each_stmts.get(&tpl.name) {
             for (needed_templates, spec) in templ_specs {
+                let mut can_add = true;
                 for templ in needed_templates {
                     if !used_templates.contains(templ.as_str()) {
                         // We will need to re-add a check for this template,
@@ -968,14 +968,16 @@ fn add_template_specs(obj_specs: &mut Vec<Arc<ObjectSpec>>,
                         modifications.push((templ.clone(),
                                             needed_templates.clone(),
                                             Arc::clone(spec)));
+                        can_add = false;
                         break;
-                    } else {
-                        queue.extend(spec.instantiations.values()
-                                     .flat_map(|v|v.iter())
-                                     .map(|t|(spec.condition.clone(),
-                                              Arc::clone(t))));
-                        obj_specs.push(Arc::clone(spec));
                     }
+                }
+                if can_add {
+                    queue.extend(spec.instantiations.values()
+                                 .flat_map(|v|v.iter())
+                                 .map(|t|(spec.condition.clone(),
+                                          Arc::clone(t))));
+                    obj_specs.push(Arc::clone(spec));
                 }
             }
         }
