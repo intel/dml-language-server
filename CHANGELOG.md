@@ -14,6 +14,8 @@
 - Disabled the invariant check for the parameter 'size' to be set on register
   objects. Will be re-enabled when constant-folding is added to the DLS.
 - Fixed issue where statements under top-level in-eachs were not correctly tracked.
+- Moved storage of reference->symbol mapping to on-demand timing, should significantly speed
+  up device analysises
 
 ## 0.9.12
 - Added 'simics\_util\_vect' as a known provisional (with no DLS semantics)
