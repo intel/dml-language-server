@@ -2,7 +2,7 @@
 //  SPDX-License-Identifier: Apache-2.0 and MIT
 use std::sync::Arc;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::analysis::{Named, LocationSpan};
 
@@ -160,7 +160,7 @@ pub struct Symbol {
     pub kind: DMLSymbolKind,
     pub definitions: Vec<ZeroSpan>,
     pub declarations: Vec<ZeroSpan>,
-    pub references: Vec<ZeroSpan>,
+    pub references: HashSet<ZeroSpan>,
     // NOTE: The meaning of 'implementation' varies with symbol kind
     // For methods and interfaces, this is straightforward
     // For templates, it will give all declarations for all objects that

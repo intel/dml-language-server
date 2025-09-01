@@ -386,9 +386,9 @@ impl SymbolStorage {
     }
 }
 
-// This maps non-auth symbol decls to auth decl
-// and references to the symbol decl they ref
-type ReferenceStorage = HashMap<ZeroSpan, Vec<SymbolRef>>;
+// This maps references to the symbol they reference, made as a lock
+// because we need to incrementally fill it as requests are made
+type ReferenceStorage = Arc<Mutex<HashMap<ZeroSpan, Vec<SymbolRef>>>>;
 
 // Analysis from the perspective of a particular DML device
 #[derive(Debug, Clone)]
@@ -1366,7 +1366,7 @@ impl DeviceAnalysis {
                     ReferenceMatch::Found(symbols) =>
                         for symbol in &symbols {
                             let mut sym = symbol.lock().unwrap();
-                            sym.references.push(*reference.loc_span());
+                            sym.references.insert(*reference.loc_span());
                             if let Some(meth) = sym.source
                                 .as_object()
                                 .and_then(DMLObject::as_shallow)
@@ -1632,7 +1632,7 @@ fn template_to_symbol(template: &Arc<DMLTemplate>) -> Option<SymbolRef> {
         Arc::new(Mutex::new(Symbol {
             loc: *location,
             kind: DMLSymbolKind::Template,
-            references: vec![],
+            references: HashSet::default(),
             definitions: vec![*location],
             declarations: vec![*location],
             implementations: vec![],
@@ -1669,7 +1669,7 @@ fn new_symbol_from_object(object: &DMLCompositeObject) -> SymbolRef {
         definitions: all_decl_defs.clone(),
         declarations: all_decl_defs.clone(),
         bases: all_decl_defs,
-        references: vec![],
+        references: HashSet::default(),
         implementations: vec![],
         source: SymbolSource::DMLObject(
             DMLObject::CompObject(object.key)),
@@ -1689,7 +1689,7 @@ fn new_symbol_from_arg(methref: &Arc<DMLMethodRef>,
         bases,
         definitions,
         declarations,
-        references: vec![],
+        references: HashSet::default(),
         implementations: vec![],
         source: SymbolSource::MethodArg(Arc::clone(methref),
                                         arg.name().clone()),
@@ -1762,7 +1762,7 @@ fn add_new_symbol_from_shallow(shallow: &DMLShallowObject,
         definitions,
         declarations,
         implementations: vec![],
-        references: vec![],
+        references: HashSet::default(),
         bases,
         source: SymbolSource::DMLObject(
             // TODO: Inefficient clone. Not terribly so, but worth
@@ -1844,7 +1844,7 @@ where
         definitions: vec![*sym.loc_span()],
         declarations: vec![*sym.loc_span()],
         implementations: vec![],
-        references: vec![],
+        references: HashSet::default(),
         bases: vec![],
         source: SymbolSource::MethodLocal(
             Arc::clone(method),
@@ -2072,18 +2072,6 @@ impl DeviceAnalysis {
         }
     }
 
-    fn inverse_references(&mut self) {
-        info!("Inverse map");
-        // Set up the inverse map of references->symbols
-        for symbol in self.symbol_info.all_symbols() {
-            debug!("Inverse of {:?}", symbol);
-            for ref_loc in &symbol.lock().unwrap().references {
-                self.reference_info.entry(*ref_loc)
-                    .or_default().push(Arc::clone(symbol));
-            }
-        }
-    }
-
     fn template_object_map(tt_info: &TemplateTraitInfo,
                            container: &StructureContainer)
                            -> HashMap<ZeroSpan, Vec<StructureKey>>{
@@ -2232,7 +2220,7 @@ impl DeviceAnalysis {
             device_obj: DMLObject::CompObject(device_key),
             templates: tt_info,
             symbol_info,
-            reference_info: ReferenceStorage::new(),
+            reference_info: ReferenceStorage::default(),
             template_object_implementation_map,
             path: root.path.clone(),
             clientpath: root.path.clone().into(),
@@ -2241,7 +2229,9 @@ impl DeviceAnalysis {
 
         device.match_references(&bases, &method_structure, &mut errors);
 
-        device.inverse_references();
+        // NOTE: This is when we previously pre-calculated the ref->symbol map, however
+        // the up-front analysis cost of this was too heavy
+        // device.inverse_references();
 
         info!("Invariant check");
         for obj in device.objects.values() {
@@ -2288,6 +2278,24 @@ impl DeviceAnalysis {
                 // }
             },
             _ => (),
+        }
+    }
+
+    pub fn symbols_of_ref(&self, loc: ZeroSpan) -> Vec<SymbolRef> {
+        // Would like to use .entry here, but it does not play nice with the
+        // mutable borrow of .reference_info and .symbol_info
+        let mut locked_info = self.reference_info.lock().unwrap();
+        if let Some(syms) = locked_info.get(&loc) {
+            syms.clone()
+        } else {
+            let mut syms = vec![];
+            for sym in self.symbol_info.all_symbols() {
+                if sym.lock().unwrap().references.contains(&loc) {
+                    syms.push(Arc::clone(sym));
+                }
+            }
+            locked_info.insert(loc, syms);
+            locked_info.get(&loc).unwrap().clone()
         }
     }
 }
