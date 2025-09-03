@@ -1132,24 +1132,26 @@ impl ToStructure<structure::ParameterContent> for Parameter {
     fn to_structure<'a>(content: &structure::ParameterContent,
                         report: &mut Vec<LocalDMLError>,
                         file: FileSpec<'a>) -> Option<Parameter> {
-        let (is_default, value, typed) = match &content.def {
-            structure::ParamDef::Set(assigntok, expr) => {
-                (assigntok.get_token()
-                 .map_or(false, |rt|rt.kind == TokenKind::Default),
-                 ExpressionKind::to_expression(expr, report, file).map(
-                     |e|ParamValue::Set(e)),
-                 None)
-            },
-            structure::ParamDef::Auto(tok) =>
-                (false,
-                 Some(ParamValue::Auto(ZeroSpan::from_range(tok.range(),
-                                                            file.path))),
-                 None),
-            structure::ParamDef::Typed(_, ty) =>
-                (false, None, to_type(ty, report, file)),
-            structure::ParamDef::Empty =>
-                (false, None, None),
-        };
+        // TODO: track whether this was a defining-declaration without type
+        // ("param foo := 1;") for purposes of checking when the provisional
+        // is activated
+        // TODO: We could consider warning here if ":=" syntax is used without
+        // provisional active?
+        let typed = content.typing.as_ref()
+            .and_then(|t|to_type(t, report, file));
+        let (is_default, value) = content.def.as_ref()
+            .map_or((false, None), |d| match d {
+                structure::ParamDef::Set(assigntok, expr) => {
+                    (assigntok.get_token()
+                     .map_or(false, |rt|rt.kind == TokenKind::Default),
+                     ExpressionKind::to_expression(expr, report, file).map(
+                         |e|ParamValue::Set(e)))
+                },
+                structure::ParamDef::Auto(tok) =>
+                    (false,
+                     Some(ParamValue::Auto(ZeroSpan::from_range(tok.range(),
+                                                                file.path)))),
+            });
         let object = DMLObjectCommon {
             name: DMLString::from_token(&content.name, file)?,
             span: ZeroSpan::from_range(content.range(), file.path),

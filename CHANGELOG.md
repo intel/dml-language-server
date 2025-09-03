@@ -7,6 +7,8 @@
 ## 0.9.13
 - Corrected the name of "explicit\_param\_decls" provisional. Note that it still
   has no semantic effect.
+- The parameter declaration patterns ":=" and ": \<type\> = \<val\>" are now
+  correctly parsed.
 
 ## 0.9.12
 - Added 'simics\_util\_vect' as a known provisional (with no DLS semantics)
