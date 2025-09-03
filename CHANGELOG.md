@@ -5,6 +5,8 @@
 # Change Log
 
 ## 0.9.13
+- Corrected the name of "explicit\_param\_decls" provisional. Note that it still
+  has no semantic effect.
 
 ## 0.9.12
 - Added 'simics\_util\_vect' as a known provisional (with no DLS semantics)
