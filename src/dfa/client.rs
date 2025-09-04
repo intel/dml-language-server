@@ -39,7 +39,7 @@ pub struct Diagnostic {
 impl From<lsp_types::Diagnostic> for Diagnostic {
     fn from(diag: lsp_types::Diagnostic) -> Diagnostic {
         Diagnostic {
-            line: diag.range.start.line + 1,
+            line: diag.range.start.line,
             desc: diag.message,
         }
     }
@@ -385,13 +385,15 @@ impl ClientInterface {
         }{}
     }
 
-    pub fn output_errors(&self) {
+    pub fn output_errors(&self, zero_indexed: bool) {
         for (path, diagnostics) in &self.diagnostics {
             for diag in diagnostics {
-                println!("{} line {}: {}",
-                         path.to_str().unwrap(),
-                         diag.line,
-                         diag.desc);
+                println!(
+                    "{} line {}: {}",
+                    path.to_str().unwrap(),
+                    diag.line + if zero_indexed { 0 } else { 1 },
+                    diag.desc
+                );
             }
         }
     }
