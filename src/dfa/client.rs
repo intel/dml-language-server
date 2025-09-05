@@ -385,13 +385,15 @@ impl ClientInterface {
         }{}
     }
 
-    pub fn output_errors(&self) {
+    pub fn output_errors(&self, zero_indexed: bool) {
         for (path, diagnostics) in &self.diagnostics {
             for diag in diagnostics {
-                println!("{} line {}: {}",
-                         path.to_str().unwrap(),
-                         diag.line,
-                         diag.desc);
+                println!(
+                    "{} line {}: {}",
+                    path.to_str().unwrap(),
+                    diag.line + if zero_indexed { 0 } else { 1 },
+                    diag.desc
+                );
             }
         }
     }
