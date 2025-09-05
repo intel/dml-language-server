@@ -59,7 +59,7 @@ impl LongLinesRule {
             },
         }
     }
-    pub fn check(&self, acc: &mut Vec<DMLStyleError>, row: usize, line: &str) {
+    pub fn check(&self, row: usize, line: &str, acc: &mut Vec<DMLStyleError>) {
         if !self.enabled { return; }
         let len = line.len().try_into().unwrap();
         if len > self.max_length {
@@ -95,7 +95,7 @@ pub struct IndentNoTabRule {
 }
 
 impl IndentNoTabRule {
-    pub fn check(&self, acc: &mut Vec<DMLStyleError>, row: usize, line: &str) {
+    pub fn check(&self, row: usize, line: &str, acc: &mut Vec<DMLStyleError>) {
         if !self.enabled { return; }
         let rowu32 = row.try_into().unwrap();
 
@@ -197,9 +197,9 @@ impl IndentCodeBlockRule {
             }
         }
     }
-    pub fn check(&self, acc: &mut Vec<DMLStyleError>,
-        args: Option<IndentCodeBlockArgs>)
-    {
+    pub fn check(&self,
+                 args: Option<IndentCodeBlockArgs>,
+                 acc: &mut Vec<DMLStyleError>) {
         if !self.enabled { return; }
         let Some(args) = args else { return; };
         if args.members_ranges.is_empty() { return; }
@@ -340,7 +340,9 @@ impl IndentClosingBraceRule {
         }
     }
 
-    pub fn check(&self, acc: &mut Vec<DMLStyleError>, args: Option<IndentClosingBraceArgs>) {
+    pub fn check(&self,
+                 args: Option<IndentClosingBraceArgs>,
+                 acc: &mut Vec<DMLStyleError>) {
         if !self.enabled { return; }
         let Some(args) = args else { return; };
 
@@ -489,8 +491,9 @@ impl IndentParenExprArgs {
 }
 
 impl IndentParenExprRule {
-    pub fn check(&self, acc: &mut Vec<DMLStyleError>,
-        args: Option<IndentParenExprArgs>) {
+    pub fn check(&self,
+                 args: Option<IndentParenExprArgs>,
+                 acc: &mut Vec<DMLStyleError>) {
         if !self.enabled { return; }
         let Some(args) = args else { return; };
         let expected_line_start = args.lparen.col_start.0 + 1;
@@ -573,9 +576,9 @@ impl IndentSwitchCaseRule {
             }
         }
     }
-    pub fn check(&self, acc: &mut Vec<DMLStyleError>,
-        args: Option<IndentSwitchCaseArgs>)
-    {
+    pub fn check(&self,
+                 args: Option<IndentSwitchCaseArgs>,
+                 acc: &mut Vec<DMLStyleError>) {
         if !self.enabled { return; }
         let Some(args) = args else { return; };
         if self.indentation_is_not_aligned(args.case_range, args.expected_depth) {
@@ -659,9 +662,9 @@ impl IndentEmptyLoopRule {
             }
         }
     }
-    pub fn check(&self, acc: &mut Vec<DMLStyleError>,
-        args: Option<IndentEmptyLoopArgs>)
-    {
+    pub fn check(&self,
+                 args: Option<IndentEmptyLoopArgs>,
+                 acc: &mut Vec<DMLStyleError>) {
         if !self.enabled { return; }
         let Some(args) = args else { return; };
         if self.indentation_is_not_aligned(args.semicolon_range, args.expected_depth) ||

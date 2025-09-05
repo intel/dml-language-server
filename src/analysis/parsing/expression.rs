@@ -42,7 +42,7 @@ impl TreeElement for UnaryExpressionContent {
         create_subs!(&self.operation, &self.expr)
     }
     fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, _aux: AuxParams) {
-        rules.nsp_unary.check(acc, NspUnaryArgs::from_unary_expr(self));
+        rules.nsp_unary.check(NspUnaryArgs::from_unary_expr(self), acc);
     }
 }
 
@@ -76,7 +76,7 @@ impl TreeElement for PostUnaryExpressionContent {
         create_subs!(&self.expr, &self.operation)
     }
     fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, _aux: AuxParams) {
-        rules.nsp_unary.check(acc, NspUnaryArgs::from_postunary_expr(self));
+        rules.nsp_unary.check(NspUnaryArgs::from_postunary_expr(self), acc);
     }
 }
 
@@ -95,7 +95,7 @@ impl TreeElement for BinaryExpressionContent {
         create_subs!(&self.left, &self.operation, &self.right)
     }
     fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, _aux: AuxParams) {
-        rules.sp_binop.check(acc, SpBinopArgs::from_binary_expression_content(self));
+        rules.sp_binop.check(SpBinopArgs::from_binary_expression_content(self), acc);
     }
 }
 
@@ -157,7 +157,7 @@ impl TreeElement for TertiaryExpressionContent {
                      &self.middle, &self.right_operation, &self.right)
     }
     fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, _aux: AuxParams) {
-        rules.sp_ternary.check(acc, SpTernaryArgs::from_tertiary_expression_content(self));
+        rules.sp_ternary.check(SpTernaryArgs::from_tertiary_expression_content(self), acc);
     }
 }
 
@@ -176,7 +176,7 @@ impl TreeElement for ParenExpressionContent {
         create_subs!(&self.lparen, &self.expr, &self.rparen)
     }
     fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, _aux: AuxParams) {
-        rules.indent_paren_expr.check(acc, IndentParenExprArgs::from_paren_expression(self));
+        rules.indent_paren_expr.check(IndentParenExprArgs::from_paren_expression(self), acc);
     }
 }
 
@@ -223,10 +223,10 @@ impl TreeElement for FunctionCallContent {
         }
     }
     fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, _aux: AuxParams) {
-        rules.nsp_funpar.check(acc, NspFunparArgs::from_function_call(self));
-        rules.nsp_inparen.check(acc, NspInparenArgs::from_function_call(self));
-        rules.sp_punct.check(acc, SpPunctArgs::from_function_call(self));
-        rules.indent_paren_expr.check(acc, IndentParenExprArgs::from_function_call(self));
+        rules.nsp_funpar.check(NspFunparArgs::from_function_call(self), acc);
+        rules.nsp_inparen.check(NspInparenArgs::from_function_call(self), acc);
+        rules.sp_punct.check(SpPunctArgs::from_function_call(self), acc);
+        rules.indent_paren_expr.check(IndentParenExprArgs::from_function_call(self), acc);
     }
 }
 
@@ -341,7 +341,7 @@ impl TreeElement for CastContent {
                      &self.comma, &self.to, &self.rparen)
     }
     fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, _aux: AuxParams) {
-        rules.indent_paren_expr.check(acc, IndentParenExprArgs::from_cast(self));
+        rules.indent_paren_expr.check(IndentParenExprArgs::from_cast(self), acc);
     }
 }
 
@@ -438,7 +438,7 @@ impl TreeElement for IndexContent {
         create_subs!(&self.array, &self.lbracket, &self.index, &self.rbracket)
     }
     fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, _aux: AuxParams) {
-        rules.nsp_inparen.check(acc, NspInparenArgs::from_index(self));
+        rules.nsp_inparen.check(NspInparenArgs::from_index(self), acc);
     }
 }
 
