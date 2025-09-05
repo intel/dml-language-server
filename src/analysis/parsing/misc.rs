@@ -594,8 +594,8 @@ impl TreeElement for CDeclContent {
                      &self.modifiers, &self.decl)
     }
     fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, _aux: AuxParams) {
-        rules.sp_ptrdecl.check(acc, SpPtrDeclArgs::from_cdecl(self));
-        rules.nsp_ptrdecl.check(acc, NspPtrDeclArgs::from_cdecl(self));
+        rules.sp_ptrdecl.check(SpPtrDeclArgs::from_cdecl(self), acc);
+        rules.nsp_ptrdecl.check(NspPtrDeclArgs::from_cdecl(self), acc);
     }
 }
 

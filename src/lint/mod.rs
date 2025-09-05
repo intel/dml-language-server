@@ -185,9 +185,9 @@ pub fn begin_style_check(ast: TopAst, file: String, rules: &CurrentRules) -> Res
     // Per line checks
     let lines: Vec<&str> = file.lines().collect();
     for (row, line) in lines.iter().enumerate() {
-        rules.indent_no_tabs.check(&mut linting_errors, row, line);
-        rules.long_lines.check(&mut linting_errors, row, line);
-        rules.nsp_trailing.check(&mut linting_errors, row, line);
+        rules.indent_no_tabs.check(row, line, &mut linting_errors);
+        rules.long_lines.check(row, line, &mut linting_errors);
+        rules.nsp_trailing.check(row, line, &mut linting_errors);
     }
 
     post_process_linting_errors(&mut linting_errors);

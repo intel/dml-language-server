@@ -66,28 +66,31 @@ impl SpReservedArgs {
         args_list
     }
     pub fn from_for(node: &ForContent) -> Vec<SpReservedArgs> {
-        let mut args_list = vec![];
-        args_list.push(SpReservedArgs {
-            before_range: None,
-            token_range: node.fortok.range(),
-            after_range: Some(node.lparen.range()),
-        });
+        let args_list = vec![
+            SpReservedArgs {
+                before_range: None,
+                token_range: node.fortok.range(),
+                after_range: Some(node.lparen.range()),
+            }
+        ];
         args_list
     }
     pub fn from_while(node: &WhileContent) -> Vec<SpReservedArgs> {
-        let mut args_list = vec![];
-        args_list.push(SpReservedArgs {
-            before_range: None,
-            token_range: node.whiletok.range(),
-            after_range: Some(node.lparen.range()),
-        });
+        let args_list = vec![
+            SpReservedArgs {
+                before_range: None,
+                token_range: node.whiletok.range(),
+                after_range: Some(node.lparen.range()),
+            }
+        ];
         args_list
     }
 }
 
 impl SpReservedRule {
-    pub fn check(&self, acc: &mut Vec<DMLStyleError>,
-        args: Vec<SpReservedArgs>) {
+    pub fn check(&self,
+                 args: Vec<SpReservedArgs>,
+                 acc: &mut Vec<DMLStyleError>) {
         if !self.enabled { return; }
         for arg in args {
             if let Some(before_range) = &arg.before_range {
@@ -208,8 +211,9 @@ impl SpBracesArgs {
 }
 
 impl SpBracesRule {
-    pub fn check(&self, acc: &mut Vec<DMLStyleError>,
-        ranges: Option<SpBracesArgs>) {
+    pub fn check(&self,
+                 ranges: Option<SpBracesArgs>,
+                 acc: &mut Vec<DMLStyleError>) {
         if !self.enabled { return; }
         if let Some(location) = ranges {
             if (location.lbrace.row_end == location.body_start.row_start)
@@ -260,8 +264,9 @@ impl SpBinopArgs {
 }
 
 impl SpBinopRule {
-    pub fn check(&self, acc: &mut Vec<DMLStyleError>,
-        ranges: Option<SpBinopArgs>) {
+    pub fn check(&self,
+                 ranges: Option<SpBinopArgs>,
+                 acc: &mut Vec<DMLStyleError>) {
         if !self.enabled { return; }
         if let Some(location) = ranges {
             if (location.left.row_end == location.operator.row_start)
@@ -322,8 +327,9 @@ fn no_gap(left: ZeroRange, right: ZeroRange) -> bool {
 }
 
 impl SpTernaryRule {
-    pub fn check(&self, acc: &mut Vec<DMLStyleError>,
-        ranges: Option<SpTernaryArgs>) {
+    pub fn check(&self,
+                 ranges: Option<SpTernaryArgs>,
+                 acc: &mut Vec<DMLStyleError>) {
         if !self.enabled { return; }
         if let Some(SpTernaryArgs { left, left_op, middle, right_op, right }) = ranges {
             if no_gap(left, left_op) {
@@ -456,8 +462,9 @@ impl SpPunctArgs {
 }
 
 impl SpPunctRule {
-    pub fn check(&self, acc: &mut Vec<DMLStyleError>,
-        ranges: Option<SpPunctArgs>) {
+    pub fn check(&self,
+                 ranges: Option<SpPunctArgs>,
+                 acc: &mut Vec<DMLStyleError>) {
         if !self.enabled { return; }
         if let Some(args) = ranges {
             for (before_range, punct_range, after_range) in
@@ -534,8 +541,8 @@ impl NspFunparArgs {
 
 impl NspFunparRule {
     pub fn check(&self,
-                 acc: &mut Vec<DMLStyleError>,
-                 range: Option<NspFunparArgs>) {
+                 range: Option<NspFunparArgs>,
+                 acc: &mut Vec<DMLStyleError>) {
         if !self.enabled { return; }
         if let Some(gap) = range {
             acc.push(self.create_err(gap));
@@ -625,8 +632,8 @@ impl NspInparenArgs {
 
 impl NspInparenRule {
     pub fn check(&self,
-                 acc: &mut Vec<DMLStyleError>,
-                 ranges: Option<NspInparenArgs>) {
+                 ranges: Option<NspInparenArgs>,
+                 acc: &mut Vec<DMLStyleError>) {
         if !self.enabled { return; }
         if let Some(location) =  ranges {
             if (location.opening.row_end == location.content_start.row_start)
@@ -692,8 +699,8 @@ impl NspUnaryArgs {
 
 impl NspUnaryRule {
     pub fn check(&self,
-                 acc: &mut Vec<DMLStyleError>,
-                 range: Option<NspUnaryArgs>) {
+                 range: Option<NspUnaryArgs>,
+                 acc: &mut Vec<DMLStyleError>) {
         if !self.enabled { return; }
         if let Some(gap) = range {
             acc.push(self.create_err(gap));
@@ -721,7 +728,7 @@ pub struct NspTrailingRule {
 }
 
 impl NspTrailingRule {
-    pub fn check(&self, acc: &mut Vec<DMLStyleError>, row: usize, line: &str) {
+    pub fn check(&self, row: usize, line: &str, acc: &mut Vec<DMLStyleError>) {
         if !self.enabled { return; }
         let len = line.len().try_into().unwrap();
         let row_u32 = row.try_into().unwrap();
@@ -780,32 +787,29 @@ impl SpPtrDeclArgs {
         let operator_ranges: Vec<ZeroRange> = extract_operator_ranges_from_cdecl(node);
         Some(SpPtrDeclArgs {
             type_name_range: node.base.range(),
-            operator_ranges: operator_ranges,
+            operator_ranges,
         })
     }
 }
 
 fn has_space_between(range_left: &ZeroRange,
     range_right: &ZeroRange) -> bool {
-    return !((range_left.row_end == range_right.row_start)
+    !((range_left.row_end == range_right.row_start)
     && (range_left.col_end == range_right.col_start))
 }
 
 impl SpPtrDeclRule {
-    pub fn check(&self, acc: &mut Vec<DMLStyleError>,
-        ranges: Option<SpPtrDeclArgs>) {
+    pub fn check(&self,
+                 ranges: Option<SpPtrDeclArgs>,
+                 acc: &mut Vec<DMLStyleError>) {
         if !self.enabled { return; }
-        match ranges {
-            None => return,
-            Some(ranges) => {
-                if ranges.operator_ranges.iter().any(|op_range| {
-                    !has_space_between(&ranges.type_name_range, op_range)
-                }) {
-                    acc.push(self.create_err(ranges.type_name_range));
-                }
-            } 
+        if let Some(ranges) = ranges {
+            if ranges.operator_ranges.iter().any(|op_range| {
+                !has_space_between(&ranges.type_name_range, op_range)
+            }) {
+                acc.push(self.create_err(ranges.type_name_range));
+            }
         }
-        
     }
 }
 
@@ -839,21 +843,22 @@ impl NspPtrDeclArgs {
         let operator_ranges: Vec<ZeroRange> = extract_operator_ranges_from_cdecl(node);
         let rightmost_multiply: Option<ZeroRange> = operator_ranges.last().cloned();
         Some(NspPtrDeclArgs {
-            rightmost_multiply: rightmost_multiply,
+            rightmost_multiply,
             identifier_range: node.decl.range()
         })
     }
 }
 
 impl NspPtrDeclRule {
-    pub fn check(&self, acc: &mut Vec<DMLStyleError>,
-        ranges: Option<NspPtrDeclArgs>) {
+    pub fn check(&self,
+                 ranges: Option<NspPtrDeclArgs>,
+                 acc: &mut Vec<DMLStyleError>) {
         if !self.enabled { return; }
         match ranges {
-            None => return,
+            None => (),
             Some(ranges) => {
                 match ranges.rightmost_multiply{
-                    None => return,
+                    None => (),
                     Some(op_range) => {
                         if has_space_between(&op_range, &ranges.identifier_range) {
                             acc.push(self.create_err(ranges.identifier_range));
@@ -862,7 +867,6 @@ impl NspPtrDeclRule {
                 }
             } 
         }
-        
     }
 }
 
