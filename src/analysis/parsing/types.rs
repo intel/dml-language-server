@@ -55,9 +55,9 @@ impl TreeElement for StructTypeContent {
         errors
     }
     fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, aux: AuxParams) {
-        rules.indent_code_block.check(acc, IndentCodeBlockArgs::from_struct_type_content(self, aux.depth));
-        rules.indent_closing_brace.check(acc, IndentClosingBraceArgs::from_struct_type_content(self, aux.depth));
-        rules.sp_brace.check(acc, SpBracesArgs::from_struct_type_content(self));
+        rules.indent_code_block.check(IndentCodeBlockArgs::from_struct_type_content(self, aux.depth), acc);
+        rules.indent_closing_brace.check(IndentClosingBraceArgs::from_struct_type_content(self, aux.depth), acc);
+        rules.sp_brace.check(SpBracesArgs::from_struct_type_content(self), acc);
     }
     fn should_increment_depth(&self) -> bool {
         true
@@ -138,9 +138,9 @@ impl TreeElement for LayoutContent {
         errors
     }
     fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, aux: AuxParams) {
-        rules.indent_code_block.check(acc, IndentCodeBlockArgs::from_layout_content(self, aux.depth));
-        rules.indent_closing_brace.check(acc, IndentClosingBraceArgs::from_layout_content(self, aux.depth));
-        rules.sp_brace.check(acc, SpBracesArgs::from_layout_content(self));
+        rules.indent_code_block.check(IndentCodeBlockArgs::from_layout_content(self, aux.depth), acc);
+        rules.indent_closing_brace.check(IndentClosingBraceArgs::from_layout_content(self, aux.depth), acc);
+        rules.sp_brace.check(SpBracesArgs::from_layout_content(self), acc);
     }
     fn should_increment_depth(&self) -> bool {
         true
@@ -315,9 +315,9 @@ impl TreeElement for BitfieldsContent {
         errors
     }
     fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, aux: AuxParams) {
-        rules.sp_brace.check(acc, SpBracesArgs::from_bitfields_content(self));
-        rules.indent_code_block.check(acc, IndentCodeBlockArgs::from_bitfields_content(self, aux.depth));
-        rules.indent_closing_brace.check(acc, IndentClosingBraceArgs::from_bitfields_content(self, aux.depth));
+        rules.sp_brace.check(SpBracesArgs::from_bitfields_content(self), acc);
+        rules.indent_code_block.check(IndentCodeBlockArgs::from_bitfields_content(self, aux.depth), acc);
+        rules.indent_closing_brace.check(IndentClosingBraceArgs::from_bitfields_content(self, aux.depth), acc);
     }
     fn should_increment_depth(&self) -> bool {
         true
