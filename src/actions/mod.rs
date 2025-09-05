@@ -28,7 +28,7 @@ use crate::analysis::structure::expressions::Expression;
 use crate::concurrency::{Jobs, ConcurrentJob};
 use crate::config::{Config, DeviceContextMode};
 use crate::file_management::{PathResolver, CanonPath};
-use crate::lint::{LintCfg, maybe_parse_lint_cfg};
+use crate::lint::{LintCfg, maybe_parse_lint_cfg, parse_lint_cfg_silent};
 use crate::lsp_data;
 use crate::lsp_data::*;
 use crate::lsp_data::ls_util::{dls_to_range, dls_to_location};
@@ -344,7 +344,7 @@ impl <O: Output> InitActionContext<O> {
     ) -> InitActionContext<O> {
         let lint_config = Arc::new(Mutex::new(
             config.lock().unwrap().lint_cfg_path.clone()
-                .and_then(maybe_parse_lint_cfg)
+                .and_then(parse_lint_cfg_silent)
                 .unwrap_or_default()));
         InitActionContext {
             vfs,
@@ -401,13 +401,17 @@ impl <O: Output> InitActionContext<O> {
         }
     }
 
-    fn update_linter_config(&self, _out: &O) {
+    fn update_linter_config(&self, out: &O) {
         trace!("Updating linter config");
         if let Ok(config) = self.config.lock() {
-            *self.lint_config.lock().unwrap() =
-                config.lint_cfg_path.clone()
-                .and_then(maybe_parse_lint_cfg)
-                .unwrap_or_default();
+            if let Some(ref lint_path) = config.lint_cfg_path {
+                if let Some(cfg) = maybe_parse_lint_cfg(lint_path.clone(), out) {
+                    *self.lint_config.lock().unwrap() = cfg;
+                }
+            } else {
+                // If no lint config path is set, use default
+                *self.lint_config.lock().unwrap() = LintCfg::default();
+            }
         }
     }
 

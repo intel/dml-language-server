@@ -18,6 +18,7 @@ use crate::lint::rules::indentation::{MAX_LENGTH_DEFAULT,
                                       INDENTATION_LEVEL_DEFAULT,
                                       setup_indentation_size
                                     };
+use crate::server::{maybe_notify_unknown_lint_fields, Output};                                    
 
 pub fn parse_lint_cfg(path: PathBuf) -> Result<(LintCfg, Vec<String>), String> {
     debug!("Reading Lint configuration from {:?}", path);
@@ -33,11 +34,30 @@ pub fn parse_lint_cfg(path: PathBuf) -> Result<(LintCfg, Vec<String>), String> {
     Ok((cfg, unknowns))
 }
 
-pub fn maybe_parse_lint_cfg(path: PathBuf) -> Option<LintCfg> {
+pub fn maybe_parse_lint_cfg<O: Output>(path: PathBuf, out: &O) -> Option<LintCfg> {
     match parse_lint_cfg(path) {
         Ok((mut cfg, unknowns)) => {
             if !unknowns.is_empty() {
-                // Log the unknown fields as a comma-separated list
+                // Send visible warning to client
+                maybe_notify_unknown_lint_fields(out, &unknowns);
+            }
+            setup_indentation_size(&mut cfg);
+            Some(cfg)
+        },
+        Err(e) => {
+            error!("Failed to parse linting CFG: {}", e);
+            None
+        }
+    }
+}
+
+// Like maybe_parse_lint_cfg, but silent: just logs errors
+// To use during initialization, when no output param is available
+pub fn parse_lint_cfg_silent(path: PathBuf) -> Option<LintCfg> {
+    match parse_lint_cfg(path) {
+        Ok((mut cfg, unknowns)) => {
+            if !unknowns.is_empty() {
+                // During initialization, just log - no output available yet
                 error!("Unknown lint config fields: {}", unknowns.join(", "));
             }
             setup_indentation_size(&mut cfg);
