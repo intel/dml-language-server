@@ -677,8 +677,20 @@ pub struct NspUnaryRule {
 pub type NspUnaryArgs = ZeroRange;
 
 impl NspUnaryArgs {
+    fn is_exception(node: &UnaryExpressionContent) -> bool {
+        // Defined keyword counts as UnaryOp for DLS, but we allow space after it
+        match node.operation.get_token() {
+            Some(token) => match token.kind {
+                TokenKind::Defined => true,
+                _ => false,
+            },
+            None => false,
+        }
+    }
+
     pub fn from_unary_expr(node: &UnaryExpressionContent)
                            -> Option<NspUnaryArgs> {
+        if Self::is_exception(node) { return None; }
         let mut gap = node.range();
         gap.col_start = node.operation.range().col_end;
         gap.col_end = node.expr.range().col_start;
