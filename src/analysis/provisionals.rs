@@ -14,7 +14,7 @@ use crate::analysis::FileSpec;
 #[strum(serialize_all = "snake_case")]
 pub enum Provisional {
     // TODO: implement the neccessary checks for explicit params
-    ExplicitParamDecl,
+    ExplicitParamDecls,
     SimicsUtilVect,
 }
 
@@ -69,7 +69,7 @@ mod test {
     #[test]
     fn test_provisionals_parsing() {
         for (s, p) in [
-            ("explicit_param_decl", Provisional::ExplicitParamDecl),
+            ("explicit_param_decls", Provisional::ExplicitParamDecls),
             ("simics_util_vect", Provisional::SimicsUtilVect),
         ] {
             assert_eq!(Provisional::from_str(s), Ok(p));

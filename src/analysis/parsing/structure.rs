@@ -332,11 +332,9 @@ fn parse_method(modifier: Option<LeafToken>,
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ParamDef {
-    // Either default or =
+    // default | = <expr>
     Set(LeafToken, Expression),
     Auto(LeafToken),
-    Typed(LeafToken, CTypeDecl),
-    Empty,
 }
 
 impl TreeElement for ParamDef {
@@ -344,18 +342,12 @@ impl TreeElement for ParamDef {
         match self {
             Self::Set(kw, expr) => Range::combine(kw.range(), expr.range()),
             Self::Auto(tok) => tok.range(),
-            Self::Typed(colon, typedecl) =>
-                Range::combine(colon.range(), typedecl.range()),
-            Self::Empty => ZeroRange::invalid(),
         }
     }
     fn subs(&self) -> TreeElements<'_> {
         match self {
             Self::Set(kw, expr) => create_subs!(kw, expr),
             Self::Auto(tok) => create_subs!(tok),
-            Self::Typed(colon, typedecl) =>
-                create_subs!(colon, typedecl),
-            Self::Empty => vec![],
         }
     }
 }
@@ -364,7 +356,9 @@ impl TreeElement for ParamDef {
 pub struct ParameterContent {
     pub param: LeafToken,
     pub name: LeafToken,
-    pub def: ParamDef,
+    pub colon: Option<LeafToken>,
+    pub typing: Option<CTypeDecl>,
+    pub def: Option<ParamDef>,
     pub semi: LeafToken,
 }
 
@@ -377,6 +371,8 @@ impl TreeElement for ParameterContent {
     fn subs(&self) -> TreeElements<'_> {
         create_subs!(&self.param,
                      &self.name,
+                     &self.colon,
+                     &self.typing,
                      &self.def,
                      &self.semi)
     }
@@ -388,23 +384,44 @@ impl Parse<DMLObjectContent> for ParameterContent {
         let param = inner.expect_next_kind(stream, TokenKind::Param);
         let name = inner.expect_next_filter(
             stream, objident_filter, "parameter name");
-        let def = match inner.peek_kind(stream) {
-            Some(TokenKind::Assign) | Some(TokenKind::Default) => {
-                let assign = inner.next_leaf(stream);
-                let value = Expression::parse(&inner, stream, file_info);
-                ParamDef::Set(assign, value)
-            },
-            Some(TokenKind::Auto) => ParamDef::Auto(inner.next_leaf(stream)),
-            Some(TokenKind::Colon) => {
-                let colon = inner.next_leaf(stream);
-                let typed = CTypeDecl::parse(&inner, stream, file_info);
-                ParamDef::Typed(colon, typed)
-            },
-            _ => ParamDef::Empty,
+        let colon = if inner.peek_kind(stream) == Some(TokenKind::Colon) {
+            Some(inner.next_leaf(stream))
+        } else {
+            None
+        };
+        fn parse_assign(context: &mut ParseContext,
+                        stream: &mut FileParser<'_>,
+                        file_info: &FileInfo) -> Option<ParamDef> {
+            match context.peek_kind(stream) {
+                Some(TokenKind::Assign) | Some(TokenKind::Default) => {
+                    let assign = context.next_leaf(stream);
+                    let value = Expression::parse(context, stream, file_info);
+                    Some(ParamDef::Set(assign, value))
+                },
+                Some(TokenKind::Auto) =>
+                    Some(ParamDef::Auto(context.next_leaf(stream))),
+                _ => None
+            }
+        }
+
+        let (typing, def) = match inner.peek_kind(stream) {
+            Some(TokenKind::Assign | TokenKind::Default | TokenKind::Auto) =>
+                (None, parse_assign(&mut inner, stream, file_info)),
+            _ if colon.is_some() =>
+                (Some(CTypeDecl::parse(&inner, stream, file_info)),
+                 if matches!(inner.peek_kind(stream),
+                             Some(TokenKind::Assign
+                                  | TokenKind::Default
+                                  | TokenKind::Auto)) {
+                     parse_assign(&mut inner, stream, file_info)
+                 } else {
+                     None
+                 }),
+            _ => (None, None),
         };
         let semi = outer.expect_next_kind(stream, TokenKind::SemiColon);
         DMLObjectContent::Parameter(ParameterContent {
-            param, name, def, semi
+            param, name, colon, typing, def, semi
         }).into()
     }
 }
@@ -722,7 +739,7 @@ fn check_dmlobject_kind(obj: &DMLObjectContent, _file: &TextFile) ->
         trace!("Checking kind restriction on {:?}", obj);
         match obj {
             DMLObjectContent::Parameter(paramcontent) => {
-                if let ParamDef::Typed(_, _) = &paramcontent.def {
+                if paramcontent.typing.is_some() {
                     return vec![LocalDMLError {
                         range: obj.range(),
                         description: "Typed parameter declaration only \
