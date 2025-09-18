@@ -496,6 +496,17 @@ impl TreeElement for HashIfContent {
                      &self.truebranch,
                      &self.elsebranch)
     }
+    fn style_check(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, mut aux: AuxParams) {
+        self.evaluate_rules(acc, rules, aux);
+        self.cond.style_check(acc, rules, aux);
+
+        if let Content::Some(statement::StatementContent::Compound(_))
+            = self.truebranch.content.as_ref() {
+            aux.depth -= 1;
+        }
+        self.truebranch.style_check(acc, rules, aux);
+        self.elsebranch.style_check(acc, rules, aux);
+    }
 }
 
 impl Parse<StatementContent> for HashIfContent {
