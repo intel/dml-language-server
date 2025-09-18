@@ -659,8 +659,20 @@ impl TopLevel {
             |stmnt|ObjectDecl::always(stmnt)).collect();
         let mut errors = statements.errors.iter().map(
             |stmnt|ObjectDecl::always(stmnt)).collect();
-        let mut ineachs = statements.ineachs.iter().map(
-            |stmnt|ObjectDecl::always(stmnt)).collect();
+        let mut ineachs = vec![];
+
+        for ineach in &statements.ineachs {
+            let spec = flatten_hashif_branch(StatementContext::Object,
+                                             &ineach.statements,
+                                             vec![], report);
+            ineachs.push(
+                ObjectDecl {
+                    cond: ExistCondition::Always,
+                    obj: ineach.clone(),
+                    spec,
+                });
+        }
+
         let mut templates = vec![];
         let mut loggroups = vec![];
         let mut constants = vec![];
