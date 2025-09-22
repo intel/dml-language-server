@@ -31,7 +31,7 @@ pub struct SpReservedRule {
 pub struct SpReservedArgs {
     before_range: Option<ZeroRange>,
     token_range: ZeroRange,
-    after_range: Option<ZeroRange>,
+    after_range: ZeroRange,
 }
 
 impl SpReservedArgs {
@@ -41,7 +41,7 @@ impl SpReservedArgs {
             args_list.push(SpReservedArgs {
                 before_range: None,
                 token_range: node.after.range(),
-                after_range: Some(timer.range()),
+                after_range: timer.range(),
             });
         }
         args_list
@@ -52,14 +52,14 @@ impl SpReservedArgs {
         args_list.push(SpReservedArgs {
             before_range: None,
             token_range: node.iftok.range(),
-            after_range: Some(node.lparen.range()),
+            after_range: node.lparen.range(),
         });
 
         if let Some((else_tok, elsebranch)) = &node.elsebranch {
             args_list.push(SpReservedArgs {
                 before_range: Some(node.truebranch.range()),
                 token_range: else_tok.range(),
-                after_range: Some(elsebranch.range()),
+                after_range: elsebranch.range(),
             });
         }
 
@@ -70,7 +70,7 @@ impl SpReservedArgs {
             SpReservedArgs {
                 before_range: None,
                 token_range: node.fortok.range(),
-                after_range: Some(node.lparen.range()),
+                after_range: node.lparen.range(),
             }
         ];
         args_list
@@ -80,7 +80,7 @@ impl SpReservedArgs {
             SpReservedArgs {
                 before_range: None,
                 token_range: node.whiletok.range(),
-                after_range: Some(node.lparen.range()),
+                after_range: node.lparen.range(),
             }
         ];
         args_list
@@ -103,15 +103,13 @@ impl SpReservedRule {
                     );
                 }
             }
-            if let Some(after_range) = &arg.after_range {
-                if (arg.token_range.row_end == after_range.row_start)
-                    && (arg.token_range.col_end == after_range.col_start) {
-                    acc.push(
-                        self.create_err(Range::combine(
-                            arg.token_range, *after_range
-                        ))
-                    );
-                }
+            if (arg.token_range.row_end == arg.after_range.row_start)
+                && (arg.token_range.col_end == arg.after_range.col_start) {
+                acc.push(
+                    self.create_err(Range::combine(
+                        arg.token_range, arg.after_range
+                    ))
+                );
             }
         }
     }
@@ -769,15 +767,12 @@ pub struct SpPtrDeclArgs {
 fn extract_operator_ranges_from_cdecl(node: &CDeclContent) -> Vec<ZeroRange> {
     node.modifiers.iter()
             .filter_map(|m| {
-                match m {
-                    LeafToken::Actual(token) => {
-                        match token.kind {
-                            TokenKind::Multiply => Some(m.range()),
-                            _ => None
-                        }
+                if let LeafToken::Actual(token) = m {
+                    if token.kind == TokenKind::Multiply {
+                        return Some(m.range());
                     }
-                    LeafToken::Missing(_) => None
                 }
+                None
             }).collect()
 }
 
@@ -854,18 +849,12 @@ impl NspPtrDeclRule {
                  ranges: Option<NspPtrDeclArgs>,
                  acc: &mut Vec<DMLStyleError>) {
         if !self.enabled { return; }
-        match ranges {
-            None => (),
-            Some(ranges) => {
-                match ranges.rightmost_multiply{
-                    None => (),
-                    Some(op_range) => {
-                        if has_space_between(&op_range, &ranges.identifier_range) {
-                            acc.push(self.create_err(ranges.identifier_range));
-                        }
-                    }
+        if let Some(ranges) = ranges {
+            if let Some(op_range) = ranges.rightmost_multiply {
+                if has_space_between(&op_range, &ranges.identifier_range) {
+                    acc.push(self.create_err(ranges.identifier_range));
                 }
-            } 
+            }
         }
     }
 }
