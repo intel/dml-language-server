@@ -193,9 +193,9 @@ struct LintAnnotations {
 }
 
 lazy_static! {
-    // matches <non-comment?> // dls-lint: <OPERATION> = <IDENT>
+    // matches <non-comment?> // dml-lint: <OPERATION> = <IDENT>
     static ref LINT_ANNOTATION: Regex = Regex::new(
-        r"^(.*)\/\/\s*dls-lint:\s+([a-z-A-Z]+)\s*=\s*([^\s]+)\s*$")
+        r"^(.*)\/\/\s*dml-lint:\s+([a-z-A-Z]+)\s*=\s*([^\s]+)\s*$")
         .unwrap();
     static ref JUST_WHITESPACE: Regex = Regex::new(r"^\s*$").unwrap();
 }
@@ -245,7 +245,7 @@ fn obtain_lint_annotations(file: &str) -> (Vec<DMLStyleError>,
                                 op_capture.start() as u32,
                                 op_capture.end() as u32),
                             description: format!(
-                                "Invalid command '{}' in dls-lint \
+                                "Invalid command '{}' in dml-lint \
                                  annotation.", c),
                         },
                         rule_ident: "LintCfg",
@@ -303,7 +303,7 @@ fn obtain_lint_annotations(file: &str) -> (Vec<DMLStyleError>,
                     last_line as u32,
                     last_line as u32,
                     0, 0),
-                description: "dls-lint annotations without effect at \
+                description: "dml-lint annotations without effect at \
                               end of file."
                     .to_string(),
             },
@@ -443,14 +443,14 @@ pub mod tests {
         use crate::lint::rules::indentation::*;
         use crate::lint::rules::Rule;
 
-        let source = "// dls-lint: allow=long_lines
-                      // dls-lint: allow-file=indent_empty_loop
-                      // dls-lint: allow=indent_switch_case
-                      // dls-lint: allow=unknown_rule
-                      // dls-lint: configure=not_valid
+        let source = "// dml-lint: allow=long_lines
+                      // dml-lint: allow-file=indent_empty_loop
+                      // dml-lint: allow=indent_switch_case
+                      // dml-lint: allow=unknown_rule
+                      // dml-lint: configure=not_valid
                       local int foo = 5;
-                      local bool bar = 0; // dls-lint: allow=indent_paren_expr
-                      // dls-lint: allow=long_lines";
+                      local bool bar = 0; // dml-lint: allow=indent_paren_expr
+                      // dml-lint: allow=long_lines";
         let (errs, mut annotations) = obtain_lint_annotations(source);
         let simplified_errs = errs.into_iter()
             .map(|err|
@@ -471,9 +471,9 @@ pub mod tests {
             .collect::<Vec<_>>();
         assert_eq!(simplified_errs,
                    vec![(3, "Invalid lint rule target 'unknown_rule'.".to_string()),
-                        (4, "Invalid command 'configure' in dls-lint \
+                        (4, "Invalid command 'configure' in dml-lint \
                              annotation.".to_string()),
-                        (7, "dls-lint annotations without effect at \
+                        (7, "dml-lint annotations without effect at \
                              end of file.".to_string())]);
         assert_eq!(annotations.whole_file.iter().collect::<Vec<_>>(),
                    vec![
@@ -514,18 +514,18 @@ pub mod tests {
             "
 dml 1.4;
 
-// dls-lint: allow-file=nsp_unary
+// dml-lint: allow-file=nsp_unary
 
 method my_method() {
     if (true ++) {
-    // dls-lint: allow=indent_closing_brace
+    // dml-lint: allow=indent_closing_brace
         return; }
     if (true) {
-        return; } // dls-lint: allow=indent_closing_brace
+        return; } // dml-lint: allow=indent_closing_brace
     if (true) {
         return; }
 }}
-// dls-lint: allow=long_lines
+// dml-lint: allow=long_lines
 method my_method() { /* now THIS is a long line. but we will allow it just this once*/ }
 method my_method() { /* however, this long line will not be allowed even though its the same*/ }
 ";
