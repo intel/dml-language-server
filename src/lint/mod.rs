@@ -1,15 +1,19 @@
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
+use lazy_static::lazy_static;
 use log::{debug, error, trace};
 use serde::{Deserialize, Serialize};
+use regex::Regex;
 use rules::{instantiate_rules, CurrentRules, RuleType};
 use rules::{spacing::{SpBraceOptions, SpPunctOptions, NspFunparOptions,
                       NspInparenOptions, NspUnaryOptions, NspTrailingOptions},
                       indentation::{LongLineOptions, IndentSizeOptions, IndentCodeBlockOptions,
                                     IndentNoTabOptions, IndentClosingBraceOptions, IndentParenExprOptions, IndentSwitchCaseOptions, IndentEmptyLoopOptions},
                     };
-use crate::analysis::{DMLError, IsolatedAnalysis, LocalDMLError};
+use crate::analysis::{DMLError, IsolatedAnalysis, LocalDMLError, ZeroRange};
 use crate::analysis::parsing::tree::TreeElement;
 use crate::file_management::CanonPath;
 use crate::vfs::{Error, TextFile};
@@ -131,7 +135,7 @@ impl LinterAnalysis {
         debug!("local linting for: {:?}", path);
         let canonpath: CanonPath = path.into();
         let rules =  instantiate_rules(&cfg);
-        let local_lint_errors = begin_style_check(original_analysis.ast, file.text, &rules)?;
+        let local_lint_errors = begin_style_check(original_analysis.ast, &file.text, &rules)?;
         let mut lint_errors = vec![];
         for entry in local_lint_errors {
             let ident = entry.rule_ident;
@@ -153,9 +157,10 @@ impl LinterAnalysis {
     }
 }
 
-pub fn begin_style_check(ast: TopAst, file: String, rules: &CurrentRules) -> Result<Vec<DMLStyleError>, Error> {
+pub fn begin_style_check(ast: TopAst, file: &str, rules: &CurrentRules) -> Result<Vec<DMLStyleError>, Error> {
+    let (mut invalid_lint_annot, lint_annot) = obtain_lint_annotations(file);
     let mut linting_errors: Vec<DMLStyleError> = vec![];
-    ast.style_check(&mut linting_errors, rules, AuxParams { depth: 0 });      
+    ast.style_check(&mut linting_errors, rules, AuxParams { depth: 0 });
 
     // Per line checks
     let lines: Vec<&str> = file.lines().collect();
@@ -165,9 +170,148 @@ pub fn begin_style_check(ast: TopAst, file: String, rules: &CurrentRules) -> Res
         rules.nsp_trailing.check(&mut linting_errors, row, line);
     }
 
+    // Do this _before_ post-process, since post-process may incorrectly
+    // remove errors based on disabled lints
+    remove_disabled_lints(&mut linting_errors, lint_annot);
     post_process_linting_errors(&mut linting_errors);
 
+    linting_errors.append(&mut invalid_lint_annot);
     Ok(linting_errors)
+}
+
+// NOTE: this could in theory be expanded to allow us to settings for specific
+// lints from specific lines/files
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+enum LintAnnotation {
+    Allow(RuleType),
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+struct LintAnnotations {
+    line_specific: HashMap<u32, HashSet<LintAnnotation>>,
+    whole_file: HashSet<LintAnnotation>,
+}
+
+lazy_static! {
+    // matches <non-comment?> // dml-lint: <OPERATION> = <IDENT>
+    static ref LINT_ANNOTATION: Regex = Regex::new(
+        r"^(.*)\/\/\s*dml-lint:\s+([a-z-A-Z]+)\s*=\s*([^\s]+)\s*$")
+        .unwrap();
+    static ref JUST_WHITESPACE: Regex = Regex::new(r"^\s*$").unwrap();
+}
+
+fn obtain_lint_annotations(file: &str) -> (Vec<DMLStyleError>,
+                                           LintAnnotations) {
+    let mut annotations = LintAnnotations::default();
+    let mut incorrect_annotations = vec![];
+    // In order to allow stacking of lint annotations, we store them
+    // in a set, stacking them up until we find a line without a leading
+    // annotation
+    let mut unapplied_annotations: HashSet<LintAnnotation> = HashSet::default();
+    enum Operation {
+        Allow,
+        AllowForFile,
+    }
+    fn apply_annotations(row: u32,
+                         to_apply: &mut HashSet<LintAnnotation>,
+                         insert_into: &mut HashMap<u32,
+                                                   HashSet<LintAnnotation>>) {
+        if to_apply.is_empty() {
+            return;
+        }
+        let mut new_hashset = HashSet::default();
+        std::mem::swap(&mut new_hashset, to_apply);
+        insert_into.insert(row, new_hashset);
+    }
+
+    let mut last_line = 0;
+    for (row, line) in file.lines().enumerate() {
+        last_line = row;
+        if let Some(capture) = LINT_ANNOTATION.captures(line) {
+            let has_pre = capture.get(1)
+                .map_or(false,
+                        |m|!m.is_empty() &&
+                        JUST_WHITESPACE.captures(m.as_str()).is_none());
+            let op_capture = capture.get(2).unwrap();
+            let operation = match op_capture.as_str() {
+                "allow" => Operation::Allow,
+                "allow-file" => Operation::AllowForFile,
+                c => {
+                    incorrect_annotations.push(DMLStyleError {
+                        error: LocalDMLError {
+                            range: ZeroRange::from_u32(
+                                row as u32,
+                                row as u32,
+                                op_capture.start() as u32,
+                                op_capture.end() as u32),
+                            description: format!(
+                                "Invalid command '{}' in dml-lint \
+                                 annotation.", c),
+                        },
+                        rule_ident: "LintCfg",
+                        rule_type: RuleType::Configuration,
+                    });
+                    continue;
+                },
+            };
+            let target_capture = capture.get(3).unwrap();
+            let Ok(target) = RuleType::from_str(target_capture.as_str())
+            else {
+                incorrect_annotations.push(DMLStyleError {
+                    error: LocalDMLError {
+                        range: ZeroRange::from_u32(
+                            row as u32,
+                            row as u32,
+                            target_capture.start() as u32,
+                            target_capture.end() as u32),
+                        description: format!(
+                            "Invalid lint rule target '{}'.",
+                            target_capture.as_str()),
+                    },
+                    rule_ident: "LintCfg",
+                    rule_type: RuleType::Configuration,
+                });
+                continue;
+            };
+            match operation {
+                Operation::AllowForFile => {
+                    annotations.whole_file.insert(
+                        LintAnnotation::Allow(target));
+                },
+                Operation::Allow => {
+                    unapplied_annotations.insert(
+                        LintAnnotation::Allow(target));
+                    if has_pre {
+                        apply_annotations(row as u32,
+                                          &mut unapplied_annotations,
+                                          &mut annotations.line_specific);
+                    }
+                },
+            }
+        } else if JUST_WHITESPACE.captures(line).is_none() {
+            apply_annotations(row as u32,
+                              &mut unapplied_annotations,
+                              &mut annotations.line_specific);
+        }
+    }
+    if !unapplied_annotations.is_empty() {
+        // TODO: the range of this warning could be improved to cover the actual
+        // range of the unapplied annotations
+        incorrect_annotations.push(DMLStyleError {
+            error: LocalDMLError {
+                range: ZeroRange::from_u32(
+                    last_line as u32,
+                    last_line as u32,
+                    0, 0),
+                description: "dml-lint annotations without effect at \
+                              end of file."
+                    .to_string(),
+            },
+            rule_ident: "LintCfg",
+            rule_type: RuleType::Configuration,
+        });
+    }
+    (incorrect_annotations, annotations)
 }
 
 fn post_process_linting_errors(errors: &mut Vec<DMLStyleError>) {
@@ -184,6 +328,20 @@ fn post_process_linting_errors(errors: &mut Vec<DMLStyleError>) {
             && style_err.rule_type != RuleType::IN2)
     });
 }
+
+fn remove_disabled_lints(errors: &mut Vec<DMLStyleError>,
+                         annotations: LintAnnotations) {
+    errors.retain(
+        |error| {
+            !annotations.whole_file.contains(
+                &LintAnnotation::Allow(error.rule_type)) &&
+                !annotations.line_specific.get(&error.error.range.row_start.0)
+                .map_or(false, |annots|annots.contains(
+                    &LintAnnotation::Allow(error.rule_type)))
+        }
+    );
+}
+
 
 // AuxParams is an extensible struct.
 // It can be used for any data that needs
@@ -208,7 +366,7 @@ pub mod tests {
     dml 1.4;
 
     bank sb_cr {
-        group monitor {    
+        group monitor {
 
             register MKTME_KEYID_MASK {
                 method get() -> (uint64) {
@@ -230,7 +388,7 @@ pub mod tests {
                 }
             }
         }
-    }   
+    }
 
     /*
         This is ONEEEE VEEEEEERY LLOOOOOOONG COOOMMMEENTT ON A SINGLEEEE LINEEEEEEEEEEEEEE
@@ -268,15 +426,120 @@ pub mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_main() {
         use crate::lint::{begin_style_check, LintCfg};
         use crate::lint::rules:: instantiate_rules;
         let ast = create_ast_from_snippet(SOURCE);
         let cfg = LintCfg::default();
         let rules = instantiate_rules(&cfg);
-        let _lint_errors = begin_style_check(ast, SOURCE.to_string(), &rules);
-        assert!(_lint_errors.is_ok());
-        assert!(!_lint_errors.unwrap().is_empty());
+        let lint_errors = begin_style_check(ast, SOURCE, &rules);
+        assert!(lint_errors.is_ok());
+        assert!(!lint_errors.unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_annotation_parse() {
+        use super::*;
+        use crate::lint::rules::indentation::*;
+        use crate::lint::rules::Rule;
+
+        let source = "// dml-lint: allow=long_lines
+                      // dml-lint: allow-file=indent_empty_loop
+                      // dml-lint: allow=indent_switch_case
+                      // dml-lint: allow=unknown_rule
+                      // dml-lint: configure=not_valid
+                      local int foo = 5;
+                      local bool bar = 0; // dml-lint: allow=indent_paren_expr
+                      // dml-lint: allow=long_lines";
+        let (errs, mut annotations) = obtain_lint_annotations(source);
+        let simplified_errs = errs.into_iter()
+            .map(|err|
+                 {
+                     let DMLStyleError {
+                         rule_ident,
+                         rule_type,
+                         error: LocalDMLError {
+                             range,
+                             description
+                         },
+                     } = err;
+                     assert_eq!(rule_ident, "LintCfg");
+                     assert_eq!(rule_type, RuleType::Configuration);
+                     assert_eq!(range.row_start, range.row_end);
+                     (range.row_start.0, description)
+                 })
+            .collect::<Vec<_>>();
+        assert_eq!(simplified_errs,
+                   vec![(3, "Invalid lint rule target 'unknown_rule'.".to_string()),
+                        (4, "Invalid command 'configure' in dml-lint \
+                             annotation.".to_string()),
+                        (7, "dml-lint annotations without effect at \
+                             end of file.".to_string())]);
+        assert_eq!(annotations.whole_file.iter().collect::<Vec<_>>(),
+                   vec![
+                       &LintAnnotation::Allow(
+                           IndentEmptyLoopRule::get_rule_type())
+                   ]);
+        let mut line5 = annotations.line_specific.remove(&5).unwrap();
+        let mut line6 = annotations.line_specific.remove(&6).unwrap();
+        assert!(annotations.line_specific.is_empty());
+        for expected in [
+            LintAnnotation::Allow(LongLinesRule::get_rule_type()),
+            LintAnnotation::Allow(IndentSwitchCaseRule::get_rule_type())
+        ] {
+            assert!(line5.remove(&expected));
+        }
+        assert!(line5.is_empty());
+        for expected in [
+            LintAnnotation::Allow(IndentParenExprRule::get_rule_type()),
+        ] {
+            assert!(line6.remove(&expected));
+        }
+        assert!(line6.is_empty());
+    }
+
+    #[test]
+    fn test_annotation_apply() {
+        use crate::lint::rules::indentation::*;
+        use crate::lint::rules::tests::common::{
+            ExpectedDMLStyleError,
+            set_up, robust_assert_snippet as assert_snippet
+        };
+        use crate::lint::rules::Rule;
+        use crate::analysis::ZeroRange;
+
+        env_logger::init();
+
+        let source =
+            "
+dml 1.4;
+
+// dml-lint: allow-file=nsp_unary
+
+method my_method() {
+    if (true ++) {
+    // dml-lint: allow=indent_closing_brace
+        return; }
+    if (true) {
+        return; } // dml-lint: allow=indent_closing_brace
+    if (true) {
+        return; }
+}}
+// dml-lint: allow=long_lines
+method my_method() { /* now THIS is a long line. but we will allow it just this once*/ }
+method my_method() { /* however, this long line will not be allowed even though its the same*/ }
+";
+        assert_snippet(source,
+                       vec![
+                           ExpectedDMLStyleError {
+                               range: ZeroRange::from_u32(12,12,16,17),
+                               rule_type: IndentClosingBraceRule::get_rule_type(),
+                           },
+                           ExpectedDMLStyleError {
+                               range: ZeroRange::from_u32(16,16,80,96),
+                               rule_type: LongLinesRule::get_rule_type(),
+                           }],
+                       &set_up()
+        );
     }
 }
