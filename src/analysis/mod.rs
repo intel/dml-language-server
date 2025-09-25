@@ -376,9 +376,19 @@ pub struct SymbolStorage {
     pub variable_symbols: HashMap<ZeroSpan, SymbolRef>,
 }
 
-// This maps non-auth symbol decls to auth decl
-// and references to the symbol decl they ref
-type ReferenceStorage = HashMap<ZeroSpan, Vec<SymbolRef>>;
+impl SymbolStorage {
+    pub fn all_symbols<'a>(&'a self) -> impl Iterator<Item = &'a SymbolRef> {
+        self.template_symbols.values()
+            .chain(self.param_symbols.values().flat_map(|h|h.values()))
+            .chain(self.object_symbols.values())
+            .chain(self.method_symbols.values())
+            .chain(self.variable_symbols.values())
+    }
+}
+
+// This maps references to the symbol they reference, made as a lock
+// because we need to incrementally fill it as requests are made
+type ReferenceStorage = Arc<Mutex<HashMap<ZeroSpan, Vec<SymbolRef>>>>;
 
 // Analysis from the perspective of a particular DML device
 #[derive(Debug, Clone)]
@@ -1356,7 +1366,7 @@ impl DeviceAnalysis {
                     ReferenceMatch::Found(symbols) =>
                         for symbol in &symbols {
                             let mut sym = symbol.lock().unwrap();
-                            sym.references.push(*reference.loc_span());
+                            sym.references.insert(*reference.loc_span());
                             if let Some(meth) = sym.source
                                 .as_object()
                                 .and_then(DMLObject::as_shallow)
@@ -1622,7 +1632,7 @@ fn template_to_symbol(template: &Arc<DMLTemplate>) -> Option<SymbolRef> {
         Arc::new(Mutex::new(Symbol {
             loc: *location,
             kind: DMLSymbolKind::Template,
-            references: vec![],
+            references: HashSet::default(),
             definitions: vec![*location],
             declarations: vec![*location],
             implementations: vec![],
@@ -1659,7 +1669,7 @@ fn new_symbol_from_object(object: &DMLCompositeObject) -> SymbolRef {
         definitions: all_decl_defs.clone(),
         declarations: all_decl_defs.clone(),
         bases: all_decl_defs,
-        references: vec![],
+        references: HashSet::default(),
         implementations: vec![],
         source: SymbolSource::DMLObject(
             DMLObject::CompObject(object.key)),
@@ -1679,7 +1689,7 @@ fn new_symbol_from_arg(methref: &Arc<DMLMethodRef>,
         bases,
         definitions,
         declarations,
-        references: vec![],
+        references: HashSet::default(),
         implementations: vec![],
         source: SymbolSource::MethodArg(Arc::clone(methref),
                                         arg.name().clone()),
@@ -1752,7 +1762,7 @@ fn add_new_symbol_from_shallow(shallow: &DMLShallowObject,
         definitions,
         declarations,
         implementations: vec![],
-        references: vec![],
+        references: HashSet::default(),
         bases,
         source: SymbolSource::DMLObject(
             // TODO: Inefficient clone. Not terribly so, but worth
@@ -1834,7 +1844,7 @@ where
         definitions: vec![*sym.loc_span()],
         declarations: vec![*sym.loc_span()],
         implementations: vec![],
-        references: vec![],
+        references: HashSet::default(),
         bases: vec![],
         source: SymbolSource::MethodLocal(
             Arc::clone(method),
@@ -2028,7 +2038,68 @@ fn add_new_method_scope_symbols(method: &Arc<DMLMethodRef>,
     }
 }
 
+
 impl DeviceAnalysis {
+    fn make_templates_traits(start_of_file: &ZeroSpan,
+                             rank_maker: &mut RankMaker,
+                             unique_templates: &HashMap<
+                                     &str, &ObjectDecl<Template>>,
+                             files: &HashMap<&str, &TopLevel>,
+                             imp_map: &HashMap<Import, String>,
+                             errors: &mut Vec<DMLError>)
+                             -> TemplateTraitInfo {
+        info!("Rank templates");
+        let (templates, order, invalid_isimps, rank_struct)
+            = rank_templates(unique_templates, files, imp_map, errors);
+        info!("Templates+traits");
+        create_templates_traits(
+            start_of_file,
+            rank_maker, templates, order,
+            invalid_isimps, imp_map, rank_struct, errors)
+    }
+
+    fn match_references(&mut self,
+                        bases: &Vec<IsolatedAnalysis>,
+                        method_structure: &HashMap<ZeroSpan, RangeEntry>,
+                        errors: &mut Vec<DMLError>) {
+        info!("Match references");
+        let reference_cache: Mutex<ReferenceCache> = Mutex::default();
+        for scope_chain in all_scopes(bases) {
+            self.match_references_in_scope(scope_chain,
+                                           errors,
+                                           method_structure,
+                                           &reference_cache);
+        }
+    }
+
+    fn template_object_map(tt_info: &TemplateTraitInfo,
+                           container: &StructureContainer)
+                           -> HashMap<ZeroSpan, Vec<StructureKey>>{
+        // Tie objects to their implemented templates, and vice-versa
+        // NOTE: This cannot be inside DMLTemplates, because due to RC
+        // references they are immutable once created
+        trace!("template->object map");
+        // maps template declaration loc to objects
+        let mut template_object_implementation_map: HashMap<ZeroSpan,
+                                                            Vec<StructureKey>>
+            = HashMap::new();
+        for template in tt_info.templates.values() {
+            if let Some(loc) = template.location.as_ref() {
+                template_object_implementation_map.insert(*loc, vec![]);
+            }
+        }
+        for object in container.values() {
+            for template in object.templates.values() {
+                if let Some(loc) = template.location.as_ref() {
+                    template_object_implementation_map
+                        .entry(*loc)
+                        .or_default().push(object.key);
+                }
+            }
+        }
+        template_object_implementation_map
+    }
+
     pub fn new(root: IsolatedAnalysis,
                timed_bases: Vec<TimestampedStorage<IsolatedAnalysis>>,
                imp_map: HashMap<Import, String>)
@@ -2105,15 +2176,13 @@ impl DeviceAnalysis {
             trace!("Tracked file {} as template",
                    base.path.to_str().unwrap_or("no path"));
         }
-        info!("Rank templates");
-        let (templates, order, invalid_isimps, rank_struct)
-            = rank_templates(&unique_templates, &files, &imp_map, &mut errors);
-        let mut rankmaker = RankMaker::new();
-        info!("Templates+traits");
-        let tt_info = create_templates_traits(
-            &root.toplevel.start_of_file,
-            &mut rankmaker, templates, order,
-            invalid_isimps, &imp_map, rank_struct, &mut errors);
+        let mut rank_maker = RankMaker::new();
+        let tt_info = Self::make_templates_traits(&root.toplevel.start_of_file,
+                                                  &mut rank_maker,
+                                                  &unique_templates,
+                                                  &files,
+                                                  &imp_map,
+                                                  &mut errors);
 
         // TODO: catch typedef/traitname overlaps
 
@@ -2122,29 +2191,11 @@ impl DeviceAnalysis {
         info!("Make device");
         let device_key = make_device(root.path.as_str(), &root.toplevel,
                                      &tt_info, imp_map, &mut container,
-                                     &mut rankmaker, &mut errors).key;
-        // Tie objects to their implemented templates, and vice-versa
-        // NOTE: This cannot be inside DMLTemplates, because due to RC
-        // references they are immutable once created
-        trace!("template->object map");
+                                     &mut rank_maker, &mut errors).key;
+
         // maps template declaration loc to objects
-        let mut template_object_implementation_map: HashMap<ZeroSpan,
-                                                            Vec<StructureKey>>
-            = HashMap::new();
-        for template in tt_info.templates.values() {
-            if let Some(loc) = template.location.as_ref() {
-                template_object_implementation_map.insert(*loc, vec![]);
-            }
-        }
-        for object in container.values() {
-            for template in object.templates.values() {
-                if let Some(loc) = template.location.as_ref() {
-                    template_object_implementation_map
-                        .entry(*loc)
-                        .or_default().push(object.key);
-                }
-            }
-        }
+        let template_object_implementation_map =
+            Self::template_object_map(&tt_info, &container);
 
         info!("Generate symbols");
         // Used to handle scoping in methods when looking up local symbols,
@@ -2152,7 +2203,7 @@ impl DeviceAnalysis {
         // structure to symbol storage
         // The zerospan here is the span corresponding to the span of the
         // NAME of the methoddecl
-        let mut  method_structure: HashMap<ZeroSpan, RangeEntry>
+        let mut method_structure: HashMap<ZeroSpan, RangeEntry>
             = HashMap::default();
 
         let mut symbol_info = objects_to_symbols(&container,
@@ -2169,48 +2220,22 @@ impl DeviceAnalysis {
             device_obj: DMLObject::CompObject(device_key),
             templates: tt_info,
             symbol_info,
-            reference_info: ReferenceStorage::new(),
+            reference_info: ReferenceStorage::default(),
             template_object_implementation_map,
             path: root.path.clone(),
             clientpath: root.path.clone().into(),
             dependant_files: bases.iter().map(|b|&b.path).cloned().collect(),
         };
 
-        info!("Match references");
-        let reference_cache: Mutex<ReferenceCache> = Mutex::default();
-        for scope_chain in all_scopes(&bases) {
-            device.match_references_in_scope(scope_chain,
-                                             &mut errors,
-                                             &method_structure,
-                                             &reference_cache);
-        }
+        device.match_references(&bases, &method_structure, &mut errors);
 
-        info!("Inverse map");
-        // Set up the inverse map of references->symbols
-        for symbol in device.symbol_info.template_symbols.values()
-            .chain(device.symbol_info.param_symbols
-                   .values().flat_map(|h|h.values()))
-            .chain(device.symbol_info.object_symbols.values())
-            .chain(device.symbol_info.method_symbols.values())
-            .chain(device.symbol_info.variable_symbols.values()) {
-                debug!("Inverse of {:?}", symbol);
-                for ref_loc in &symbol.lock().unwrap().references {
-                    device.reference_info.entry(*ref_loc)
-                        .or_default().push(Arc::clone(symbol));
-                }
-            }
+        // NOTE: This is when we previously pre-calculated the ref->symbol map, however
+        // the up-front analysis cost of this was too heavy
+        // device.inverse_references();
 
-        info!("Implementation map");
-        for (templ_loc, objects) in &device.template_object_implementation_map {
-            if let Some(templ) = device.symbol_info
-                .template_symbols.get(templ_loc) {
-                    let mut sym_mut = templ.lock().unwrap();
-                    sym_mut.implementations.extend(
-                        objects.iter().flat_map(
-                            |obj|device.objects.get(*obj).unwrap()
-                                .all_decls.iter().map(
-                                    |spec|*spec.loc_span())));
-                }
+        info!("Invariant check");
+        for obj in device.objects.values() {
+            device.param_invariants(obj, &mut errors);
         }
 
         for error in errors {
@@ -2222,6 +2247,56 @@ impl DeviceAnalysis {
 
         info!("Done with device");
         Ok(device)
+    }
+
+    #[allow(clippy::ptr_arg)]
+    fn param_invariants(&self,
+                        obj: &DMLCompositeObject,
+                        _report: &mut Vec<DMLError>) {
+        #[allow(clippy::single_match)]
+        match &obj.kind {
+            // TODO: Check 'name' parameter towards 'ident' parameter
+            CompObjectKind::Register => {
+                // TODO: Cannot be sufficiently checked until
+                // constant-folding is in
+                // NOTE: 'offset' is checked by the requirement of
+                // the register template. Might be better to give
+                // a nicer error here
+                // match self.lookup_def_in_comp_object(
+                //     obj, "size", None) {
+                //     // TODO: verify size is an integer
+                //     ReferenceMatch::Found(_) => (),
+                //     _ => {
+                //         report.push(DMLError {
+                //             span: obj.declloc,
+                //             description: "No assignment to 'size' parameter \
+                //                           in register".to_string(),
+                //             related: vec![],
+                //             severity: Some(DiagnosticSeverity::ERROR),
+                //         });
+                //     },
+                // }
+            },
+            _ => (),
+        }
+    }
+
+    pub fn symbols_of_ref(&self, loc: ZeroSpan) -> Vec<SymbolRef> {
+        // Would like to use .entry here, but it does not play nice with the
+        // mutable borrow of .reference_info and .symbol_info
+        let mut locked_info = self.reference_info.lock().unwrap();
+        if let Some(syms) = locked_info.get(&loc) {
+            syms.clone()
+        } else {
+            let mut syms = vec![];
+            for sym in self.symbol_info.all_symbols() {
+                if sym.lock().unwrap().references.contains(&loc) {
+                    syms.push(Arc::clone(sym));
+                }
+            }
+            locked_info.insert(loc, syms);
+            locked_info.get(&loc).unwrap().clone()
+        }
     }
 }
 

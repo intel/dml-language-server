@@ -8,7 +8,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashSet;
 use std::path::Path;
-use std::sync::Arc;
 
 use crate::actions::hover;
 use crate::actions::{AnalysisProgressKind, AnalysisWaitKind,
@@ -192,7 +191,6 @@ fn fp_to_symbol_refs<O: Output>
             for device in analysis.filtered_device_analysises_containing_file(
                 &canon_path,
                 filter.as_ref()) {
-                debug!("reference info is {:?}", device.reference_info.keys());
                 // NOTE: This ends up being the correct place to warn users
                 // about references inside uninstantiated templates,
                 // but we have to perform some extra work to find out we are
@@ -206,12 +204,9 @@ fn fp_to_symbol_refs<O: Output>
                             any_template_used = true;
                         }
                 }
-                if let Some(defs) = device.reference_info.get(
-                    refr.loc_span()) {
-                    for def in defs {
-                        definitions.push(Arc::clone(def));
-                    }
-                }
+
+                definitions.append(
+                    &mut device.symbols_of_ref(*refr.loc_span()));
             }
             if let Some(ContextKey::Template(_)) = first_context {
                 if !any_template_used {
