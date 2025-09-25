@@ -392,14 +392,14 @@ impl NspInparenRule {
         if !self.enabled { return; }
         if let Some(location) =  ranges {
             if (location.opening.row_end == location.content_start.row_start)
-                && (location.opening.col_end != location.content_start.col_start) { 
+                && (location.opening.col_end != location.content_start.col_start) {
                 let mut gap = location.opening;
                 gap.col_start = location.opening.col_end;
                 gap.col_end = location.content_start.col_start;
                 acc.push(self.create_err(gap));
             }
             if (location.closing.row_start == location.content_end.row_end)
-                && (location.closing.col_start != location.content_end.col_end) { 
+                && (location.closing.col_start != location.content_end.col_end) {
                 let mut gap = location.closing;
                 gap.col_end = location.closing.col_start;
                 gap.col_start = location.content_end.col_end;

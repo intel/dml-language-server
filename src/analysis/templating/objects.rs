@@ -656,7 +656,7 @@ impl DMLNamedMember for DMLShallowObjectVariant {
             DMLShallowObjectVariant::Session(d) |
             DMLShallowObjectVariant::Saved(d) => &d.declaration.name.span,
             DMLShallowObjectVariant::Parameter(p) =>
-                p.get_likely_definition().span(),
+                p.get_likely_definition().loc_span(),
             DMLShallowObjectVariant::Constant(c) =>
                 c.loc_span(),
             DMLShallowObjectVariant::Hook(h) =>
@@ -951,7 +951,6 @@ fn add_template_specs(obj_specs: &mut Vec<Arc<ObjectSpec>>,
     while let Some((_, tpl)) = queue.pop() {
         // TODO: here we would have to consider cond when conditional
         // is/imports exist
-        
         if used_templates.contains(&tpl.name) {
             continue;
         }
@@ -961,6 +960,7 @@ fn add_template_specs(obj_specs: &mut Vec<Arc<ObjectSpec>>,
         let mut modifications = vec![];
         if let Some(templ_specs) = each_stmts.get(&tpl.name) {
             for (needed_templates, spec) in templ_specs {
+                let mut can_add = true;
                 for templ in needed_templates {
                     if !used_templates.contains(templ.as_str()) {
                         // We will need to re-add a check for this template,
@@ -968,14 +968,16 @@ fn add_template_specs(obj_specs: &mut Vec<Arc<ObjectSpec>>,
                         modifications.push((templ.clone(),
                                             needed_templates.clone(),
                                             Arc::clone(spec)));
+                        can_add = false;
                         break;
-                    } else {
-                        queue.extend(spec.instantiations.values()
-                                     .flat_map(|v|v.iter())
-                                     .map(|t|(spec.condition.clone(),
-                                              Arc::clone(t))));
-                        obj_specs.push(Arc::clone(spec));
                     }
+                }
+                if can_add {
+                    queue.extend(spec.instantiations.values()
+                                 .flat_map(|v|v.iter())
+                                 .map(|t|(spec.condition.clone(),
+                                          Arc::clone(t))));
+                    obj_specs.push(Arc::clone(spec));
                 }
             }
         }
@@ -1311,31 +1313,6 @@ fn resolve_parameter(obj_loc: &ZeroSpan,
         sorted_declarations.iter().map(
             |(def, _)|(def.cond.clone(), def.obj.clone())).collect(),
     )
-}
-
-#[allow(clippy::single_match)]
-fn param_invariants(object:&mut DMLCompositeObject,
-                    report: &mut Vec<DMLError>) {
-    // TODO: Check 'name' parameter towards 'ident' parameter
-    match &object.kind {
-        CompObjectKind::Register => {
-            // NOTE: 'offset' is checked by the requirement of
-            // the register template. Might be better to give
-            // a nicer error here
-            if let Some(_size) = object.get_param("size") {
-                // TODO: verify size is an integer
-            } else {
-                report.push(DMLError {
-                    span: object.declloc,
-                    description: "Missing declaration for 'size' parameter \
-                                  in register".to_string(),
-                    related: vec![],
-                    severity: Some(DiagnosticSeverity::ERROR),
-                });
-            }
-        },
-        _ => (),
-    }
 }
 
 fn create_object_instance(loc: Option<ZeroSpan>,
@@ -2255,7 +2232,6 @@ pub fn make_object(loc: ZeroSpan,
     add_subobjs(new_obj_key, subobj_keys, container);
     {
         let new_obj = container.get_mut(new_obj_key).unwrap();
-        param_invariants(new_obj, report);
         let trait_method_map = merge_impl_maps(&identity.val, &loc,
                                                new_obj.templates.values().map(
                                                    |t|&t.traitspec),

@@ -2,7 +2,7 @@
 //  SPDX-License-Identifier: Apache-2.0 and MIT
 use std::sync::Arc;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::analysis::{Named, LocationSpan};
 
@@ -15,7 +15,7 @@ use crate::analysis::templating::methods::{DMLMethodRef};
 use crate::analysis::templating::types::DMLResolvedType;
 use crate::analysis::templating::traits::DMLTemplate;
 
-#[derive(PartialEq, Eq, Debug, Clone, Copy, Hash)]
+#[derive(PartialEq, Eq, Debug, Clone, Copy, Hash, PartialOrd, Ord)]
 pub enum DMLSymbolKind {
     CompObject(CompObjectKind),
     Parameter,
@@ -50,13 +50,6 @@ impl <T: StructureSymbol> MakeSymbolContainer for Vec<T> {
     }
 }
 
-impl <T: StructureSymbol> MakeSymbolContainer for Option<T> {
-    fn to_symbols(&self) -> Vec<&dyn StructureSymbol> {
-        self.iter().map(|s|s as &dyn StructureSymbol).collect()
-    }
-}
-
-
 impl <T: SymbolContainer> SymbolContainer for Vec<T> {
     fn symbols(&self) -> Vec<&dyn StructureSymbol> {
         self.iter().flat_map(|s|s.symbols().into_iter()).collect()
@@ -66,6 +59,12 @@ impl <T: SymbolContainer> SymbolContainer for Vec<T> {
 impl <T: SymbolContainer> SymbolContainer for Option<T> {
     fn symbols(&self) -> Vec<&dyn StructureSymbol> {
         self.iter().flat_map(|s|s.symbols().into_iter()).collect()
+    }
+}
+
+impl <T: SymbolContainer> SymbolContainer for Box<T> {
+    fn symbols(&self) -> Vec<&dyn StructureSymbol> {
+        self.as_ref().symbols()
     }
 }
 
@@ -113,6 +112,7 @@ impl SimpleSymbol {
 pub enum SymbolSource {
     DMLObject(DMLObject),
     MethodArg(Arc<DMLMethodRef>, DMLString),
+    MethodLocal(Arc<DMLMethodRef>, DMLString),
     // TODO: RC this if it's expensive
     Type(DMLResolvedType),
     Template(Arc<DMLTemplate>),
@@ -160,7 +160,7 @@ pub struct Symbol {
     pub kind: DMLSymbolKind,
     pub definitions: Vec<ZeroSpan>,
     pub declarations: Vec<ZeroSpan>,
-    pub references: Vec<ZeroSpan>,
+    pub references: HashSet<ZeroSpan>,
     // NOTE: The meaning of 'implementation' varies with symbol kind
     // For methods and interfaces, this is straightforward
     // For templates, it will give all declarations for all objects that
@@ -174,6 +174,8 @@ pub struct Symbol {
     // Used for method symbols only, maps default references
     // to the method_decl they should resolve to
     pub default_mappings: HashMap<ZeroSpan, ZeroSpan>,
+    // TODO: RC or box this if it's expensive
+    pub typed: Option<DMLResolvedType>,
 }
 
 impl Symbol {

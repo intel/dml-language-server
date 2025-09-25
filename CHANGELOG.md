@@ -4,12 +4,29 @@
 -->
 # Change Log
 
+## 0.9.13
+- Corrected the name of "explicit\_param\_decls" provisional. Note that it still
+  has no semantic effect.
+- The parameter declaration patterns ":=" and ": \<type\> = \<val\>" are now
+  correctly parsed.
+- You can now annotate dml source to disable reporting of specific lints for specific files or lines,
+  see [USAGE.md](USAGE.md) for instructions on how to use it
+- Disabled the invariant check for the parameter 'size' to be set on register
+  objects. Will be re-enabled when constant-folding is added to the DLS.
+- Fixed issue where statements under top-level in-eachs were not correctly tracked.
+- Moved storage of reference->symbol mapping to on-demand timing, should significantly speed
+  up device analysises
+
 ## 0.9.12
 - Added 'simics\_util\_vect' as a known provisional (with no DLS semantics)
 - Diagnostics sent from the server will now indicate their source as 'dml' or 'dml-lint'
 - Linting warnings can now annotate their messages with which linting rule enforces it. You can turn this off by setting 'annotate_lints' to 'false' in your lint config file
 - Minor fixes to the description of linting messages
 - Fixed an issue where diagnostics would sometime be reported within the wrong file
+- Corrected incorrect parsing around tuple-declared 'local' variables in for-loops
+- Added the ability to declare 'saved' or 'session' variables in for-loops
+- Added functionality for goto-def/decl/ref to or from variables declared
+  within a function scope.
 
 ## 0.9.11
 - Fixed deadlock when a configuration update happens
