@@ -685,13 +685,10 @@ pub type NspUnaryArgs = ZeroRange;
 impl NspUnaryArgs {
     fn is_exception(node: &UnaryExpressionContent) -> bool {
         // Defined keyword counts as UnaryOp for DLS, but we allow space after it
-        match node.operation.get_token() {
-            Some(token) => match token.kind {
-                TokenKind::Defined => true,
-                _ => false,
-            },
-            None => false,
+        if let Some(token) = node.operation.get_token() {
+            return token.kind == TokenKind::Defined
         }
+        false
     }
 
     pub fn from_unary_expr(node: &UnaryExpressionContent)
