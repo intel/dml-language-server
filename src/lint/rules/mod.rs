@@ -25,7 +25,8 @@ use indentation::{LongLinesRule,
     IndentEmptyLoopRule,
     IndentContinuationLineRule};
 use linebreaking::{FuncCallBreakOnOpenParenRule,
-    MethodOutputBreakRule};
+    MethodOutputBreakRule,
+    ConditionalExpressionBreakBeforeOperatorRule};
 use crate::lint::{LintCfg, DMLStyleError};
 use crate::analysis::{LocalDMLError, parsing::tree::ZeroRange};
 
@@ -51,6 +52,7 @@ pub struct CurrentRules {
     pub indent_continuation_line: IndentContinuationLineRule,
     pub func_call_break_on_open_paren: FuncCallBreakOnOpenParenRule,
     pub method_output_break: MethodOutputBreakRule,
+    pub conditional_expression_break_before_op: ConditionalExpressionBreakBeforeOperatorRule,
 }
 
 pub fn  instantiate_rules(cfg: &LintCfg) -> CurrentRules {
@@ -76,6 +78,7 @@ pub fn  instantiate_rules(cfg: &LintCfg) -> CurrentRules {
         indent_continuation_line: IndentContinuationLineRule::from_options(&cfg.indent_continuation_line),
         func_call_break_on_open_paren: FuncCallBreakOnOpenParenRule::from_options(&cfg.func_call_break_on_open_paren),
         method_output_break: MethodOutputBreakRule { enabled: cfg.method_output_break.is_some() },
+        conditional_expression_break_before_op: ConditionalExpressionBreakBeforeOperatorRule::from_options(&cfg.conditional_expression_break_before_op),
     }
 }
 
@@ -110,6 +113,7 @@ pub enum RuleType {
     NspUnary,
     NspTrailing,
     LL1,
+    LL3,
     LL5,
     LL6,
     IN2,

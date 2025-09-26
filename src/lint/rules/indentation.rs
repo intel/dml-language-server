@@ -731,7 +731,12 @@ impl IndentContinuationLineArgs {
     pub fn filter_out_last_semi_ranges(expression_tokens: &mut TreeElementTokenIterator) {
         // This function filters out the last semicolon in a list of tokens
         // as it is not part of the continuation line check.
-        expression_tokens.pop_if(|token| token.kind == TokenKind::SemiColon);
+        // expression_tokens.pop_if(|token| token.kind == TokenKind::SemiColon);
+        if let Some(last_token) = expression_tokens.last() {
+            if last_token.kind == TokenKind::SemiColon {
+                expression_tokens.pop();
+            }
+        }
     }
 
     pub fn from_statement_content(node: &StatementContent, depth: u32) -> Option<IndentContinuationLineArgs> {

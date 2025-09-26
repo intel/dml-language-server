@@ -47,6 +47,7 @@ Below are listed the currently supported rules for linting:
 
 ## Line Length
 - **LL1**, `long_lines`: Lines should be kept shorter than 80 characters. This limit can be set to a custom value
+- **LL3**, `conditional_expression_break`: Break conditional expressions before the ?, or both before the ? and before the :.
 - **LL5**, `method_output_break`: Break long method declarations with output parameters before the arrow.
 ```
     method inquiry_status(uint64 physical_address)

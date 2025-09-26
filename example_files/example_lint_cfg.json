@@ -21,5 +21,6 @@
     "indent_continuation_line": {},
     "func_call_break_on_open_paren": {},
     "method_output_break": {},
+    "conditional_expression_break_before_op": {},
     "annotate_lints": true
 }
