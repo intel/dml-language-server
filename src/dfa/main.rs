@@ -34,6 +34,7 @@ struct Args {
     workspaces: Vec<PathBuf>,
     compile_info: Option<PathBuf>,
     suppress_imports: Option<bool>,
+    zero_indexed: Option<bool>,
     linting_enabled: Option<bool>,
     lint_cfg_path: Option<PathBuf>,
     test: bool,
@@ -78,6 +79,11 @@ fn parse_args() -> Args {
             .action(ArgAction::Set)
             .value_parser(clap::value_parser!(bool))
             .required(false))
+        .arg(Arg::new("zero-indexed").short('z').long("zero-indexed")
+            .help("Diagnostics reported by the server will be zero-indexed (defaults to false)")
+            .action(ArgAction::Set)
+            .value_parser(clap::value_parser!(bool))
+            .required(false))
         .arg(Arg::new("linting-enabled").short('l').long("linting-enabled")
              .help("Turns linting on/off (defaults to true)")
              .action(ArgAction::Set)
@@ -106,6 +112,8 @@ fn parse_args() -> Args {
             .cloned(),
         suppress_imports: args.get_one::<bool>("suppress-imports")
             .cloned(),
+        zero_indexed: args.get_one::<bool>("zero-indexed")
+            .cloned(),
         linting_enabled: args.get_one::<bool>("linting-enabled")
             .cloned(),
         lint_cfg_path: args.get_one::<PathBuf>("lint-cfg-path")
@@ -126,6 +134,7 @@ fn main_inner() -> Result<(), i32> {
     let first_workspace = workspace_rest.next();
 
     let linting_enabled =  arg.linting_enabled.unwrap_or(true);
+    let zero_indexed = arg.zero_indexed.unwrap_or(false);
 
     let root = match first_workspace {
         Some(w) => w,
@@ -167,7 +176,7 @@ fn main_inner() -> Result<(), i32> {
             })?;
 
         if !arg.quiet {
-            dlsclient.output_errors();
+            dlsclient.output_errors(zero_indexed);
         }
         if arg.test && !dlsclient.no_errors() {
             exit_code = Err(1);
