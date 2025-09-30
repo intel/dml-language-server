@@ -270,7 +270,7 @@ impl BlockingRequestAction for InitializeRequest {
             });
         }
         if let ActionContext::Init(ref mut initctx) = ctx {
-            initctx.update_workspaces(workspaces, vec![]);
+            initctx.update_workspaces(workspaces, vec![], &out);
             let temp_resolver = initctx.construct_resolver();
             for file in IMPLICIT_IMPORTS {
                 debug!("Requesting analysis of builtin file {}", file);
