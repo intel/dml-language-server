@@ -19,6 +19,7 @@
 - Unknown fields in the lint configuration file are now detected and reported as errors, helping users identify and correct typos or unsupported configuration options.
 - CLI tool DFA now uses default one-indexed line count for reporting warnings on analyzed files.
   `--zero-indexed` flag can be set to `true` when executing DFA for using zero-indexed counting if required.
+- Added support for spacing linting rules SpReserved, SpBinop, SpTernary, SpPtrDecl and NspPtrDecl.
 
 ## 0.9.12
 - Added 'simics\_util\_vect' as a known provisional (with no DLS semantics)
