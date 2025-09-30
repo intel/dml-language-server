@@ -263,6 +263,8 @@ pub struct InitActionContext<O: Output> {
     // the root workspaces
     pub workspace_roots: Arc<Mutex<Vec<Workspace>>>,
 
+    pub cached_path_resolver: Arc<Mutex<Option<PathResolver>>>,
+
     // directly opened files
     pub direct_opens: Arc<Mutex<HashSet<CanonPath>>>,
     pub compilation_info: Arc<Mutex<CompilationInfoStorage>>,
@@ -378,6 +380,7 @@ impl <O: Output> InitActionContext<O> {
             config,
             lint_config: Arc::new(Mutex::new(LintCfg::default())),
             jobs: Arc::default(),
+            cached_path_resolver: Arc::default(),
             direct_opens: Arc::default(),
             quiescent: Arc::new(AtomicBool::new(false)),
             prev_changes: Arc::default(),
@@ -419,11 +422,16 @@ impl <O: Output> InitActionContext<O> {
 
     pub fn update_workspaces(&self,
                              mut add: Vec<Workspace>,
-                             remove: Vec<Workspace>) {
+                             remove: Vec<Workspace>,
+                             out: &O) {
+        let any_change = !(add.is_empty() && remove.is_empty());
         if let Ok(mut workspaces) = self.workspace_roots.lock() {
             workspaces.retain(|workspace|
                               remove.iter().all(|rem|rem != workspace));
             workspaces.append(&mut add);
+        }
+        if any_change {
+            self.update_compilation_info(out);
         }
     }
 
@@ -445,6 +453,11 @@ impl <O: Output> InitActionContext<O> {
         trace!("Updating compile info");
         if let Ok(config) = self.config.lock() {
             if let Some(compile_info) = &config.compile_info_path {
+                // Ensure resolver exists
+                self.construct_resolver();
+                // And then remove it from storage (invalidates it)
+                let old_resolver = self.cached_path_resolver.lock()
+                    .expect("Failed to grab resolver").take().unwrap();
                 if let Some(canon_path) = CanonPath::from_path_buf(
                     compile_info.clone()) {
                     let workspaces = self.workspace_roots.lock().unwrap();
@@ -468,8 +481,7 @@ impl <O: Output> InitActionContext<O> {
                             *ci = compilation_info;
                         }
                         self.analysis.lock().unwrap()
-                            .update_all_context_dependencies(
-                                self.construct_resolver());
+                            .update_all_context_dependencies(old_resolver);
                     },
                     Err(e) => {
                         error!("Failed to update compilation info: {}", e);
@@ -776,6 +788,10 @@ impl <O: Output> InitActionContext<O> {
     }
 
     pub fn construct_resolver(&self) -> PathResolver {
+        if let Some(resolver) = self.cached_path_resolver.lock()
+            .unwrap().as_ref() {
+                return resolver.clone();
+            }
         trace!("About to construct resolver");
         let mut toret: PathResolver =
                self.client_capabilities.root.clone().into();
@@ -788,6 +804,7 @@ impl <O: Output> InitActionContext<O> {
                                                  .into_iter().collect()))
                                 .collect());
         trace!("Constructed resolver: {:?}", toret);
+        *self.cached_path_resolver.lock().unwrap() = Some(toret.clone());
         toret
     }
 
