@@ -435,13 +435,7 @@ pub mod tests {
         let example_path = format!("{}{}",
                                    env!("CARGO_MANIFEST_DIR"),
                                    EXAMPLE_CFG);
-<<<<<<< HEAD
         let (example_cfg, unknowns) = parse_lint_cfg(example_path.into()).unwrap();
-=======
-        let example_cfg = parse_lint_cfg(example_path.into()).unwrap();
-        println!("Example LintCfg: {:#?}", example_cfg);
-        println!("LintCfg::default(): {:#?}", LintCfg::default());
->>>>>>> 736fdc7 (Add SP Reserved spacing rule (#21))
         assert_eq!(example_cfg, LintCfg::default());
         // Assert that there are no unknown fields in the example config:
         assert!(unknowns.is_empty(), "Example config should not have unknown fields: {:?}", unknowns);

@@ -24,10 +24,10 @@ fn variable_conditional_incorrect() {
 	let rules = set_up();
     let expected_errors = define_expected_errors!(
 		RuleType::SpTernary,
-		(2, 2, 35, 39),
-		(2, 2, 40, 41),
-		(2, 2, 40, 41),
-		(2, 2, 42, 43),
+		(2, 2, 35, 40),
+		(2, 2, 39, 41),
+		(2, 2, 40, 42),
+		(2, 2, 41, 43),
 	);
 	assert_snippet(VARIABLE_CONDITIONAL_INCORRECT, expected_errors, &rules);
 }
@@ -49,8 +49,8 @@ fn param_conditional_incorrect() {
 	let rules = set_up();
 	let expected_errors = define_expected_errors!(
 		RuleType::SpTernary,
-		(1, 1, 30, 35),
-		(1, 1, 37, 43),
+		(1, 1, 29, 35),
+		(1, 1, 36, 43),
 	);
 	assert_snippet(PARAM_CONDITIONAL_INCORRECT, expected_errors, &rules);
 }
@@ -60,8 +60,8 @@ fn rule_disable() {
 	let mut rules = set_up();
 	let expected_errors = define_expected_errors!(
 		RuleType::SpTernary,
-		(1, 1, 30, 35),
-		(1, 1, 37, 43),
+		(1, 1, 29, 35),
+		(1, 1, 36, 43),
 	);
 	assert_snippet(PARAM_CONDITIONAL_INCORRECT, expected_errors, &rules);
 	rules.sp_ternary.enabled = false;

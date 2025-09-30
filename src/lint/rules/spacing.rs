@@ -331,16 +331,24 @@ impl SpTernaryRule {
         if !self.enabled { return; }
         if let Some(SpTernaryArgs { left, left_op, middle, right_op, right }) = ranges {
             if no_gap(left, left_op) {
-                acc.push(self.create_err(left));
+                acc.push(self.create_err(
+                    ZeroRange::combine(left, left_op)
+                ));
             }
             if no_gap(left_op, middle) {
-                acc.push(self.create_err(middle));
+                acc.push(self.create_err(
+                    ZeroRange::combine(left_op, middle)
+                ));
             }
             if no_gap(middle, right_op) {
-                acc.push(self.create_err(middle));
+                acc.push(self.create_err(
+                    ZeroRange::combine(middle, right_op)
+                ));
             }
             if no_gap(right_op, right) {
-                acc.push(self.create_err(right));
+                acc.push(self.create_err(
+                    ZeroRange::combine(right_op, right)
+                ));
             }
         }
     }
