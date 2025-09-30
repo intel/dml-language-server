@@ -249,6 +249,7 @@ impl BlockingNotificationAction for DidChangeWatchedFiles {
         if let Some(file_watch) = FileWatch::new(ctx) {
             if params.changes.iter().any(|c| file_watch.is_relevant(c)) {
                 ctx.update_compilation_info(&out);
+                ctx.update_linter_config(&out);
             }
         }
         Ok(())

@@ -164,6 +164,22 @@ pub(crate) fn maybe_notify_deprecated_configs<O: Output>(out: &O, keys: &[String
     }
 }
 
+pub(crate) fn maybe_notify_unknown_lint_fields<O: Output>(out: &O, unknowns: &[String]) {
+    if !unknowns.is_empty() {
+        let fields_list = unknowns.join(", ");
+        let message = format!(
+            "Unknown lint configuration field{}: {}. These will be ignored.",
+            if unknowns.len() > 1 { "s" } else { "" },
+            fields_list
+        );
+        
+        out.notify(Notification::<ShowMessage>::new(ShowMessageParams {
+            typ: MessageType::ERROR,
+            message,
+        }));
+    }
+}
+
 pub(crate) fn maybe_notify_duplicated_configs<O: Output>(
     out: &O,
     dups: &std::collections::HashMap<String, Vec<String>>,
