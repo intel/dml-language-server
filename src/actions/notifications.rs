@@ -262,11 +262,11 @@ impl BlockingNotificationAction for DidChangeWorkspaceFolders {
     fn handle<O: Output>(
         params: DidChangeWorkspaceFoldersParams,
         ctx: &mut InitActionContext<O>,
-        _out: O,
+        out: O,
     ) -> Result<(), ResponseError> {
         let added = params.event.added;
         let removed = params.event.removed;
-        ctx.update_workspaces(added, removed);
+        ctx.update_workspaces(added, removed, &out);
         Ok(())
     }
 }

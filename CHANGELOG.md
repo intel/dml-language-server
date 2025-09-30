@@ -5,7 +5,8 @@
 # Change Log
 
 # 0.9.15
-
+- Slight optimization in how the server resolves file paths, should reduce
+  time-to-ready for the server when first starting by about 30%.
 
 ## 0.9.14
 - Slight optimization to the memory usage of device-level analysis which
