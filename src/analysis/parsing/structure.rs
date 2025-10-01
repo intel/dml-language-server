@@ -1634,6 +1634,16 @@ impl TreeElement for InEachSpec {
                 create_subs!(left, vect, right)
         }
     }
+    fn references<'a>(&self,
+                      accumulator: &mut Vec<Reference>,
+                      file: FileSpec<'a>) {
+        let references = match self {
+            Self::One(tok) => vec![tok],
+            Self::List(_, toks, _) => toks.iter().map(|(t, _)|t).collect(),
+        }.into_iter().filter_map(|tok|Reference::global_from_token(
+            tok, file, ReferenceKind::Template));
+        accumulator.extend(references);
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1669,7 +1679,6 @@ impl TreeElement for InEachContent {
             |stmnts|stmnts.check_template_only_stmnts(file), vec![]));
         errors
     }
-    fn references<'a>(&self, _accumulator: &mut Vec<Reference>, _file: FileSpec<'a>) {}
 }
 
 impl Parse<DMLObjectContent> for InEachContent {

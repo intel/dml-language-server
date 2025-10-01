@@ -20,6 +20,7 @@
 - CLI tool DFA now uses default one-indexed line count for reporting warnings on analyzed files.
   `--zero-indexed` flag can be set to `true` when executing DFA for using zero-indexed counting if required.
 - Added support for spacing linting rules SpReserved, SpBinop, SpTernary, SpPtrDecl and NspPtrDecl.
+- Fixed inability to goto definition/reference on template references in 'in each' and 'for each' constructs
 
 ## 0.9.12
 - Added 'simics\_util\_vect' as a known provisional (with no DLS semantics)

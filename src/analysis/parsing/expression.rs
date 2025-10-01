@@ -553,6 +553,15 @@ impl TreeElement for EachInContent {
         create_subs!(&self.each, &self.ident, &self.intok,
                      &self.lparen, &self.of, &self.rparen)
     }
+    fn references<'a>(&self,
+                      accumulator: &mut Vec<Reference>,
+                      file: FileSpec<'a>) {
+        self.default_references(accumulator, file);
+        if let Some(refr) = Reference::global_from_token(
+            &self.ident, file, ReferenceKind::Template) {
+            accumulator.push(refr);
+        }
+    }
 }
 
 impl Parse<ExpressionContent> for EachInContent {
