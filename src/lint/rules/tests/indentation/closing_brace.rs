@@ -1,4 +1,4 @@
-use crate::lint::rules::tests::common::{set_up, robust_assert_snippet as assert_snippet};
+use crate::lint::rules::tests::common::{set_up, assert_snippet};
 use crate::lint::rules::RuleType;
 
 static BASIC_COMPOUND_CORRECT: &str = "
@@ -8,8 +8,6 @@ method my_method() {
     }
 }
 ";
-
-
 #[test]
 fn basic_compound_correct() {
     let rules = set_up();
@@ -22,7 +20,6 @@ method my_method() {
         return; }
 }
 ";
-
 #[test]
 fn closing_brace_not_first_in_line_incorrect() {
     let rules = set_up();
@@ -38,7 +35,6 @@ method my_method() {
     if (true) { return; }
 }
 ";
-
 #[test]
 fn closing_and_open_brace_on_same_line_correct() {
     let rules = set_up();
@@ -51,7 +47,6 @@ method my_method() {
         return;
         }
 }";
-
 #[test]
 fn closing_brace_not_deindented_incorrect() {
     let rules = set_up();
@@ -69,7 +64,6 @@ method my_method() {
     }
         }
 ";
-
 #[test]
 fn closing_brace_overindented_incorrect() {
     let rules = set_up();
@@ -90,7 +84,6 @@ method my_method() {
         return;
         break; }
 }";
-
 #[test]
 fn closing_brace_not_first_switch_incorrect() {
     let rules = set_up();
@@ -105,7 +98,6 @@ static CLOSING_BRACE_NOT_FIRST_STRUCT_INCORRECT: &str = "
 typedef struct {
     int x; } mystruct_t;
 ";
-
 #[test]
 fn closing_brace_not_first_struct_incorrect() {
     let rules = set_up();
@@ -120,7 +112,6 @@ static CLOSING_BRACE_NOT_FIRST_LAYOUT_INCORRECT: &str = "
 typedef layout \"little-endian\" {
     uint8 cmd_code; } mylayout_t;
 ";
-
 #[test]
 fn closing_brace_not_first_layout_incorrect() {
     let rules = set_up();
@@ -138,7 +129,6 @@ typedef layout \"little-endian\" {
         uint1 always_zero @ [0:0]; } dst_slave;
 } mylayout_t;
 ";
-
 #[test]
 fn closing_brace_not_first_bitfield_incorrect() {
     let rules = set_up();
@@ -156,7 +146,6 @@ method my_method() {
     case 2: { return; }
     }
 }";
-
 #[test]
 fn switch_case_same_line_correct() {
     let rules = set_up();

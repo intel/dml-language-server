@@ -8,10 +8,20 @@ use log::{debug, error, trace};
 use serde::{Deserialize, Serialize};
 use regex::Regex;
 use rules::{instantiate_rules, CurrentRules, RuleType};
-use rules::{spacing::{SpBraceOptions, SpPunctOptions, NspFunparOptions,
-                      NspInparenOptions, NspUnaryOptions, NspTrailingOptions},
-                      indentation::{LongLineOptions, IndentSizeOptions, IndentCodeBlockOptions,
-                                    IndentNoTabOptions, IndentClosingBraceOptions, IndentParenExprOptions, IndentSwitchCaseOptions, IndentEmptyLoopOptions},
+use rules::{spacing::{SpReservedOptions,
+                      SpBraceOptions,
+                      SpPunctOptions,
+                      SpBinopOptions,
+                      NspFunparOptions,
+                      SpTernaryOptions,
+                      SpPtrDeclOptions,
+                      NspPtrDeclOptions,
+                      NspInparenOptions,
+                      NspUnaryOptions,
+                      NspTrailingOptions},
+            indentation::{LongLineOptions, IndentSizeOptions, IndentCodeBlockOptions,
+                          IndentNoTabOptions, IndentClosingBraceOptions, IndentParenExprOptions,
+                          IndentSwitchCaseOptions, IndentEmptyLoopOptions},
                     };
 use crate::analysis::{DMLError, IsolatedAnalysis, LocalDMLError, ZeroRange};
 use crate::analysis::parsing::tree::TreeElement;
@@ -59,9 +69,19 @@ pub fn maybe_parse_lint_cfg<O: Output>(path: PathBuf, out: &O) -> Option<LintCfg
 #[serde(default)]
 pub struct LintCfg {
     #[serde(default)]
+    pub sp_reserved: Option<SpReservedOptions>,
+    #[serde(default)]
     pub sp_brace: Option<SpBraceOptions>,
     #[serde(default)]
     pub sp_punct: Option<SpPunctOptions>,
+    #[serde(default)]
+    pub sp_binop: Option<SpBinopOptions>,
+    #[serde(default)]
+    pub sp_ternary: Option<SpTernaryOptions>,
+    #[serde(default)]
+    pub sp_ptrdecl: Option<SpPtrDeclOptions>,
+    #[serde(default)]
+    pub nsp_ptrdecl: Option<NspPtrDeclOptions>,
     #[serde(default)]
     pub nsp_funpar: Option<NspFunparOptions>,
     #[serde(default)]
@@ -112,8 +132,13 @@ fn get_true() -> bool {
 impl Default for LintCfg {
     fn default() -> LintCfg {
         LintCfg {
+            sp_reserved: Some(SpReservedOptions{}),
             sp_brace: Some(SpBraceOptions{}),
             sp_punct: Some(SpPunctOptions{}),
+            sp_binop: Some(SpBinopOptions{}),
+            sp_ternary: Some(SpTernaryOptions{}),
+            sp_ptrdecl: Some(SpPtrDeclOptions{}),
+            nsp_ptrdecl: Some(NspPtrDeclOptions{}),
             nsp_funpar: Some(NspFunparOptions{}),
             nsp_inparen: Some(NspInparenOptions{}),
             nsp_unary: Some(NspUnaryOptions{}),
@@ -189,9 +214,9 @@ pub fn begin_style_check(ast: TopAst, file: &str, rules: &CurrentRules) -> Resul
     // Per line checks
     let lines: Vec<&str> = file.lines().collect();
     for (row, line) in lines.iter().enumerate() {
-        rules.indent_no_tabs.check(&mut linting_errors, row, line);
-        rules.long_lines.check(&mut linting_errors, row, line);
-        rules.nsp_trailing.check(&mut linting_errors, row, line);
+        rules.indent_no_tabs.check(row, line, &mut linting_errors);
+        rules.long_lines.check(row, line, &mut linting_errors);
+        rules.nsp_trailing.check(row, line, &mut linting_errors);
     }
 
     // Do this _before_ post-process, since post-process may incorrectly
@@ -386,41 +411,6 @@ pub mod tests {
     use std::str::FromStr;
     use crate::{analysis::{parsing::{parser::FileInfo, structure::{self, TopAst}}, FileSpec}, vfs::TextFile};
 
-    pub static SOURCE: &str = "
-    dml 1.4;
-
-    bank sb_cr {
-        group monitor {
-
-            register MKTME_KEYID_MASK {
-                method get() -> (uint64) {
-                    local uint64 physical_address_mask = mse.srv10nm_mse_mktme.get_key_addr_mask();
-                    this.Mask.set(physical_address_mask);
-                    this.function_with_args('some_string',
-                                    integer,
-                                    floater);
-                    return this.val;
-                }
-            }
-
-            register TDX_KEYID_MASK {
-                method get() -> (uint64) {
-                    local uint64 tdx_keyid_mask = mse.srv10nm_mse_tdx.get_key_addr_mask();
-                    local uint64 some_uint = (is_this_real) ? then_you_might_like_this_value : or_this_one;
-                    this.Mask.set(tdx_keyid_mask);
-                    return this.val;
-                }
-            }
-        }
-    }
-
-    /*
-        This is ONEEEE VEEEEEERY LLOOOOOOONG COOOMMMEENTT ON A SINGLEEEE LINEEEEEEEEEEEEEE
-        and ANOTHEEEER VEEEEEERY LLOOOOOOONG COOOMMMEENTT ON A SINGLEEEE LINEEEEEEEEEEEEEE
-    */
-
-    ";
-
     pub fn create_ast_from_snippet(source: &str) -> TopAst {
         use logos::Logos;
         use crate::analysis::parsing::lexer::TokenKind;
@@ -489,18 +479,6 @@ pub mod tests {
     }
 
     #[test]
-    fn test_main() {
-        use crate::lint::{begin_style_check, LintCfg};
-        use crate::lint::rules:: instantiate_rules;
-        let ast = create_ast_from_snippet(SOURCE);
-        let cfg = LintCfg::default();
-        let rules = instantiate_rules(&cfg);
-        let lint_errors = begin_style_check(ast, SOURCE, &rules);
-        assert!(lint_errors.is_ok());
-        assert!(!lint_errors.unwrap().is_empty());
-    }
-
-    #[test]
     fn test_annotation_parse() {
         use super::*;
         use crate::lint::rules::indentation::*;
@@ -566,7 +544,7 @@ pub mod tests {
         use crate::lint::rules::indentation::*;
         use crate::lint::rules::tests::common::{
             ExpectedDMLStyleError,
-            set_up, robust_assert_snippet as assert_snippet
+            set_up, assert_snippet
         };
         use crate::lint::rules::Rule;
         use crate::analysis::ZeroRange;
