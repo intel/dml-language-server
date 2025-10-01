@@ -418,7 +418,7 @@ pub enum TokenKind {
     Newline,
     #[regex(r"[\t\r ]+")]
     Whitespace,
-    #[regex(r"(//[^\n]*\n)")]
+    #[regex(r"(//[^\n]*\n?)")]
     Comment,
     #[regex(r"(/\*)", handle_multiline_comment)]
     MultilineComment,
