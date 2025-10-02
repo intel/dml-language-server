@@ -44,6 +44,7 @@
 - Configuration changes are now correctly tracked with the pull-model, and the
   server should correctly update most settings without a restart on config
   change.
+- Fixed issue where server could crash in rare cases when opening a file
 
 ## 0.9.9
 - Fixed an issue that could cause analysis thread crash when an object was declared both

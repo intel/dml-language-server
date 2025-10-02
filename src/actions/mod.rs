@@ -370,12 +370,13 @@ impl <O: Output> InitActionContext<O> {
     }
 
     fn add_direct_open(&self, path: PathBuf) {
-        let canon_path: CanonPath = path.into();
+        // NOTE: from_path_buf already logs the error, no need to do it here
+        let Some(canon_path) = CanonPath::from_path_buf(path) else { return };
         self.direct_opens.lock().unwrap().insert(canon_path);
     }
 
     fn remove_direct_open(&self, path: PathBuf) {
-        let canon_path: CanonPath = path.into();
+        let Some(canon_path) = CanonPath::from_path_buf(path) else { return };
         if !self.direct_opens.lock().unwrap().remove(&canon_path) {
             debug!("Tried to remove a directly opened file ({:?}) \
                     that wasnt tracked", canon_path);
