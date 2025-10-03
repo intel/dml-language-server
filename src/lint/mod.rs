@@ -5,24 +5,33 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use lazy_static::lazy_static;
 use log::{debug, error, trace};
+use rules::linelength::{BreakBeforeBinaryOpOptions,
+    BreakFuncCallOpenParenOptions,
+    BreakMethodOutputOptions,
+    BreakConditionalExpressionOptions};
 use serde::{Deserialize, Serialize};
 use regex::Regex;
 use rules::{instantiate_rules, CurrentRules, RuleType};
 use rules::{spacing::{SpReservedOptions,
-                      SpBraceOptions,
-                      SpPunctOptions,
-                      SpBinopOptions,
-                      NspFunparOptions,
-                      SpTernaryOptions,
-                      SpPtrDeclOptions,
-                      NspPtrDeclOptions,
-                      NspInparenOptions,
-                      NspUnaryOptions,
-                      NspTrailingOptions},
-            indentation::{LongLineOptions, IndentSizeOptions, IndentCodeBlockOptions,
-                          IndentNoTabOptions, IndentClosingBraceOptions, IndentParenExprOptions,
-                          IndentSwitchCaseOptions, IndentEmptyLoopOptions},
-                    };
+                SpBraceOptions,
+                SpPunctOptions,
+                SpBinopOptions,
+                NspFunparOptions,
+                SpTernaryOptions,
+                SpPtrDeclOptions,
+                NspPtrDeclOptions,
+                NspInparenOptions,
+                NspUnaryOptions,
+                NspTrailingOptions},
+            indentation::{LongLineOptions,
+                IndentSizeOptions,
+                IndentCodeBlockOptions,
+                IndentNoTabOptions,
+                IndentClosingBraceOptions,
+                IndentParenExprOptions,
+                IndentSwitchCaseOptions,
+                IndentEmptyLoopOptions,
+                IndentContinuationLineOptions}};
 use crate::analysis::{DMLError, IsolatedAnalysis, LocalDMLError, ZeroRange};
 use crate::analysis::parsing::tree::TreeElement;
 use crate::file_management::CanonPath;
@@ -106,6 +115,16 @@ pub struct LintCfg {
     pub indent_switch_case: Option<IndentSwitchCaseOptions>,
     #[serde(default)]
     pub indent_empty_loop: Option<IndentEmptyLoopOptions>,
+    #[serde(default)]
+    pub indent_continuation_line: Option<IndentContinuationLineOptions>,
+    #[serde(default)]
+    pub break_func_call_open_paren: Option<BreakFuncCallOpenParenOptions>,
+    #[serde(default)]
+    pub break_conditional_expression: Option<BreakConditionalExpressionOptions>,
+    #[serde(default)]
+    pub break_method_output: Option<BreakMethodOutputOptions>,
+    #[serde(default)]
+    pub break_before_binary_op: Option<BreakBeforeBinaryOpOptions>,
     #[serde(default = "get_true")]
     pub annotate_lints: bool,
 }
@@ -151,6 +170,11 @@ impl Default for LintCfg {
             indent_paren_expr: Some(IndentParenExprOptions{}),
             indent_switch_case: Some(IndentSwitchCaseOptions{indentation_spaces: INDENTATION_LEVEL_DEFAULT}),
             indent_empty_loop: Some(IndentEmptyLoopOptions{indentation_spaces: INDENTATION_LEVEL_DEFAULT}),
+            indent_continuation_line: Some(IndentContinuationLineOptions{indentation_spaces: INDENTATION_LEVEL_DEFAULT}),
+            break_func_call_open_paren: Some(BreakFuncCallOpenParenOptions{indentation_spaces: INDENTATION_LEVEL_DEFAULT}),
+            break_method_output: Some(BreakMethodOutputOptions{}),
+            break_conditional_expression: Some(BreakConditionalExpressionOptions{}),
+            break_before_binary_op: Some(BreakBeforeBinaryOpOptions{}),
             annotate_lints: true,
         }
     }
@@ -206,7 +230,7 @@ impl LinterAnalysis {
     }
 }
 
-pub fn begin_style_check(ast: TopAst, file: &str, rules: &CurrentRules) -> Result<Vec<DMLStyleError>, Error> {
+fn begin_style_check(ast: TopAst, file: &str, rules: &CurrentRules) -> Result<Vec<DMLStyleError>, Error> {
     let (mut invalid_lint_annot, lint_annot) = obtain_lint_annotations(file);
     let mut linting_errors: Vec<DMLStyleError> = vec![];
     ast.style_check(&mut linting_errors, rules, AuxParams { depth: 0 });
@@ -552,7 +576,7 @@ pub mod tests {
         env_logger::init();
 
         let source =
-            "
+"
 dml 1.4;
 
 // dml-lint: allow-file=nsp_unary

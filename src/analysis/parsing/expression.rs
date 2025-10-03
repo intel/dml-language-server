@@ -26,7 +26,10 @@ use crate::lint::{DMLStyleError,
                                     SpPunctArgs},
                                     CurrentRules},
                                     AuxParams};
-use crate::lint::rules::indentation::{IndentParenExprArgs};
+use crate::lint::rules::indentation::IndentParenExprArgs;
+use crate::lint::rules::linelength::{BreakBeforeBinaryOpArgs,
+    BreakConditionalExpression,
+    BreakFuncCallOpenParenArgs};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct UnaryExpressionContent {
@@ -96,6 +99,7 @@ impl TreeElement for BinaryExpressionContent {
     }
     fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, _aux: AuxParams) {
         rules.sp_binop.check(SpBinopArgs::from_binary_expression_content(self), acc);
+        rules.break_before_binary_op.check(BreakBeforeBinaryOpArgs::from_binary_expression(self), acc);
     }
 }
 
@@ -158,6 +162,8 @@ impl TreeElement for TertiaryExpressionContent {
     }
     fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, _aux: AuxParams) {
         rules.sp_ternary.check(SpTernaryArgs::from_tertiary_expression_content(self), acc);
+        rules.break_conditional_expression
+            .check(BreakConditionalExpression::from_tertiary_expression(self), acc);
     }
 }
 
@@ -175,8 +181,10 @@ impl TreeElement for ParenExpressionContent {
     fn subs(&self) -> TreeElements<'_> {
         create_subs!(&self.lparen, &self.expr, &self.rparen)
     }
-    fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, _aux: AuxParams) {
+    fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, aux: AuxParams) {
         rules.indent_paren_expr.check(IndentParenExprArgs::from_paren_expression(self), acc);
+        rules.break_func_call_open_paren.check(
+            BreakFuncCallOpenParenArgs::from_paren_expression(self, aux.depth), acc);
     }
 }
 
@@ -222,11 +230,13 @@ impl TreeElement for FunctionCallContent {
                 noderef, ReferenceKind::Callable));
         }
     }
-    fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, _aux: AuxParams) {
+    fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, aux: AuxParams) {
         rules.nsp_funpar.check(NspFunparArgs::from_function_call(self), acc);
         rules.nsp_inparen.check(NspInparenArgs::from_function_call(self), acc);
         rules.sp_punct.check(SpPunctArgs::from_function_call(self), acc);
         rules.indent_paren_expr.check(IndentParenExprArgs::from_function_call(self), acc);
+        rules.break_func_call_open_paren
+            .check(BreakFuncCallOpenParenArgs::from_function_call(self, aux.depth), acc);
     }
 }
 
@@ -340,8 +350,10 @@ impl TreeElement for CastContent {
         create_subs!(&self.cast, &self.lparen, &self.from,
                      &self.comma, &self.to, &self.rparen)
     }
-    fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, _aux: AuxParams) {
+    fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, aux: AuxParams) {
         rules.indent_paren_expr.check(IndentParenExprArgs::from_cast(self), acc);
+        rules.break_func_call_open_paren
+            .check(BreakFuncCallOpenParenArgs::from_cast(self, aux.depth), acc);
     }
 }
 

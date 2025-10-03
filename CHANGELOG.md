@@ -4,6 +4,10 @@
 -->
 # Change Log
 
+## 0.9.14
+- Added support for line length and breaking rules break_func_call_open_paren, break_method_output, break_conditional_expression and break_before_binary_op.
+- Added support for indendation rule indent_continuation_line.
+
 ## 0.9.13
 - Corrected the name of "explicit\_param\_decls" provisional. Note that it still
   has no semantic effect.
