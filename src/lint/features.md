@@ -61,5 +61,10 @@ Below are listed the currently supported rules for linting:
         ...
     }
 ```
+- **LL6**, `break_func_call_open_paren`: Function and method invocations can be broken after the opening parenthesis, with the continuation lines indented one level.
+```
+    signal_interface *my_interface = SIM_get_interface(
+        other_object, SIGNAL_INTERFACE);
+```
 
 ##### Check [Issue #76 For remaining and planned checks](https://github.com/intel/dml-language-server/issues/76)
