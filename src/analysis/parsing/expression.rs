@@ -27,7 +27,9 @@ use crate::lint::{DMLStyleError,
                                     CurrentRules},
                                     AuxParams};
 use crate::lint::rules::indentation::IndentParenExprArgs;
-use crate::lint::rules::linebreaking::{ConditionalExpressionBreakBeforeOperatorArgs, FuncCallBreakOnOpenParenArgs};
+use crate::lint::rules::linebreaking::{BreakBeforeBinaryOpArgs,
+    ConditionalExpressionBreakBeforeOperatorArgs,
+    FuncCallBreakOnOpenParenArgs};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct UnaryExpressionContent {
@@ -97,6 +99,7 @@ impl TreeElement for BinaryExpressionContent {
     }
     fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, _aux: AuxParams) {
         rules.sp_binop.check(SpBinopArgs::from_binary_expression_content(self), acc);
+        rules.break_before_binary_op.check(BreakBeforeBinaryOpArgs::from_binary_expression(self), acc);
     }
 }
 

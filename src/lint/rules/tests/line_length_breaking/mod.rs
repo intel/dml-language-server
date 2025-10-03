@@ -1,3 +1,4 @@
 mod func_call_break_open_paren;
 mod method_output_break;
 mod conditional_expression_break;
+mod break_before_binary_op;

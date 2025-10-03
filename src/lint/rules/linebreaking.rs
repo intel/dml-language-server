@@ -4,6 +4,7 @@ use crate::analysis::parsing::parser::Token;
 use crate::analysis::parsing::structure::MethodContent;
 use crate::analysis::parsing::tree::{ZeroRange, TreeElementTokenIterator, TreeElement};
 use crate::analysis::parsing::expression::{CastContent, FunctionCallContent,
+                                           BinaryExpressionContent,
                                            ParenExpressionContent, TertiaryExpressionContent};
 use crate::lint::{DMLStyleError, RuleType};
 use super::indentation::IndentParenExprArgs;
@@ -213,6 +214,60 @@ impl FuncCallBreakOnOpenParenRule {
                 }
             }
         }
+    }
+}
+
+pub struct BreakBeforeBinaryOpRule {
+    pub enabled: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct BreakBeforeBinaryOpOptions {}
+
+pub struct BreakBeforeBinaryOpArgs {
+    pub left: ZeroRange,
+    pub operation: ZeroRange,
+    pub right: ZeroRange
+}
+
+impl BreakBeforeBinaryOpArgs {
+    pub fn from_binary_expression(node: &BinaryExpressionContent) 
+        -> Option<BreakBeforeBinaryOpArgs> {
+        Some(BreakBeforeBinaryOpArgs {
+            left: node.left.range(),
+            operation: node.operation.range(),
+            right: node.right.range(),
+        })
+    }
+}
+
+impl BreakBeforeBinaryOpRule {
+    pub fn from_options(options: &Option<BreakBeforeBinaryOpOptions>) -> BreakBeforeBinaryOpRule {
+        BreakBeforeBinaryOpRule {
+            enabled: options.is_some(),
+        }
+    }
+
+    pub fn check(&self, args: Option<BreakBeforeBinaryOpArgs>, acc: &mut Vec<DMLStyleError>) {
+        if !self.enabled { return; }
+        let Some(args) = args else { return; };
+        let binop_is_broken = args.left.row_start.0 != args.right.row_end.0;
+        let has_break_after_operator = args.operation.row_end.0 != args.right.row_start.0;
+        if binop_is_broken && has_break_after_operator {
+            acc.push(self.create_err(args.operation));
+        }
+    }
+}
+
+impl Rule for BreakBeforeBinaryOpRule {
+    fn name() -> &'static str {
+        "break_before_binary_op"
+    }
+    fn description() -> &'static str {
+        "Break binary expressions before the operator, not after."
+    }
+    fn get_rule_type() -> RuleType {
+        RuleType::LL2
     }
 }
 

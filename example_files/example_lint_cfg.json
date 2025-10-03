@@ -22,5 +22,6 @@
     "func_call_break_on_open_paren": {},
     "method_output_break": {},
     "conditional_expression_break_before_op": {},
+    "break_before_binary_op": {},
     "annotate_lints": true
 }

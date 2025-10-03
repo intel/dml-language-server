@@ -59,10 +59,8 @@ static PAREN_NESTED_CORRECT: &str = "
 param result = (
     (reg0.val
      * reg1.enable.val)
-    &
-    mask_reg
-    +
-    1);
+    & mask_reg
+    + 1);
 ";
 
 #[test]
@@ -75,10 +73,8 @@ static PAREN_NESTED_INCORRECT: &str = "
 param result = (
     (reg0.val
      * reg1.enable.val)
-                &
-    mask_reg
-                +
-                1);
+                & mask_reg
+                + 1);
 ";
 
 #[test]
@@ -87,8 +83,7 @@ fn paren_nested_incorrect(){
     let expected_errors = define_expected_errors!(
         RuleType::LL6,
         (4, 4, 16, 17),
-        (6, 6, 16, 17),
-        (7, 7, 16, 17),
+        (5, 5, 16, 17),
     );
     assert_snippet(PAREN_NESTED_INCORRECT, expected_errors, &rules);
 }

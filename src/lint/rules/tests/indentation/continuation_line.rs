@@ -15,8 +15,8 @@ fn continuation_line_correct() {
 
 static CONTINUATION_LINE_RETURN_CORRECT: &str = "
 method calculate_sum(uint64 a, uint64 b) -> (uint64) {
-    return (a + b) * (a - b) +
-        (a * b);
+    return (a + b) * (a - b)
+        + (a * b);
 }
 ";
 #[test]
@@ -29,8 +29,8 @@ static CONTINUATION_LINE_LOCAL_DECLA_CORRECT: &str = "
 bank regs {
     register example_register size 4 @ 0x00 {
         method read() -> (uint64) {
-            local uint64 value = (this.val + 10) *
-                (this.val - 5);
+            local uint64 value = (this.val + 10)
+                * (this.val - 5);
             return value;
         }
     }
@@ -87,8 +87,8 @@ fn continuation_line_incorrect() {
 pub static CONTINUATION_LINE_BITWISE_INCORRECT: &str = "
 method write(uint64 value) {
     local uint64 a = value;
-    local uint64 result = a <<
-                               2;
+    local uint64 result = a
+                               << 2;
     log info: 'Writing to register, result after left shift = %x', result;
 }
 ";
@@ -97,7 +97,7 @@ fn continuation_line_bitwise_incorrect() {
     let rules = set_up();
     let expected_errors = define_expected_errors!(
         RuleType::IN6,
-        (4, 4, 31, 32),
+        (4, 4, 31, 33),
     );
     assert_snippet(CONTINUATION_LINE_BITWISE_INCORRECT, expected_errors, &rules);
 }
@@ -106,8 +106,8 @@ pub static CONTINUATION_LINE_PARAM_INCORRECT: &str = "
 bank regs {
     register control size 4 @ 0x00 {
         field status @ [31:3] {
-            param init_val = 1 << 2 |
-                                            1 << 1;
+            param init_val = 1 << 2
+                                            | 1 << 1;
         }
     }
 }

@@ -24,9 +24,10 @@ use indentation::{LongLinesRule,
     IndentSwitchCaseRule,
     IndentEmptyLoopRule,
     IndentContinuationLineRule};
-use linebreaking::{FuncCallBreakOnOpenParenRule,
-    MethodOutputBreakRule,
-    ConditionalExpressionBreakBeforeOperatorRule};
+use linebreaking::{BreakBeforeBinaryOpRule,
+    FuncCallBreakOnOpenParenRule,
+    ConditionalExpressionBreakBeforeOperatorRule,
+    MethodOutputBreakRule};
 use crate::lint::{LintCfg, DMLStyleError};
 use crate::analysis::{LocalDMLError, parsing::tree::ZeroRange};
 
@@ -53,6 +54,7 @@ pub struct CurrentRules {
     pub func_call_break_on_open_paren: FuncCallBreakOnOpenParenRule,
     pub method_output_break: MethodOutputBreakRule,
     pub conditional_expression_break_before_op: ConditionalExpressionBreakBeforeOperatorRule,
+    pub break_before_binary_op: BreakBeforeBinaryOpRule, // Placeholder for future rule
 }
 
 pub fn  instantiate_rules(cfg: &LintCfg) -> CurrentRules {
@@ -79,6 +81,7 @@ pub fn  instantiate_rules(cfg: &LintCfg) -> CurrentRules {
         func_call_break_on_open_paren: FuncCallBreakOnOpenParenRule::from_options(&cfg.func_call_break_on_open_paren),
         method_output_break: MethodOutputBreakRule { enabled: cfg.method_output_break.is_some() },
         conditional_expression_break_before_op: ConditionalExpressionBreakBeforeOperatorRule::from_options(&cfg.conditional_expression_break_before_op),
+        break_before_binary_op: BreakBeforeBinaryOpRule { enabled: cfg.break_before_binary_op.is_some() },
     }
 }
 
@@ -113,6 +116,7 @@ pub enum RuleType {
     NspUnary,
     NspTrailing,
     LL1,
+    LL2,
     LL3,
     LL5,
     LL6,

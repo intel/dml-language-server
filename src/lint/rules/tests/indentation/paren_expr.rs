@@ -130,8 +130,8 @@ fn funcall_nested_paren_incorrect() {
 
 static IF_PAREN_CORRECT: &str = "
 method callback() {
-    if (conditionX &&
-        conditionY) {
+    if (conditionX
+        && conditionY) {
         return;
     }
 }
@@ -144,8 +144,8 @@ fn if_paren_correct() {
 
 static IF_PAREN_INCORRECT: &str = "
 method callback() {
-    if (conditionX &&
-          conditionY) {
+    if (conditionX
+          && conditionY) {
         return;
     }
 }
@@ -155,7 +155,7 @@ fn if_paren_incorrect() {
     let rules = set_up();
     let expected_errors = define_expected_errors!(
         RuleType::IN5,
-        (3, 3, 10, 20),
+        (3, 3, 10, 12),
     );
     assert_snippet(IF_PAREN_INCORRECT, expected_errors, &rules);
 }
@@ -348,10 +348,8 @@ fn switch_paren_incorrect() {
 static NESTED_PAREN_EXPR_CORRECT: &str = "
 param result = ((reg0.val
                  * reg1.enable.val)
-                &
-                mask_reg
-                +
-                1);
+                & mask_reg
+                + 1);
 ";
 
 #[test]
@@ -363,10 +361,8 @@ fn nested_paren_expr_correct(){
 static NESTED_PAREN_EXPR_INCORRECT: &str = "
 param result = ((reg0.val
      * reg1.enable.val)
-                &
-                 mask_reg
-                +
-                1);
+                 & mask_reg
+                + 1);
 ";
 #[test]
 fn nested_paren_expr_incorrect(){
@@ -374,7 +370,7 @@ fn nested_paren_expr_incorrect(){
     let expected_errors = define_expected_errors!(
         RuleType::IN5,
         (2, 2, 5, 6),
-        (4, 4, 17, 25),
+        (3, 3, 17, 18),
     );
     assert_snippet(NESTED_PAREN_EXPR_INCORRECT, expected_errors, &rules);
 }
