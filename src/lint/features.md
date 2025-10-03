@@ -53,8 +53,8 @@ Below are listed the currently supported rules for linting:
          + another_very_long_expression)
         * a_third_long_expression;
 ```
-- **LL3**, `conditional_expression_break`: Break conditional expressions before the ?, or both before the ? and before the :.
-- **LL5**, `method_output_break`: Break long method declarations with output parameters before the arrow.
+- **LL3**, `break_conditional_expression`: Break conditional expressions before the ?, or both before the ? and before the :.
+- **LL5**, `break_method_output`: Break long method declarations with output parameters before the arrow.
 ```
     method inquiry_status(uint64 physical_address)
         -> (uint16 status) {

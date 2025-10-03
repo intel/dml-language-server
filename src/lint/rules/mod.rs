@@ -1,6 +1,6 @@
 pub mod spacing;
 pub mod indentation;
-pub mod linebreaking;
+pub mod linelength;
 
 #[cfg(test)]
 pub mod tests;
@@ -24,10 +24,10 @@ use indentation::{LongLinesRule,
     IndentSwitchCaseRule,
     IndentEmptyLoopRule,
     IndentContinuationLineRule};
-use linebreaking::{BreakBeforeBinaryOpRule,
-    FuncCallBreakOnOpenParenRule,
-    ConditionalExpressionBreakBeforeOperatorRule,
-    MethodOutputBreakRule};
+use linelength::{BreakBeforeBinaryOpRule,
+    BreakFuncCallOpenParenRule,
+    BreakConditionalExpressionRule,
+    BreakMethodOutputRule};
 use crate::lint::{LintCfg, DMLStyleError};
 use crate::analysis::{LocalDMLError, parsing::tree::ZeroRange};
 
@@ -51,9 +51,9 @@ pub struct CurrentRules {
     pub indent_switch_case: IndentSwitchCaseRule,
     pub indent_empty_loop: IndentEmptyLoopRule,
     pub indent_continuation_line: IndentContinuationLineRule,
-    pub func_call_break_on_open_paren: FuncCallBreakOnOpenParenRule,
-    pub method_output_break: MethodOutputBreakRule,
-    pub conditional_expression_break_before_op: ConditionalExpressionBreakBeforeOperatorRule,
+    pub break_func_call_open_paren: BreakFuncCallOpenParenRule,
+    pub break_method_output: BreakMethodOutputRule,
+    pub break_conditional_expression: BreakConditionalExpressionRule,
     pub break_before_binary_op: BreakBeforeBinaryOpRule, // Placeholder for future rule
 }
 
@@ -78,9 +78,9 @@ pub fn  instantiate_rules(cfg: &LintCfg) -> CurrentRules {
         indent_switch_case: IndentSwitchCaseRule::from_options(&cfg.indent_switch_case),
         indent_empty_loop: IndentEmptyLoopRule::from_options(&cfg.indent_empty_loop),
         indent_continuation_line: IndentContinuationLineRule::from_options(&cfg.indent_continuation_line),
-        func_call_break_on_open_paren: FuncCallBreakOnOpenParenRule::from_options(&cfg.func_call_break_on_open_paren),
-        method_output_break: MethodOutputBreakRule { enabled: cfg.method_output_break.is_some() },
-        conditional_expression_break_before_op: ConditionalExpressionBreakBeforeOperatorRule::from_options(&cfg.conditional_expression_break_before_op),
+        break_func_call_open_paren: BreakFuncCallOpenParenRule::from_options(&cfg.break_func_call_open_paren),
+        break_method_output: BreakMethodOutputRule { enabled: cfg.break_method_output.is_some() },
+        break_conditional_expression: BreakConditionalExpressionRule::from_options(&cfg.break_conditional_expression),
         break_before_binary_op: BreakBeforeBinaryOpRule { enabled: cfg.break_before_binary_op.is_some() },
     }
 }

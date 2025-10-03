@@ -3,7 +3,7 @@ use crate::lint::rules::RuleType;
 
 // LL5: Break long method declarations with output parameters before the arrow.
 
-static METHOD_OUTPUT_BREAK_CORRECT: &str = "
+static OUTPUT_CORRECT: &str = "
 method inquiry_status(uint64 physical_address)
         -> (uint16 status) {
     return 0;
@@ -25,12 +25,12 @@ method other_method(uint64 arg1,
 }
 ";
 #[test]
-fn method_output_break_correct() {
+fn output_correct() {
     let rules = set_up();
-    assert_snippet(METHOD_OUTPUT_BREAK_CORRECT, vec![], &rules);
+    assert_snippet(OUTPUT_CORRECT, vec![], &rules);
 }
 
-static METHOD_OUTPUT_BREAK_INCORRECT: &str = "
+static OUTPUT_INCORRECT: &str = "
 method inquiry_status(uint64 physical_address) ->
     (uint16 status) {
     return 0;
@@ -48,7 +48,7 @@ method other_method(uint64 arg1,
 }
 ";
 #[test]
-fn method_output_break_incorrect() {
+fn output_incorrect() {
     let rules = set_up();
     let expected_errors = define_expected_errors!(
         RuleType::LL5,
@@ -56,5 +56,5 @@ fn method_output_break_incorrect() {
         (6, 6, 47, 49),
         (12, 12, 33, 35),
     );
-    assert_snippet(METHOD_OUTPUT_BREAK_INCORRECT, expected_errors, &rules);
+    assert_snippet(OUTPUT_INCORRECT, expected_errors, &rules);
 }

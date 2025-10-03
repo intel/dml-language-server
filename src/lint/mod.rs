@@ -5,10 +5,10 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use lazy_static::lazy_static;
 use log::{debug, error, trace};
-use rules::linebreaking::{BreakBeforeBinaryOpOptions,
-    FuncCallBreakOnOpenParenOptions,
-    MethodOutputBreakOptions,
-    ConditionalExpressionBreakBeforeOperatorOptions};
+use rules::linelength::{BreakBeforeBinaryOpOptions,
+    BreakFuncCallOpenParenOptions,
+    BreakMethodOutputOptions,
+    BreakConditionalExpressionOptions};
 use serde::{Deserialize, Serialize};
 use regex::Regex;
 use rules::{instantiate_rules, CurrentRules, RuleType};
@@ -118,11 +118,11 @@ pub struct LintCfg {
     #[serde(default)]
     pub indent_continuation_line: Option<IndentContinuationLineOptions>,
     #[serde(default)]
-    pub func_call_break_on_open_paren: Option<FuncCallBreakOnOpenParenOptions>,
+    pub break_func_call_open_paren: Option<BreakFuncCallOpenParenOptions>,
     #[serde(default)]
-    pub conditional_expression_break_before_op: Option<ConditionalExpressionBreakBeforeOperatorOptions>,
+    pub break_conditional_expression: Option<BreakConditionalExpressionOptions>,
     #[serde(default)]
-    pub method_output_break: Option<MethodOutputBreakOptions>,
+    pub break_method_output: Option<BreakMethodOutputOptions>,
     #[serde(default)]
     pub break_before_binary_op: Option<BreakBeforeBinaryOpOptions>,
     #[serde(default = "get_true")]
@@ -171,9 +171,9 @@ impl Default for LintCfg {
             indent_switch_case: Some(IndentSwitchCaseOptions{indentation_spaces: INDENTATION_LEVEL_DEFAULT}),
             indent_empty_loop: Some(IndentEmptyLoopOptions{indentation_spaces: INDENTATION_LEVEL_DEFAULT}),
             indent_continuation_line: Some(IndentContinuationLineOptions{indentation_spaces: INDENTATION_LEVEL_DEFAULT}),
-            func_call_break_on_open_paren: Some(FuncCallBreakOnOpenParenOptions{indentation_spaces: INDENTATION_LEVEL_DEFAULT}),
-            method_output_break: Some(MethodOutputBreakOptions{}),
-            conditional_expression_break_before_op: Some(ConditionalExpressionBreakBeforeOperatorOptions{}),
+            break_func_call_open_paren: Some(BreakFuncCallOpenParenOptions{indentation_spaces: INDENTATION_LEVEL_DEFAULT}),
+            break_method_output: Some(BreakMethodOutputOptions{}),
+            break_conditional_expression: Some(BreakConditionalExpressionOptions{}),
             break_before_binary_op: Some(BreakBeforeBinaryOpOptions{}),
             annotate_lints: true,
         }

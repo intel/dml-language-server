@@ -4,7 +4,7 @@ use crate::lint::rules::RuleType;
 // LL6: Function and method invocations can be broken after the opening parenthesis,
 //  with the continuation lines indented one level.
 
-static FUNCALL_BROKEN_AFTER_PAREN_EXCEPTION_CORRECT: &str = "
+static AFTER_PAREN_EXCEPTION_CORRECT: &str = "
 method effect() {
     callback(
         0xABC,
@@ -13,12 +13,12 @@ method effect() {
 }
 ";
 #[test]
-fn funcall_broken_after_paren_exception_correct() {
+fn after_paren_exception_correct() {
     let rules = set_up();
-    assert_snippet(FUNCALL_BROKEN_AFTER_PAREN_EXCEPTION_CORRECT, vec![], &rules);
+    assert_snippet(AFTER_PAREN_EXCEPTION_CORRECT, vec![], &rules);
 }
 
-static FUNCALL_BROKEN_AFTER_PAREN_EXCEPTION_INCORRECT: &str = "
+static AFTER_PAREN_EXCEPTION_INCORRECT: &str = "
 method effect() {
     callback(
         0xABC,
@@ -27,14 +27,14 @@ method effect() {
 }
 ";
 #[test]
-fn funcall_broken_after_paren_exception_incorrect() {
+fn after_paren_exception_incorrect() {
     let rules = set_up();
     let expected_errors = define_expected_errors!(
         RuleType::LL6,
         (4, 4, 12, 22),
         (5, 5, 4, 9),
     );
-    assert_snippet(FUNCALL_BROKEN_AFTER_PAREN_EXCEPTION_INCORRECT, expected_errors, &rules);
+    assert_snippet(AFTER_PAREN_EXCEPTION_INCORRECT, expected_errors, &rules);
 }
 
 static FIRST_LINE_INCORRECT: &str = "
@@ -55,7 +55,7 @@ fn first_line_incorrect() {
     assert_snippet(FIRST_LINE_INCORRECT, expected_errors, &rules);
 }
 
-static PAREN_NESTED_CORRECT: &str = "
+static NESTED_PAREN_CORRECT: &str = "
 param result = (
     (reg0.val
      * reg1.enable.val)
@@ -64,12 +64,12 @@ param result = (
 ";
 
 #[test]
-fn paren_nested_correct(){
+fn nested_paren_correct(){
     let rules = set_up();
-    assert_snippet(PAREN_NESTED_CORRECT, vec![], &rules);
+    assert_snippet(NESTED_PAREN_CORRECT, vec![], &rules);
 }
 
-static PAREN_NESTED_INCORRECT: &str = "
+static NESTED_PAREN_INCORRECT: &str = "
 param result = (
     (reg0.val
      * reg1.enable.val)
@@ -78,14 +78,14 @@ param result = (
 ";
 
 #[test]
-fn paren_nested_incorrect(){
+fn nested_paren_incorrect(){
     let rules = set_up();
     let expected_errors = define_expected_errors!(
         RuleType::LL6,
         (4, 4, 16, 17),
         (5, 5, 16, 17),
     );
-    assert_snippet(PAREN_NESTED_INCORRECT, expected_errors, &rules);
+    assert_snippet(NESTED_PAREN_INCORRECT, expected_errors, &rules);
 }
 
 static METHOD_CORRECT: &str = "

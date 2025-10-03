@@ -16,23 +16,23 @@ fn default_indentation_spaces() -> u32 {
     INDENTATION_LEVEL_DEFAULT
 }
 
-pub struct MethodOutputBreakRule {
+pub struct BreakMethodOutputRule {
     pub enabled: bool
 }
 
-pub struct MethodOutputBreakArgs {
+pub struct BreakMethodOutputArgs {
     pub before_arrow_range: ZeroRange,
     pub arrow_range: ZeroRange,
     pub after_arrow_range: ZeroRange,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct MethodOutputBreakOptions{
+pub struct BreakMethodOutputOptions{
 }
 
-impl Rule for MethodOutputBreakRule {
+impl Rule for BreakMethodOutputRule {
     fn name() -> &'static str {
-        "method_output_break"
+        "break_method_output"
     }
     fn description() -> &'static str {
         "Break long method declarations with output parameters before the arrow."
@@ -42,10 +42,10 @@ impl Rule for MethodOutputBreakRule {
     }
 }
 
-impl MethodOutputBreakArgs {
-    pub fn from_method(node: &MethodContent) -> Option<MethodOutputBreakArgs> {
+impl BreakMethodOutputArgs {
+    pub fn from_method(node: &MethodContent) -> Option<BreakMethodOutputArgs> {
         let Some(returns) = &node.returns else { return None; };
-        Some(MethodOutputBreakArgs {
+        Some(BreakMethodOutputArgs {
             before_arrow_range: node.rparen.range(),
             arrow_range: returns.0.range(),
             after_arrow_range: returns.1.range(),
@@ -53,8 +53,8 @@ impl MethodOutputBreakArgs {
     }
 }
 
-impl MethodOutputBreakRule {
-    pub fn check(&self, args: Option<MethodOutputBreakArgs>, acc: &mut Vec<DMLStyleError>) {
+impl BreakMethodOutputRule {
+    pub fn check(&self, args: Option<BreakMethodOutputArgs>, acc: &mut Vec<DMLStyleError>) {
         if !self.enabled { return; }
         let Some(args) = args else { return; };
         if args.before_arrow_range.row_end.0 == args.after_arrow_range.row_start.0 {
@@ -68,26 +68,26 @@ impl MethodOutputBreakRule {
     }
 }
 
-pub struct FuncCallBreakOnOpenParenRule {
+pub struct BreakFuncCallOpenParenRule {
     pub enabled: bool,
     indentation_spaces: u32
 }
 
-pub struct FuncCallBreakOnOpenParenArgs {
+pub struct BreakFuncCallOpenParenArgs {
     pub members_ranges: Vec<ZeroRange>,
     pub expected_depth: u32,
     pub lparen: ZeroRange,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct FuncCallBreakOnOpenParenOptions{
+pub struct BreakFuncCallOpenParenOptions{
     #[serde(default = "default_indentation_spaces")]
     pub indentation_spaces: u32,
 }
 
-impl Rule for FuncCallBreakOnOpenParenRule {
+impl Rule for BreakFuncCallOpenParenRule {
     fn name() -> &'static str {
-        "FUNC_CALL_BREAK_ON_OPEN_PAREN"
+        "break_func_call_open_paren"
     }
     fn description() -> &'static str {
         "Function or method calls broken right after opening parenthesis should
@@ -98,7 +98,7 @@ impl Rule for FuncCallBreakOnOpenParenRule {
     }
 }
 
-impl FuncCallBreakOnOpenParenArgs {
+impl BreakFuncCallOpenParenArgs {
     pub fn filter_out_parenthesized_tokens(expression_tokens: TreeElementTokenIterator) -> Vec<Token> {
         let mut token_list: Vec<Token> = vec![];
         let mut paren_depth = 0;
@@ -125,7 +125,7 @@ impl FuncCallBreakOnOpenParenArgs {
         }
         token_list
     }
-    pub fn from_function_call(node: &FunctionCallContent, depth: u32) -> Option<FuncCallBreakOnOpenParenArgs> {
+    pub fn from_function_call(node: &FunctionCallContent, depth: u32) -> Option<BreakFuncCallOpenParenArgs> {
         let mut filtered_member_ranges: Vec<ZeroRange> = vec![];
         for (arg, _comma) in node.arguments.iter() {
             filtered_member_ranges.extend(
@@ -139,15 +139,15 @@ impl FuncCallBreakOnOpenParenArgs {
                 filtered_member_ranges.first()?.to_owned()) {
             return None
         }
-        Some(FuncCallBreakOnOpenParenArgs {
+        Some(BreakFuncCallOpenParenArgs {
             members_ranges: filtered_member_ranges,
             expected_depth: depth,
             lparen: node.lparen.range(),
         })
     }
 
-    pub fn from_paren_expression(node: &ParenExpressionContent, depth: u32) -> Option<FuncCallBreakOnOpenParenArgs> {
-        Some(FuncCallBreakOnOpenParenArgs {
+    pub fn from_paren_expression(node: &ParenExpressionContent, depth: u32) -> Option<BreakFuncCallOpenParenArgs> {
+        Some(BreakFuncCallOpenParenArgs {
             members_ranges: Self::filter_out_parenthesized_tokens(node.expr.tokens())
                 .iter().map(|t| t.range).collect(),
             expected_depth: depth,
@@ -155,24 +155,24 @@ impl FuncCallBreakOnOpenParenArgs {
         })
     }
 
-    pub fn from_method(node: &MethodContent, depth: u32) -> Option<FuncCallBreakOnOpenParenArgs> {
+    pub fn from_method(node: &MethodContent, depth: u32) -> Option<BreakFuncCallOpenParenArgs> {
         let mut filtered_member_ranges: Vec<ZeroRange> = vec![];
         for (arg, _comma) in node.arguments.iter() {
             filtered_member_ranges.extend(
                 Self::filter_out_parenthesized_tokens(arg.tokens())
                     .iter().map(|t| t.range));
         }
-        Some(FuncCallBreakOnOpenParenArgs {
+        Some(BreakFuncCallOpenParenArgs {
             members_ranges: filtered_member_ranges,
             expected_depth: depth,
             lparen: node.lparen.range(),
         })
     }
 
-    pub fn from_cast(node: &CastContent, depth: u32) -> Option<FuncCallBreakOnOpenParenArgs> {
+    pub fn from_cast(node: &CastContent, depth: u32) -> Option<BreakFuncCallOpenParenArgs> {
         let mut cast_member_tokens = node.from.tokens();
         cast_member_tokens.append(&mut node.to.tokens());
-        Some(FuncCallBreakOnOpenParenArgs {
+        Some(BreakFuncCallOpenParenArgs {
             members_ranges: Self::filter_out_parenthesized_tokens(cast_member_tokens)
                 .iter().map(|t| t.range).collect(),
             expected_depth: depth,
@@ -181,21 +181,21 @@ impl FuncCallBreakOnOpenParenArgs {
     }
 }
 
-impl FuncCallBreakOnOpenParenRule {
-    pub fn from_options(options: &Option<FuncCallBreakOnOpenParenOptions>) -> FuncCallBreakOnOpenParenRule {
+impl BreakFuncCallOpenParenRule {
+    pub fn from_options(options: &Option<BreakFuncCallOpenParenOptions>) -> BreakFuncCallOpenParenRule {
         match options {
-            Some(options) => FuncCallBreakOnOpenParenRule {
+            Some(options) => BreakFuncCallOpenParenRule {
                 enabled: true,
                 indentation_spaces: options.indentation_spaces
             },
-            None => FuncCallBreakOnOpenParenRule {
+            None => BreakFuncCallOpenParenRule {
                 enabled: false,
                 indentation_spaces: 0
             }
         }
     }
 
-    pub fn check(&self, args: Option<FuncCallBreakOnOpenParenArgs>, acc: &mut Vec<DMLStyleError>) {
+    pub fn check(&self, args: Option<BreakFuncCallOpenParenArgs>, acc: &mut Vec<DMLStyleError>) {
         if !self.enabled { return; }
         let Some(args) = args else { return; };
         if args.members_ranges.is_empty() { return; }
@@ -271,11 +271,11 @@ impl Rule for BreakBeforeBinaryOpRule {
     }
 }
 
-pub struct ConditionalExpressionBreakBeforeOperatorRule {
+pub struct BreakConditionalExpressionRule {
     pub enabled: bool,
 }
 
-pub struct ConditionalExpressionBreakBeforeOperatorArgs {
+pub struct BreakConditionalExpression {
     pub left: ZeroRange,
     pub left_operation: ZeroRange,
     pub middle: ZeroRange,
@@ -284,10 +284,10 @@ pub struct ConditionalExpressionBreakBeforeOperatorArgs {
 }
 
 
-impl ConditionalExpressionBreakBeforeOperatorArgs {
+impl BreakConditionalExpression {
     pub fn from_tertiary_expression(node: &TertiaryExpressionContent) 
-        -> Option<ConditionalExpressionBreakBeforeOperatorArgs> {
-        Some(ConditionalExpressionBreakBeforeOperatorArgs {
+        -> Option<BreakConditionalExpression> {
+        Some(BreakConditionalExpression {
             left: node.left.range(),
             left_operation: node.left_operation.range(),
             middle: node.middle.range(),
@@ -297,19 +297,19 @@ impl ConditionalExpressionBreakBeforeOperatorArgs {
     }
 }
 
-impl ConditionalExpressionBreakBeforeOperatorRule {
-    pub fn from_options(options: &Option<ConditionalExpressionBreakBeforeOperatorOptions>) -> ConditionalExpressionBreakBeforeOperatorRule {
+impl BreakConditionalExpressionRule {
+    pub fn from_options(options: &Option<BreakConditionalExpressionOptions>) -> BreakConditionalExpressionRule {
         match options {
-            Some(_options) => ConditionalExpressionBreakBeforeOperatorRule {
+            Some(_options) => BreakConditionalExpressionRule {
                 enabled: true,
             },
-            None => ConditionalExpressionBreakBeforeOperatorRule {
+            None => BreakConditionalExpressionRule {
                 enabled: false,
             }
         }
     }
 
-    pub fn check(&self, args: Option<ConditionalExpressionBreakBeforeOperatorArgs>, acc: &mut Vec<DMLStyleError>) {
+    pub fn check(&self, args: Option<BreakConditionalExpression>, acc: &mut Vec<DMLStyleError>) {
         if !self.enabled { return; }
         let Some(args) = args else { return; };
         let has_break_before_question_operator = args.left.row_end.0 != args.left_operation.row_start.0;
@@ -327,12 +327,12 @@ impl ConditionalExpressionBreakBeforeOperatorRule {
 
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct ConditionalExpressionBreakBeforeOperatorOptions{
+pub struct BreakConditionalExpressionOptions{
 }
 
-impl Rule for ConditionalExpressionBreakBeforeOperatorRule {
+impl Rule for BreakConditionalExpressionRule {
     fn name() -> &'static str {
-        "COND_EXPRESSION_BREAK_BEFORE_OPERATOR"
+        "break_conditional_expression"
     }
     fn description() -> &'static str {
         "Break conditional expressions before the ?, or both before the ? and before the :."
