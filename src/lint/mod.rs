@@ -32,7 +32,8 @@ use crate::lint::rules::indentation::{MAX_LENGTH_DEFAULT,
                                       INDENTATION_LEVEL_DEFAULT,
                                       setup_indentation_size
                                     };
-use crate::server::{maybe_notify_unknown_lint_fields, Output};                                    
+use crate::server::{maybe_notify_unknown_lint_fields, Output};
+use crate::concurrency::AliveStatus;
 
 pub fn parse_lint_cfg(path: PathBuf) -> Result<(LintCfg, Vec<String>), String> {
     debug!("Reading Lint configuration from {:?}", path);
@@ -179,7 +180,11 @@ impl fmt::Display for LinterAnalysis {
 }
 
 impl LinterAnalysis {
-    pub fn new(path: &Path, file: TextFile, cfg: LintCfg,  original_analysis: IsolatedAnalysis)
+    pub fn new(path: &Path,
+               file: TextFile,
+               cfg: LintCfg,
+               original_analysis: IsolatedAnalysis,
+               status: AliveStatus)
                -> Result<LinterAnalysis, Error> {
         debug!("local linting for: {:?}", path);
         let canonpath: CanonPath = path.into();
