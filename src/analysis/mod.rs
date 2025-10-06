@@ -66,6 +66,7 @@ use crate::analysis::templating::traits::{DMLTemplate,
                                           TemplateTraitInfo};
 use crate::analysis::templating::types::DMLResolvedType;
 
+use crate::concurrency::AliveStatus;
 use crate::file_management::{PathResolver, CanonPath};
 
 use crate::vfs::{TextFile, Error};
@@ -1440,7 +1441,10 @@ type ResolvedImports = (HashSet<(CanonPath, Import)>,
                         HashSet<(PathBuf, Import)>);
 
 impl IsolatedAnalysis {
-    pub fn new(path: &CanonPath, clientpath: &PathBuf, file: TextFile)
+    pub fn new(path: &CanonPath,
+               clientpath: &PathBuf,
+               file: TextFile,
+               status: AliveStatus)
                -> Result<IsolatedAnalysis, Error> {
         trace!("local analysis: {} at {}", path.as_str(), path.as_str());
         let filespec = FileSpec {
@@ -2102,7 +2106,8 @@ impl DeviceAnalysis {
 
     pub fn new(root: IsolatedAnalysis,
                timed_bases: Vec<TimestampedStorage<IsolatedAnalysis>>,
-               imp_map: HashMap<Import, String>)
+               imp_map: HashMap<Import, String>,
+               status: AliveStatus)
                -> Result<DeviceAnalysis, Error> {
         info!("device analysis: {:?}", root.path);
 

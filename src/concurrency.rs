@@ -1,12 +1,15 @@
 //  © 2024 Intel Corporation
 //  SPDX-License-Identifier: Apache-2.0 and MIT
 use std::thread;
+use std::collections::HashMap;
+use std::sync::{Arc, Weak};
 
 use crossbeam::channel::{bounded, select, Receiver, Select, Sender};
 
 /// `ConcurrentJob` is a handle for some long-running computation
 /// off the main thread. It can be used, indirectly, to wait for
-/// the completion of the said computation.
+/// the completion of the said computation, or directly to kill
+/// the managed job
 ///
 /// All `ConcurrentJob`s must eventually be stored in a `Jobs` table.
 ///
@@ -17,71 +20,130 @@ use crossbeam::channel::{bounded, select, Receiver, Select, Sender};
 /// jobs to finish, which helps tremendously with making tests deterministic.
 ///
 /// `JobToken` is the worker-side counterpart of `ConcurrentJob`. Dropping
-/// a `JobToken` signals that the corresponding job has finished.
+/// a `JobToken` signals that the corresponding job has finished, and checking
+/// if the status is still valid let's the worker know if it should bail early
+///
+pub struct JobStatusKeeper(Option<Arc<()>>);
+
+impl JobStatusKeeper {
+    pub fn new() -> (JobStatusKeeper, AliveStatus) {
+        let arc = Arc::default();
+        let weak = Arc::downgrade(&arc);
+        (JobStatusKeeper(Some(arc)), AliveStatus(weak))
+    }
+
+    pub fn kill(&mut self) {
+        self.0 = None;
+    }
+
+    pub fn is_killed(&self) -> bool {
+        self.0.is_none()
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct AliveStatus(Weak<()>);
+
+impl AliveStatus {
+    pub fn is_alive(&self) -> bool {
+        self.0.strong_count() > 0
+    }
+}
+
 #[must_use]
 pub struct ConcurrentJob {
     chan: Receiver<Never>,
+    keeper: JobStatusKeeper,
 }
 
 #[derive(Debug)]
 pub struct JobToken {
     _chan: Sender<Never>,
+    pub status: AliveStatus,
 }
 
 #[derive(Default)]
-pub struct Jobs {
-    jobs: Vec<ConcurrentJob>,
+pub struct Jobs<T> where T: PartialEq + std::hash::Hash + Clone {
+    jobs: HashMap<T, ConcurrentJob>,
 }
 
-impl Jobs {
-    pub fn add(&mut self, job: ConcurrentJob) {
+impl <T: Eq + std::hash::Hash + Clone> Jobs<T> {
+    pub fn add(&mut self, ident: T, job: ConcurrentJob) {
         self.gc();
-        self.jobs.push(job);
+        if let Some(mut previous_job) = self.jobs.insert(ident, job) {
+            // Calling 'kill' here is not meaningless (even though the Arc would
+            // naturally decrement on drop), as it will prevent
+            // the panic when 'previous_job' drop method is called
+            previous_job.kill();
+        }
+    }
+
+    pub fn kill_ident(&mut self, ident: &T) {
+        if let Some(job) = self.jobs.get_mut(ident) {
+            job.kill();
+        }
     }
 
     /// Blocks the current thread until all pending jobs are finished.
     pub fn wait_for_all(&mut self) {
         while !self.jobs.is_empty() {
-            let done: usize = {
+            let done_key = {
+                let mut indices = Vec::default();
                 let mut select = Select::new();
-                for job in &self.jobs {
+                for (ident, job) in &self.jobs {
                     select.recv(&job.chan);
+                    indices.push(ident);
                 }
 
                 let oper = select.select();
                 let oper_index = oper.index();
-                let chan = &self.jobs[oper_index].chan;
+                let chan = &self.jobs.get(indices[oper_index]).unwrap().chan;
                 assert!(oper.recv(chan).is_err());
-                oper_index
+                indices[oper_index].clone()
             };
-            drop(self.jobs.swap_remove(done));
+            drop(self.jobs.remove(&done_key).unwrap());
         }
     }
 
     fn gc(&mut self) {
-        self.jobs.retain(|job| !job.is_completed())
+        self.jobs.retain(|_, job| !job.is_completed())
     }
 }
 
 impl ConcurrentJob {
     pub fn new() -> (ConcurrentJob, JobToken) {
         let (tx, rx) = bounded(0);
-        let job = ConcurrentJob { chan: rx };
-        let token = JobToken { _chan: tx };
+        let (keeper, status) = JobStatusKeeper::new();
+        let token = JobToken { _chan: tx, status };
+        let job = ConcurrentJob { chan: rx, keeper };
         (job, token)
     }
 
     fn is_completed(&self) -> bool {
         is_closed(&self.chan)
     }
+
+    fn is_killed(&self) -> bool {
+        self.keeper.is_killed()
+    }
+
+    pub fn kill(&mut self) {
+        self.keeper.kill();
+    }
 }
 
 impl Drop for ConcurrentJob {
     fn drop(&mut self) {
-        if self.is_completed() || thread::panicking() {
+        if self.is_completed() || thread::panicking() || self.is_killed() {
             return;
         }
         panic!("Internal Job Error: Orphaned concurrent job");
+    }
+}
+
+impl JobToken {
+    pub fn is_alive(&self) -> bool {
+        self.status.is_alive()
     }
 }
 
