@@ -148,8 +148,9 @@ impl <O: Output> Dispatcher<O> {
         ctx: InitActionContext<O>,
     ) {
         let (job, token) = ConcurrentJob::new();
-        ctx.add_job(job);
-        if let Err(err) = self.sender.send((request.into(), ctx, token)) {
+        let req = request.into();
+        ctx.add_job(req.get_identifier(), job);
+        if let Err(err) = self.sender.send((req, ctx, token)) {
             debug!("failed to dispatch request: {:?}", err);
         }
     }
