@@ -179,6 +179,37 @@ pub struct Symbol {
 }
 
 impl Symbol {
+    pub fn new(loc: ZeroSpan,
+               kind: DMLSymbolKind,
+               source: SymbolSource) -> Self {
+        Symbol {
+            loc,
+            kind,
+            source,
+            definitions: Vec::default(),
+            declarations: Vec::default(),
+            references: HashSet::default(),
+            implementations: Vec::default(),
+            bases: Vec::default(),
+            default_mappings: HashMap::default(),
+            typed: None,
+        }
+    }
+}
+
+// We do this often enough to warrant a reusable pattern,
+// slightly better as a macro due to variable arguments
+macro_rules! symbol_ref {
+    ($loc: expr, $kind: expr, $source: expr, $($set: ident = $to: expr),*) => {
+        {
+            let mut symbol = Symbol::new($loc, $kind, $source);
+            $(symbol.$set = $to;)*
+            Arc::new(Mutex::new(symbol))
+        }
+    }
+}
+
+impl Symbol {
     // NOTE: Used during symbol tracking to discard duplicate
     // symbols
     pub fn equivalent(&self, other: &Symbol) -> bool {

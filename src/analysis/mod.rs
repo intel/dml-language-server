@@ -1628,20 +1628,13 @@ fn objects_to_symbols(objects: &StructureContainer,
 fn template_to_symbol(template: &Arc<DMLTemplate>) -> Option<SymbolRef> {
     // Do not create symbols for templates without location, they are dummy
     // missing templates
-    template.location.as_ref().map(|location| {
-        Arc::new(Mutex::new(Symbol {
-            loc: *location,
-            kind: DMLSymbolKind::Template,
-            references: HashSet::default(),
-            definitions: vec![*location],
-            declarations: vec![*location],
-            implementations: vec![],
-            bases: vec![],
-            source: SymbolSource::Template(Arc::clone(template)),
-            default_mappings: HashMap::default(),
-            // TODO: Should this be the trait type?
-            typed: None,
-        }))})
+    template.location.as_ref().map(|location|symbol_ref!(
+        *location,
+        DMLSymbolKind::Template,
+        SymbolSource::Template(Arc::clone(template)),
+        definitions = vec![*location],
+        declarations = vec![*location]
+    ))
 }
 
 fn extend_with_templates(storage: &mut SymbolStorage,
@@ -1663,19 +1656,13 @@ fn extend_with_templates(storage: &mut SymbolStorage,
 fn new_symbol_from_object(object: &DMLCompositeObject) -> SymbolRef {
     let all_decl_defs: Vec<ZeroSpan> = object.all_decls.iter().map(
         |spec|*spec.loc_span()).collect();
-    Arc::new(Mutex::new(Symbol {
-        loc: object.declloc,
-        kind: DMLSymbolKind::CompObject(object.kind),
-        definitions: all_decl_defs.clone(),
-        declarations: all_decl_defs.clone(),
-        bases: all_decl_defs,
-        references: HashSet::default(),
-        implementations: vec![],
-        source: SymbolSource::DMLObject(
-            DMLObject::CompObject(object.key)),
-        default_mappings: HashMap::default(),
-        typed: None,
-    }))
+    symbol_ref!(
+        object.declloc,
+        DMLSymbolKind::CompObject(object.kind),
+        SymbolSource::DMLObject(DMLObject::CompObject(object.key)),
+        definitions = all_decl_defs.clone(),
+        declarations = all_decl_defs.clone(),
+        bases = all_decl_defs)
 }
 
 fn new_symbol_from_arg(methref: &Arc<DMLMethodRef>,
@@ -1683,20 +1670,15 @@ fn new_symbol_from_arg(methref: &Arc<DMLMethodRef>,
     let bases = vec![*arg.loc_span()];
     let definitions = vec![*arg.loc_span()];
     let declarations = vec![*arg.loc_span()];
-    Arc::new(Mutex::new(Symbol {
-        loc: *arg.loc_span(),
-        kind: DMLSymbolKind::MethodArg,
-        bases,
-        definitions,
-        declarations,
-        references: HashSet::default(),
-        implementations: vec![],
-        source: SymbolSource::MethodArg(Arc::clone(methref),
-                                        arg.name().clone()),
-        default_mappings: HashMap::default(),
-        // TODO: Obtain type
-        typed: None,
-    }))
+    symbol_ref!(
+        *arg.loc_span(),
+        DMLSymbolKind::MethodArg,
+        SymbolSource::MethodArg(Arc::clone(methref), arg.name().clone()),
+        bases = bases,
+        definitions = definitions,
+        declarations = declarations
+
+    )
 }
 
 fn log_non_same_insert<K>(map: &mut HashMap<K, SymbolRef>,
@@ -1756,22 +1738,17 @@ fn add_new_symbol_from_shallow(shallow: &DMLShallowObject,
              vec![*hook.loc_span()]),
     };
     debug!("Made symbol for {:?}", shallow);
-    let new_sym = Arc::new(Mutex::new(Symbol {
-        loc: *shallow.location(),
-        kind: shallow.kind(),
-        definitions,
-        declarations,
-        implementations: vec![],
-        references: HashSet::default(),
-        bases,
-        source: SymbolSource::DMLObject(
+    let new_sym = symbol_ref!(
+        *shallow.location(),
+        shallow.kind(),
+        SymbolSource::DMLObject(
             // TODO: Inefficient clone. Not terribly so, but worth
             // noting
             DMLObject::ShallowObject(shallow.clone())),
-        default_mappings: HashMap::default(),
-        // TODO: obtain type
-        typed: None,
-    }));
+        bases = bases,
+        definitions = definitions,
+        declarations = declarations);
+
     match &shallow.variant {
         DMLShallowObjectVariant::Parameter(_) => {
             log_non_same_insert(storage.param_symbols.entry(
@@ -1838,21 +1815,14 @@ fn add_new_method_scope_symbol<T>(method: &Arc<DMLMethodRef>,
 where
     T : StructureSymbol + DMLNamed + LocationSpan
 {
-    let symbol = Arc::new(Mutex::new(Symbol {
-        loc: *sym.loc_span(),
-        kind: sym.kind(),
-        definitions: vec![*sym.loc_span()],
-        declarations: vec![*sym.loc_span()],
-        implementations: vec![],
-        references: HashSet::default(),
-        bases: vec![],
-        source: SymbolSource::MethodLocal(
-            Arc::clone(method),
-            sym.name().clone()),
-        default_mappings: HashMap::default(),
+    let symbol = symbol_ref!(
+        *sym.loc_span(),
+        sym.kind(),
+        SymbolSource::MethodLocal(Arc::clone(method), sym.name().clone()),
+        definitions = vec![*sym.loc_span()],
+        declarations = vec![*sym.loc_span()]
         // TODO: resolve type
-        typed: None,
-    }));
+    );
     scope.symbols.insert(sym.name().val.clone(), Arc::clone(&symbol));
     storage.variable_symbols.insert(*sym.loc_span(), symbol);
 }
