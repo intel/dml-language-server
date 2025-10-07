@@ -5,6 +5,8 @@
 # Change Log
 
 ## 0.9.14
+- The DLS will now interrupt ongoing work when it would be redundant
+  (in some cases), resulting in performance improvements.
 
 ## 0.9.13
 - Corrected the name of "explicit\_param\_decls" provisional. Note that it still
