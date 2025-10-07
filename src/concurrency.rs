@@ -48,6 +48,11 @@ impl AliveStatus {
     pub fn is_alive(&self) -> bool {
         self.0.strong_count() > 0
     }
+    pub fn assert_alive(&self) {
+        if !self.is_alive() {
+            panic!("Sub-job killed");
+        }
+    }
 }
 
 #[must_use]
@@ -145,6 +150,7 @@ impl JobToken {
     pub fn is_alive(&self) -> bool {
         self.status.is_alive()
     }
+
 }
 
 // We don't actually send messages through the channels,
