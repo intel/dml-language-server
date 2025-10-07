@@ -187,9 +187,11 @@ impl LinterAnalysis {
                status: AliveStatus)
                -> Result<LinterAnalysis, Error> {
         debug!("local linting for: {:?}", path);
+        status.assert_alive();
         let canonpath: CanonPath = path.into();
         let rules =  instantiate_rules(&cfg);
         let local_lint_errors = begin_style_check(original_analysis.ast, &file.text, &rules)?;
+        status.assert_alive();
         let mut lint_errors = vec![];
         for entry in local_lint_errors {
             let ident = entry.rule_ident;
