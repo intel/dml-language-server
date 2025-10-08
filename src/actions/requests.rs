@@ -407,6 +407,10 @@ impl RequestAction for WorkspaceSymbolRequest {
         Ok(None)
     }
 
+    fn get_identifier(params: &Self::Params) -> String {
+        Self::request_identifier(params.query.as_str())
+    }
+
     fn handle<O: Output>(
         ctx: InitActionContext<O>,
         params: Self::Params,
@@ -430,6 +434,10 @@ impl RequestAction for DocumentSymbolRequest {
 
     fn fallback_response() -> Result<Self::Response, ResponseError> {
         Ok(None)
+    }
+
+    fn get_identifier(params: &Self::Params) -> String {
+        Self::request_identifier(params.text_document.uri.as_str())
     }
 
     fn handle<O: Output>(
@@ -460,12 +468,28 @@ impl RequestAction for DocumentSymbolRequest {
     }
 }
 
+fn text_document_position_to_ident(doc_pos: &TextDocumentPositionParams)
+                                   -> String {
+    format!(
+        "{}-{}-{}",
+        doc_pos.text_document.uri.as_str(),
+        doc_pos.position.line,
+        doc_pos.position.character
+    )
+}
+
 impl RequestAction for HoverRequest {
     type Response = lsp_data::Hover;
 
     fn fallback_response() -> Result<Self::Response, ResponseError> {
         Ok(lsp_data::Hover { contents: HoverContents::Array(vec![]),
                              range: None })
+    }
+
+    fn get_identifier(params: &Self::Params) -> String {
+        Self::request_identifier(
+            &text_document_position_to_ident(
+                &params.text_document_position_params))
     }
 
     fn handle<O: Output>(mut ctx: InitActionContext<O>,
@@ -493,6 +517,12 @@ impl RequestAction for GotoImplementation {
 
     fn fallback_response() -> Result<Self::Response, ResponseError> {
         Ok(None.into())
+    }
+
+    fn get_identifier(params: &Self::Params) -> String {
+        Self::request_identifier(
+            &text_document_position_to_ident(
+                &params.text_document_position_params))
     }
 
     fn handle<O: Output>(
@@ -555,6 +585,12 @@ impl RequestAction for GotoDeclaration {
         Ok(None.into())
     }
 
+    fn get_identifier(params: &Self::Params) -> String {
+        Self::request_identifier(
+            &text_document_position_to_ident(
+                &params.text_document_position_params))
+    }
+
     fn handle<O: Output>(
         ctx: InitActionContext<O>,
         params: Self::Params,
@@ -607,6 +643,12 @@ impl RequestAction for GotoDefinition {
 
     fn fallback_response() -> Result<Self::Response, ResponseError> {
         Ok(None.into())
+    }
+
+    fn get_identifier(params: &Self::Params) -> String {
+        Self::request_identifier(
+            &text_document_position_to_ident(
+                &params.text_document_position_params))
     }
 
     fn handle<O: Output>(
@@ -663,6 +705,12 @@ impl RequestAction for References {
         Ok(vec![].into())
     }
 
+    fn get_identifier(params: &Self::Params) -> String {
+        Self::request_identifier(
+            &text_document_position_to_ident(
+                &params.text_document_position))
+    }
+
     fn handle<O: Output>(
         ctx: InitActionContext<O>,
         params: Self::Params,
@@ -715,6 +763,10 @@ impl RequestAction for Completion {
         Ok(vec![])
     }
 
+    fn get_identifier(_params: &Self::Params) -> String {
+        todo!("COMPLETION REQUEST NOT IMPLEMENTED");
+    }
+
     fn handle<O: Output>(
         _ctx: InitActionContext<O>,
         _params: Self::Params,
@@ -729,6 +781,12 @@ impl RequestAction for DocumentHighlightRequest {
 
     fn fallback_response() -> Result<Self::Response, ResponseError> {
         Ok(vec![])
+    }
+
+    fn get_identifier(params: &Self::Params) -> String {
+        Self::request_identifier(
+            &text_document_position_to_ident(
+                &params.text_document_position_params))
     }
 
     fn handle<O: Output>(
@@ -748,6 +806,15 @@ impl RequestAction for Rename {
             WorkspaceEdit { changes: None,
                             document_changes: None,
                             change_annotations: None }))
+    }
+
+    fn get_identifier(params: &Self::Params) -> String {
+        // NOTE: This intentionally ignores the new name we are setting this to,
+        // as cancelling a prior rename due to a new one over the same
+        // position seems reasonable
+        Self::request_identifier(
+            &text_document_position_to_ident(
+                &params.text_document_position))
     }
 
     fn handle<O: Output>(
@@ -793,6 +860,14 @@ impl RequestAction for ExecuteCommand {
         Err(ResponseError::Empty)
     }
 
+    fn get_identifier(params: &Self::Params) -> String {
+        Self::request_identifier(
+            &params.arguments.iter()
+                .fold(params.command.to_string(),
+                      |s, n|format!("{}-{}", s, n))
+        )
+    }
+
     /// Currently, no support for this
     fn handle<O: Output>(
         _ctx: InitActionContext<O>,
@@ -808,6 +883,10 @@ impl RequestAction for CodeActionRequest {
 
     fn fallback_response() -> Result<Self::Response, ResponseError> {
         Ok(vec![])
+    }
+
+    fn get_identifier(_params: &Self::Params) -> String {
+        todo!("CODE ACTION REQUEST NOT IMPLEMENTED");
     }
 
     fn handle<O: Output>(
@@ -830,6 +909,10 @@ impl RequestAction for Formatting {
         ))
     }
 
+    fn get_identifier(_params: &Self::Params) -> String {
+        todo!("FORMATTING REQUEST NOT IMPLEMENTED");
+    }
+
     fn handle<O: Output>(
         _ctx: InitActionContext<O>,
         _params: Self::Params,
@@ -849,6 +932,10 @@ impl RequestAction for RangeFormatting {
         ))
     }
 
+    fn get_identifier(_params: &Self::Params) -> String {
+        todo!("RANGE FORMATTING REQUEST NOT IMPLEMENTED");
+    }
+
     fn handle<O: Output>(
         _ctx: InitActionContext<O>,
         _params: Self::Params,
@@ -865,6 +952,10 @@ impl RequestAction for ResolveCompletion {
         Err(ResponseError::Empty)
     }
 
+    fn get_identifier(_params: &Self::Params) -> String {
+        todo!("COMPLETION ITEMS NOT IMPLEMENTED");
+    }
+
     fn handle<O: Output>(_: InitActionContext<O>, _params: Self::Params) -> Result<Self::Response, ResponseError> {
         // TODO: figure out if we want to use this
         Self::fallback_response()
@@ -876,6 +967,10 @@ impl RequestAction for CodeLensRequest {
 
     fn fallback_response() -> Result<Self::Response, ResponseError> {
         Err(ResponseError::Empty)
+    }
+
+    fn get_identifier(_params: &Self::Params) -> String {
+        todo!("CODE LENSES NOT IMPLEMENTED");
     }
 
     fn handle<O: Output>(
@@ -919,6 +1014,20 @@ impl RequestAction for GetKnownContextsRequest {
 
     fn fallback_response() -> Result<Self::Response, ResponseError> {
         Err(ResponseError::Empty)
+    }
+
+    fn get_identifier(params: &Self::Params) -> String {
+        let path_args = if let Some(paths) = &params.paths {
+            if paths.is_empty() {
+                "empty".to_string()
+            } else {
+                paths.iter().fold("".to_string(),|s, n|format!("{}-{}",
+                                                               s, n.as_str()))
+            }
+        } else {
+            "empty".to_string()
+        };
+        Self::request_identifier(path_args.as_str())
     }
 
     fn handle<O: Output>(
