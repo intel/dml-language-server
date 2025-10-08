@@ -48,6 +48,15 @@ macro_rules! define_dispatch_request_enum {
         )*
 
         impl DispatchRequest {
+            fn get_identifier(&self) -> String {
+                match self {
+                    $(
+                        DispatchRequest::$request_type(req) =>
+                            $request_type::get_identifier(&req.params),
+                    )*
+                }
+            }
+
             fn handle<O: Output>(self, ctx: InitActionContext<O>, out: &O) {
                 match self {
                 $(
@@ -156,6 +165,13 @@ pub trait RequestAction: LSPRequest {
     fn timeout() -> Duration {
         DEFAULT_REQUEST_TIMEOUT
     }
+
+    fn request_identifier(params: &str) -> String {
+        format!("request-{}-{}", Self::METHOD, params)
+    }
+
+    // Get an identifier that mostly-describes this request and parameters
+    fn get_identifier(params: &Self::Params) -> String;
 
     /// Returns a response used in timeout scenarios.
     fn fallback_response() -> Result<Self::Response, ResponseError>;
