@@ -9,14 +9,23 @@ use crate::lint::{rules::{Rule, RuleType},
                   DMLStyleError};
 use crate::analysis::parsing::tree::{LeafToken, TreeElement, ZeroRange};
 use crate::analysis::parsing::expression::{BinaryExpressionContent,
-                                           FunctionCallContent, IndexContent,
+                                           FunctionCallContent,
+                                           IndexContent,
+                                           ParenExpressionContent,
                                            PostUnaryExpressionContent,
                                            TertiaryExpressionContent,
                                            UnaryExpressionContent};
-use crate::analysis::parsing::statement::{AfterContent, CompoundContent, ExpressionStmtContent,
-                                          ForContent, IfContent, VariableDeclContent,
+use crate::analysis::parsing::statement::{AfterContent,
+                                          CompoundContent,
+                                          ExpressionStmtContent,
+                                          ForContent,
+                                          IfContent,
+                                          SwitchContent,
+                                          VariableDeclContent,
                                           WhileContent};
-use crate::analysis::parsing::structure::{MethodContent,
+use crate::analysis::parsing::structure::{CompositeObjectContent,
+                                          Instantiation,
+                                          MethodContent,
                                           ObjectStatementsContent};
 
 use crate::span::{ZeroIndexed, Range};
@@ -202,6 +211,17 @@ impl SpBracesArgs {
         Some(SpBracesArgs {
             body_start: node.fields.first().unwrap().range(),
             body_end: node.fields.last().unwrap().range(),
+            lbrace: node.lbrace.range(),
+            rbrace: node.rbrace.range(),
+        })
+    }
+    pub fn from_switch(node: &SwitchContent) -> Option<SpBracesArgs> {
+        if node.cases.is_empty() {
+            return None;
+        }
+        Some(SpBracesArgs {
+            body_start: node.cases.first().unwrap().range(),
+            body_end: node.cases.last().unwrap().range(),
             lbrace: node.lbrace.range(),
             rbrace: node.rbrace.range(),
         })
@@ -465,6 +485,34 @@ impl SpPunctArgs {
             after_range_list,
         })
     }
+    pub fn from_instantiation(node: &Instantiation) -> Option<SpPunctArgs> {
+        if let Instantiation::Many(_, templates_list, _) = node {
+            let mut before_range_list = vec![];
+            let mut punct_range_list = vec![];
+            let mut after_range_list = vec![];
+            let mut iterator = templates_list.iter().peekable();
+
+            while let Some((template_name, comma)) = iterator.next() {
+                if let Some(comma_token) = comma {
+                    before_range_list.push(template_name.range());
+                    punct_range_list.push(comma_token.range());
+                    if let Some((next_template_name, _)) = iterator.peek() {
+                        after_range_list.push(Some(next_template_name.range()));
+                    } else {
+                        after_range_list.push(None);
+                    }
+                }
+            }
+
+            Some(SpPunctArgs {
+                before_range_list,
+                punct_range_list,
+                after_range_list,
+            })
+        } else {
+            None
+        }
+    }
 }
 
 impl SpPunctRule {
@@ -597,6 +645,41 @@ impl NspInparenArgs {
             opening: node.lparen.range(),
             content_start: content_start_range,
             content_end: content_end_range,
+            closing: node.rparen.range(),
+        })
+    }
+    pub fn from_composite_obj_content(node: &CompositeObjectContent)
+                                            -> Option<NspInparenArgs> {
+        if node.dimensions.is_empty() {
+            return None;
+        }
+        let dimension = node.dimensions.first().unwrap();
+        Some(NspInparenArgs {
+            opening: dimension.0.range(),
+            content_start: dimension.1.range(),
+            content_end: dimension.3.range(),
+            closing: dimension.4.range(),
+        })
+    }
+    pub fn from_instantiation(node: &Instantiation)
+                              -> Option<NspInparenArgs> {
+        if let Instantiation::Many(lparen, templates, rparen) = node {
+            Some(NspInparenArgs {
+                opening: lparen.range(),
+                content_start: templates.range(),
+                content_end: templates.range(),
+                closing: rparen.range(),
+            })
+        } else {
+            None
+        }
+    }
+    pub fn from_paren_expression(node: &ParenExpressionContent)
+                              -> Option<NspInparenArgs> {
+        Some(NspInparenArgs {
+            opening: node.lparen.range(),
+            content_start: node.expr.range(),
+            content_end: node.expr.range(),
             closing: node.rparen.range(),
         })
     }

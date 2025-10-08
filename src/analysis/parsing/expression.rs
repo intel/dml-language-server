@@ -177,6 +177,7 @@ impl TreeElement for ParenExpressionContent {
     }
     fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, _aux: AuxParams) {
         rules.indent_paren_expr.check(IndentParenExprArgs::from_paren_expression(self), acc);
+        rules.nsp_inparen.check( NspInparenArgs::from_paren_expression(self), acc);
     }
 }
 
