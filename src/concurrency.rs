@@ -83,6 +83,12 @@ impl <T: Eq + std::hash::Hash + Clone> Jobs<T> {
         }
     }
 
+    pub fn kill_all(&mut self) {
+        for job in self.jobs.values_mut() {
+            job.kill()
+        }
+    }
+
     pub fn kill_ident(&mut self, ident: &T) {
         if let Some(job) = self.jobs.get_mut(ident) {
             job.kill();
