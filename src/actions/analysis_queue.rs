@@ -10,6 +10,7 @@ use std::hash::{Hash, Hasher};
 use std::panic::RefUnwindSafe;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::AtomicBool;
 use std::thread::{self, Thread};
 use std::time::SystemTime;
 use crate::lint::LintCfg;
@@ -48,7 +49,7 @@ pub struct AnalysisQueue {
 
 impl AnalysisQueue {
     // Create a new queue and start the worker thread.
-    pub fn init() -> AnalysisQueue {
+    pub fn init(no_more_work: Arc<AtomicBool>) -> AnalysisQueue {
         let queue = Arc::default();
         let device_tracker = Arc::default();
         let isolated_tracker = Arc::default();
@@ -56,7 +57,8 @@ impl AnalysisQueue {
             let queue = Arc::clone(&queue);
             let device_tracker = Arc::clone(&device_tracker);
             let isolated_tracker = Arc::clone(&isolated_tracker);
-            || AnalysisQueue::run_worker_thread(queue,
+            || AnalysisQueue::run_worker_thread(no_more_work,
+                                                queue,
                                                 device_tracker,
                                                 isolated_tracker)
         })
@@ -169,10 +171,15 @@ impl AnalysisQueue {
         self.worker_thread.unpark();
     }
 
-    fn run_worker_thread(queue: Arc<Mutex<Vec<QueuedJob>>>,
+    fn run_worker_thread(no_more_work: Arc<AtomicBool>,
+                         queue: Arc<Mutex<Vec<QueuedJob>>>,
                          device_tracker: Arc<Mutex<InFlightDeviceJobTracker>>,
                          isolated_tracker: Arc<Mutex<InFlightIsolatedJobTracker>>) {
         loop {
+            if no_more_work.load(std::sync::atomic::Ordering::SeqCst) {
+                thread::park();
+                continue;
+            }
             let job = {
                 let mut queue = queue.lock().unwrap();
                 if queue.is_empty() {

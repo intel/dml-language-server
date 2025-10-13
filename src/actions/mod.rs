@@ -368,11 +368,12 @@ impl <O: Output> InitActionContext<O> {
         pid: u32,
         _client_supports_cmd_run: bool,
     ) -> InitActionContext<O> {
-        
+        let shut_down = Arc::new(AtomicBool::new(false));
         InitActionContext {
             vfs,
             analysis,
-            analysis_queue: Arc::new(AnalysisQueue::init()),
+            analysis_queue: Arc::new(AnalysisQueue::init(
+                Arc::clone(&shut_down))),
             current_notifier: Arc::default(),
             config,
             lint_config: Arc::new(Mutex::new(LintCfg::default())),
@@ -385,7 +386,7 @@ impl <O: Output> InitActionContext<O> {
             //client_supports_cmd_run,
             active_waits: Arc::default(),
             outstanding_requests: Arc::default(),
-            shut_down: Arc::new(AtomicBool::new(false)),
+            shut_down,
             pid,
             workspace_roots: Arc::default(),
             compilation_info: Arc::default(),
@@ -1071,6 +1072,13 @@ impl <O: Output> InitActionContext<O> {
 
     pub fn wait_for_concurrent_jobs(&self) {
         self.jobs.lock().unwrap().wait_for_all();
+    }
+
+    // NOTE: since jobs, even if they exit by panicking, need to hit an
+    // exit point to do so, wait_for_concurrent_jobs should probably be
+    // called after this
+    pub fn stop_all_jobs(&self) {
+        self.jobs.lock().unwrap().kill_all();
     }
 
     /// See docs on VersionOrdering
