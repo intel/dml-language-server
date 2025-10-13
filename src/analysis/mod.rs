@@ -28,8 +28,9 @@ use rayon::prelude::*;
 
 use crate::actions::SourcedDMLError;
 use crate::actions::analysis_storage::TimestampedStorage;
-use crate::analysis::symbols::{SimpleSymbol, DMLSymbolKind, Symbol,
+use crate::analysis::symbols::{SimpleSymbol, DMLSymbolKind, Symbol, SymbolMaker,
                                SymbolContainer, StructureSymbol, SymbolSource};
+pub use crate::analysis::symbols::SymbolRef;
 use crate::analysis::reference::{Reference,
                                  GlobalReference, VariableReference,
                                  ReferenceKind, NodeRef};
@@ -107,8 +108,9 @@ where T : IntoIterator<Item = ReferenceMatch> {
         ReferenceMatch::NotFound(vec![]),
         |acc, rf|match (acc, rf) {
             (ReferenceMatch::Found(mut f1), ReferenceMatch::Found(mut f2)) => {
-                f1.append(&mut f2);
-                ReferenceMatch::Found(f1)
+                let mut elim_dups: HashSet<_> = f2.into_iter().collect();
+                elim_dups.extend(f1.into_iter());
+                ReferenceMatch::Found(elim_dups.into_iter().collect())
             },
             (ReferenceMatch::NotFound(mut f1),
              ReferenceMatch::NotFound(mut f2)) => {
@@ -361,8 +363,6 @@ impl RangeEntry {
     }
 }
 
-// Mas symbol decl locations to symbols,
-pub type SymbolRef = Arc<Mutex<Symbol>>;
 #[derive(Debug, Clone, Default)]
 pub struct SymbolStorage {
     pub template_symbols: HashMap<ZeroSpan, SymbolRef>,
@@ -1603,32 +1603,38 @@ impl IsolatedAnalysis {
     }
 }
 
-fn objects_to_symbols(objects: &StructureContainer,
+fn objects_to_symbols(maker: &SymbolMaker,
+                      objects: &StructureContainer,
                       errors: &mut Vec<DMLError>,
                       method_structure: &mut HashMap
                       <ZeroSpan, RangeEntry>) -> SymbolStorage {
     let mut storage = SymbolStorage::default();
 
     for obj in objects.values() {
-        let new_symbol: SymbolRef = new_symbol_from_object(obj);
+        let new_symbol: SymbolRef = new_symbol_from_object(maker, obj);
         debug!("Comp obj symbol is: {:?}", new_symbol);
         storage.object_symbols.insert(obj.key, new_symbol);
         for subobj in obj.components.values() {
             // Non-shallow objects will be handled by the iteration
             // over objects
             if let DMLObject::ShallowObject(shallow) = subobj {
-                add_new_symbol_from_shallow(shallow, errors,
-                                            &mut storage, method_structure);
+                add_new_symbol_from_shallow(maker,
+                                            shallow,
+                                            errors,
+                                            &mut storage,
+                                            method_structure);
             }
         }
     }
     storage
 }
 
-fn template_to_symbol(template: &Arc<DMLTemplate>) -> Option<SymbolRef> {
+fn template_to_symbol(maker: &SymbolMaker,
+                      template: &Arc<DMLTemplate>) -> Option<SymbolRef> {
     // Do not create symbols for templates without location, they are dummy
     // missing templates
     template.location.as_ref().map(|location|symbol_ref!(
+        maker,
         *location,
         DMLSymbolKind::Template,
         SymbolSource::Template(Arc::clone(template)),
@@ -1637,10 +1643,11 @@ fn template_to_symbol(template: &Arc<DMLTemplate>) -> Option<SymbolRef> {
     ))
 }
 
-fn extend_with_templates(storage: &mut SymbolStorage,
+fn extend_with_templates(maker: &SymbolMaker,
+                         storage: &mut SymbolStorage,
                          templates: &TemplateTraitInfo) {
     for template in templates.templates.values() {
-        if let Some(new_templ) = template_to_symbol(template) {
+        if let Some(new_templ) = template_to_symbol(maker, template) {
             let loc = new_templ.lock().unwrap().loc;
             if let Some(prev) = storage.template_symbols
                 .insert(loc, new_templ) {
@@ -1653,10 +1660,12 @@ fn extend_with_templates(storage: &mut SymbolStorage,
     }
 }
 
-fn new_symbol_from_object(object: &DMLCompositeObject) -> SymbolRef {
+fn new_symbol_from_object(maker: &SymbolMaker,
+                          object: &DMLCompositeObject) -> SymbolRef {
     let all_decl_defs: Vec<ZeroSpan> = object.all_decls.iter().map(
         |spec|*spec.loc_span()).collect();
     symbol_ref!(
+        maker,
         object.declloc,
         DMLSymbolKind::CompObject(object.kind),
         SymbolSource::DMLObject(DMLObject::CompObject(object.key)),
@@ -1665,12 +1674,14 @@ fn new_symbol_from_object(object: &DMLCompositeObject) -> SymbolRef {
         bases = all_decl_defs)
 }
 
-fn new_symbol_from_arg(methref: &Arc<DMLMethodRef>,
+fn new_symbol_from_arg(maker: &SymbolMaker,
+                       methref: &Arc<DMLMethodRef>,
                        arg: &DMLMethodArg) -> SymbolRef {
     let bases = vec![*arg.loc_span()];
     let definitions = vec![*arg.loc_span()];
     let declarations = vec![*arg.loc_span()];
     symbol_ref!(
+        maker,
         *arg.loc_span(),
         DMLSymbolKind::MethodArg,
         SymbolSource::MethodArg(Arc::clone(methref), arg.name().clone()),
@@ -1707,7 +1718,8 @@ where K: std::hash::Hash + Eq + Clone,
 }
 
 #[allow(clippy::ptr_arg)]
-fn add_new_symbol_from_shallow(shallow: &DMLShallowObject,
+fn add_new_symbol_from_shallow(maker: &SymbolMaker,
+                               shallow: &DMLShallowObject,
                                errors: &mut Vec<DMLError>,
                                storage: &mut SymbolStorage,
                                method_structure: &mut HashMap
@@ -1739,6 +1751,7 @@ fn add_new_symbol_from_shallow(shallow: &DMLShallowObject,
     };
     debug!("Made symbol for {:?}", shallow);
     let new_sym = symbol_ref!(
+        maker,
         *shallow.location(),
         shallow.kind(),
         SymbolSource::DMLObject(
@@ -1763,12 +1776,14 @@ fn add_new_symbol_from_shallow(shallow: &DMLShallowObject,
                                     *shallow.location(),
                                     new_sym) {
                 for arg in method_ref.args() {
-                    let new_argsymbol = new_symbol_from_arg(method_ref, arg);
+                    let new_argsymbol = new_symbol_from_arg(maker,
+                                                            method_ref,
+                                                            arg);
                     log_non_same_insert(&mut storage.variable_symbols,
                                         *arg.loc_span(),
                                         new_argsymbol);
                 }
-                add_method_scope_symbols(method_ref, method_structure,
+                add_method_scope_symbols(maker, method_ref, method_structure,
                                          storage, errors);
             },
         DMLShallowObjectVariant::Constant(_) |
@@ -1782,7 +1797,8 @@ fn add_new_symbol_from_shallow(shallow: &DMLShallowObject,
     }
 }
 
-fn add_method_scope_symbols(method: &Arc<DMLMethodRef>,
+fn add_method_scope_symbols(maker: &SymbolMaker,
+                            method: &Arc<DMLMethodRef>,
                             method_structure: &mut HashMap<ZeroSpan,
                                                            RangeEntry>,
                             storage: &mut SymbolStorage,
@@ -1795,7 +1811,8 @@ fn add_method_scope_symbols(method: &Arc<DMLMethodRef>,
     if !matches!(&*method.get_decl().body, StatementKind::Compound(_)) {
         error!("Internal Error: Method body was not a compound statement");
     }
-    add_new_method_scope_symbols(method,
+    add_new_method_scope_symbols(maker,
+                                 method,
                                  &method.get_decl().body,
                                  errors,
                                  storage,
@@ -1807,7 +1824,8 @@ fn add_method_scope_symbols(method: &Arc<DMLMethodRef>,
     }
 }
 
-fn add_new_method_scope_symbol<T>(method: &Arc<DMLMethodRef>,
+fn add_new_method_scope_symbol<T>(maker: &SymbolMaker,
+                                  method: &Arc<DMLMethodRef>,
                                   sym: &T,
                                   _typ: &DMLType,
                                   storage: &mut SymbolStorage,
@@ -1816,6 +1834,7 @@ where
     T : StructureSymbol + DMLNamed + LocationSpan
 {
     let symbol = symbol_ref!(
+        maker,
         *sym.loc_span(),
         sym.kind(),
         SymbolSource::MethodLocal(Arc::clone(method), sym.name().clone()),
@@ -1827,7 +1846,8 @@ where
     storage.variable_symbols.insert(*sym.loc_span(), symbol);
 }
 
-fn enter_new_method_scope(method: &Arc<DMLMethodRef>,
+fn enter_new_method_scope(maker: &SymbolMaker,
+                          method: &Arc<DMLMethodRef>,
                           outer_stmnt_desc: &'static str,
                           stmnt: &Statement,
                           scope_span: &ZeroSpan,
@@ -1853,11 +1873,17 @@ fn enter_new_method_scope(method: &Arc<DMLMethodRef>,
         symbols: HashMap::default(),
         sub_ranges: vec![],
     };
-    add_new_method_scope_symbols(method, stmnt, errors, storage, &mut entry);
+    add_new_method_scope_symbols(maker,
+                                 method,
+                                 stmnt,
+                                 errors,
+                                 storage,
+                                 &mut entry);
     scope.sub_ranges.push(entry);
 }
 
-fn add_new_method_scope_symbols(method: &Arc<DMLMethodRef>,
+fn add_new_method_scope_symbols(maker: &SymbolMaker,
+                                method: &Arc<DMLMethodRef>,
                                 stmnt: &Statement,
                                 errors: &mut Vec<DMLError>,
                                 storage: &mut SymbolStorage,
@@ -1865,14 +1891,16 @@ fn add_new_method_scope_symbols(method: &Arc<DMLMethodRef>,
     match &**stmnt {
         StatementKind::Compound(content) =>
             for sub_stmnt in &content.statements {
-                add_new_method_scope_symbols(method,
+                add_new_method_scope_symbols(maker,
+                                             method,
                                              sub_stmnt,
                                              errors,
                                              storage,
                                              scope);
             },
         StatementKind::If(content) => {
-            enter_new_method_scope(method,
+            enter_new_method_scope(maker,
+                                   method,
                                    "if",
                                    &content.ifbody,
                                    content.ifbody.span(),
@@ -1880,7 +1908,8 @@ fn add_new_method_scope_symbols(method: &Arc<DMLMethodRef>,
                                    storage,
                                    scope);
             if let Some(elsebody) = &content.elsebody {
-                enter_new_method_scope(method,
+                enter_new_method_scope(maker,
+                                       method,
                                        "else",
                                        elsebody,
                                        elsebody.span(),
@@ -1891,7 +1920,8 @@ fn add_new_method_scope_symbols(method: &Arc<DMLMethodRef>,
         },
         StatementKind::HashIf(content) => {
             // TODO: this should be constant-folded if possible
-            enter_new_method_scope(method,
+            enter_new_method_scope(maker,
+                                   method,
                                    "#if",
                                    &content.ifbody,
                                    content.ifbody.span(),
@@ -1899,7 +1929,8 @@ fn add_new_method_scope_symbols(method: &Arc<DMLMethodRef>,
                                    storage,
                                    scope);
             if let Some(elsebody) = &content.elsebody {
-                enter_new_method_scope(method,
+                enter_new_method_scope(maker,
+                                       method,
                                        "#else",
                                        elsebody,
                                        elsebody.span(),
@@ -1909,7 +1940,8 @@ fn add_new_method_scope_symbols(method: &Arc<DMLMethodRef>,
             }
         },
         StatementKind::While(content) =>
-            enter_new_method_scope(method,
+            enter_new_method_scope(maker,
+                                   method,
                                    "while",
                                    &content.body,
                                    content.body.span(),
@@ -1917,7 +1949,8 @@ fn add_new_method_scope_symbols(method: &Arc<DMLMethodRef>,
                                    storage,
                                    scope),
         StatementKind::DoWhile(content) =>
-            enter_new_method_scope(method,
+            enter_new_method_scope(maker,
+                                   method,
                                    "do-while",
                                    &content.body,
                                    content.body.span(),
@@ -1933,14 +1966,16 @@ fn add_new_method_scope_symbols(method: &Arc<DMLMethodRef>,
 
             if let Some(ForPre::Declaration(variable)) = &content.pre {
                 for decl in &variable.vars {
-                    add_new_method_scope_symbol(method,
+                    add_new_method_scope_symbol(maker,
+                                                method,
                                                 decl,
                                                 &decl.typed,
                                                 storage,
                                                 &mut entry);
                 }
             }
-            enter_new_method_scope(method,
+            enter_new_method_scope(maker,
+                                   method,
                                    "for",
                                    &content.body,
                                    content.body.span(),
@@ -1957,13 +1992,15 @@ fn add_new_method_scope_symbols(method: &Arc<DMLMethodRef>,
                 symbols: HashMap::default(),
                 sub_ranges: vec![],
             };
-            add_new_method_scope_symbol(method,
+            add_new_method_scope_symbol(maker,
+                                        method,
                                         &content.ident,
                                         // TODO: infer type
                                         content.ident.loc_span(),
                                         storage,
                                         &mut entry);
-            enter_new_method_scope(method,
+            enter_new_method_scope(maker,
+                                   method,
                                    "select",
                                    &content.selectbranch,
                                    content.selectbranch.span(),
@@ -1971,7 +2008,8 @@ fn add_new_method_scope_symbols(method: &Arc<DMLMethodRef>,
                                    storage,
                                    &mut entry);
             scope.sub_ranges.push(entry);
-            enter_new_method_scope(method,
+            enter_new_method_scope(maker,
+                                   method,
                                    "select-else",
                                    &content.elsebranch,
                                    content.elsebranch.span(),
@@ -1980,14 +2018,16 @@ fn add_new_method_scope_symbols(method: &Arc<DMLMethodRef>,
                                    scope);
         },
         StatementKind::TryCatch(content) => {
-            enter_new_method_scope(method,
+            enter_new_method_scope(maker,
+                                   method,
                                    "try",
                                    &content.tryblock,
                                    content.tryblock.span(),
                                    errors,
                                    storage,
                                    scope);
-            enter_new_method_scope(method,
+            enter_new_method_scope(maker,
+                                   method,
                                    "catch",
                                    &content.catchblock,
                                    content.catchblock.span(),
@@ -1998,6 +2038,7 @@ fn add_new_method_scope_symbols(method: &Arc<DMLMethodRef>,
         StatementKind::VariableDecl(content) =>
             for decl in &content.vars {
                 add_new_method_scope_symbol(
+                    maker,
                     method,
                     decl,
                     &decl.typed,
@@ -2175,13 +2216,13 @@ impl DeviceAnalysis {
         // NAME of the methoddecl
         let mut method_structure: HashMap<ZeroSpan, RangeEntry>
             = HashMap::default();
-
-        let mut symbol_info = objects_to_symbols(&container,
+        let maker = SymbolMaker::new();
+        let mut symbol_info = objects_to_symbols(&maker,
+                                                 &container,
                                                  &mut errors,
                                                  &mut method_structure);
-
         // TODO: how do we store type info?
-        extend_with_templates(&mut symbol_info, &tt_info);
+        extend_with_templates(&maker, &mut symbol_info, &tt_info);
         //extend_with_types(&mut symbols, ??)
         let mut device = DeviceAnalysis {
             name: root.toplevel.device.unwrap().name.val,

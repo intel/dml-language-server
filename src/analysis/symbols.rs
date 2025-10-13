@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Mutex;
 
 use crate::analysis::{Named, LocationSpan};
 
@@ -154,8 +155,11 @@ impl SymbolSource {
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+// Intentionally omitted implementation of clone, should not be done
+// Instead, clone the symbolref
+#[derive(Debug)]
 pub struct Symbol {
+    pub id: SymbolID,
     pub loc: ZeroSpan,
     pub kind: DMLSymbolKind,
     pub definitions: Vec<ZeroSpan>,
@@ -178,33 +182,18 @@ pub struct Symbol {
     pub typed: Option<DMLResolvedType>,
 }
 
-impl Symbol {
-    pub fn new(loc: ZeroSpan,
-               kind: DMLSymbolKind,
-               source: SymbolSource) -> Self {
-        Symbol {
-            loc,
-            kind,
-            source,
-            definitions: Vec::default(),
-            declarations: Vec::default(),
-            references: HashSet::default(),
-            implementations: Vec::default(),
-            bases: Vec::default(),
-            default_mappings: HashMap::default(),
-            typed: None,
-        }
-    }
-}
-
 // We do this often enough to warrant a reusable pattern,
 // slightly better as a macro due to variable arguments
 macro_rules! symbol_ref {
-    ($loc: expr, $kind: expr, $source: expr, $($set: ident = $to: expr),*) => {
+    ($maker: expr, $loc: expr, $kind: expr, $source: expr,
+     $($set: ident = $to: expr),*) => {
         {
-            let mut symbol = Symbol::new($loc, $kind, $source);
-            $(symbol.$set = $to;)*
-            Arc::new(Mutex::new(symbol))
+            let symbol = $maker.new_symbol($loc, $kind, $source);
+            {
+                let mut symbol_lock = symbol.lock().unwrap();
+                $(symbol_lock.$set = $to;)*
+            }
+            symbol
         }
     }
 }
@@ -218,5 +207,91 @@ impl Symbol {
             && self.definitions == other.definitions
             && self.declarations == other.declarations
             && self.source.equivalent(&other.source)
+    }
+}
+
+pub type SymbolID = u64;
+
+#[derive(Debug)]
+pub struct SymbolMaker {
+    next_id: std::sync::atomic::AtomicU64,
+}
+
+impl SymbolMaker {
+    pub fn new() -> Self {
+        SymbolMaker {
+            next_id: std::sync::atomic::AtomicU64::default(),
+        }
+    }
+
+    pub fn new_symbol(
+        &self,
+        loc: ZeroSpan,
+        kind: DMLSymbolKind,
+        source: SymbolSource) -> SymbolRef {
+        let next_id = self.next_id.fetch_add(
+            1, std::sync::atomic::Ordering::Relaxed);
+        SymbolRefInner::new_ref(next_id, loc, kind, source)
+    }
+}
+
+#[derive(Debug)]
+pub struct SymbolRefInner {
+    pub id: SymbolID,
+    pub symbol: Mutex<Symbol>,
+}
+
+pub type SymbolRef = Arc<SymbolRefInner>;
+
+impl SymbolRefInner {
+    pub fn new_ref(id: SymbolID,
+                   loc: ZeroSpan,
+                   kind: DMLSymbolKind,
+                   source: SymbolSource) -> SymbolRef {
+        Arc::new(SymbolRefInner {
+            id,
+            symbol: Mutex::new(Symbol::new(id, loc, kind, source))
+        })
+    }
+}
+
+impl Eq for SymbolRefInner {}
+impl PartialEq for SymbolRefInner {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+impl std::hash::Hash for SymbolRefInner {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.id.hash(state);
+    }
+}
+
+impl SymbolRefInner {
+    pub fn lock(&self)
+                -> std::sync::LockResult<std::sync::MutexGuard<'_, Symbol>> {
+        self.symbol.lock()
+    }
+}
+
+impl Symbol {
+    pub fn new(id: SymbolID,
+               loc: ZeroSpan,
+               kind: DMLSymbolKind,
+               source: SymbolSource) -> Self {
+        Symbol {
+            id,
+            loc,
+            kind,
+            source,
+            definitions: Vec::default(),
+            declarations: Vec::default(),
+            references: HashSet::default(),
+            implementations: Vec::default(),
+            bases: Vec::default(),
+            default_mappings: HashMap::default(),
+            typed: None,
+        }
     }
 }
