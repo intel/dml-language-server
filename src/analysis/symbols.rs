@@ -212,16 +212,14 @@ impl Symbol {
 
 pub type SymbolID = u64;
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct SymbolMaker {
     next_id: std::sync::atomic::AtomicU64,
 }
 
 impl SymbolMaker {
     pub fn new() -> Self {
-        SymbolMaker {
-            next_id: std::sync::atomic::AtomicU64::default(),
-        }
+        Self::default()
     }
 
     pub fn new_symbol(

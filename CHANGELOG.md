@@ -5,6 +5,9 @@
 # Change Log
 
 ## 0.9.14
+- Slight optimization to the memory usage of device-level analysis which
+  should improve runtimes and reduce the chance of the DLS running out
+  of memory on larger devices.
 
 ## 0.9.13
 - Corrected the name of "explicit\_param\_decls" provisional. Note that it still
