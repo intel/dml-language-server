@@ -244,13 +244,3 @@ impl SymbolContext {
             })
     }
 }
-
-pub enum ReferenceMatch<'t> {
-    // contained value is list references that would be suggestions for
-    // "close" matches. The integer is the closeness of the match,
-    // in some abstract measure TBD
-    NotFound(Vec<(u32, ContextedSymbol<'t>)>),
-    Found(ContextedSymbol<'t>),
-    // Mismatching symbol
-    WrongType(ContextedSymbol<'t>),
-}
