@@ -312,6 +312,17 @@ impl RangeEntry {
             &name.val, name.span.start_position().position)
     }
 
+    fn find_smallest_scope_around(&self, loc: ZeroPosition)
+                                  -> Option<ZeroRange> {
+        if self.range.contains_pos(loc) {
+            self.sub_ranges.iter()
+                .find_map(|sub|sub.find_smallest_scope_around(loc))
+                .or(Some(self.range))
+        } else {
+            None
+        }
+    }
+
     fn find_symbol_for_name(&self,
                             name: &str,
                             loc: ZeroPosition) -> Option<&SymbolRef> {
@@ -456,7 +467,7 @@ enum AgnConKey {
 // Agnostic reference
 type AgnRef = Vec<String>;
 
-type ReferenceCacheKey = (Vec<AgnConKey>, AgnRef);
+type ReferenceCacheKey = (Vec<AgnConKey>, AgnRef, Option<ZeroRange>);
 #[derive(Default)]
 struct ReferenceCache {
     underlying_cache: HashMap<ReferenceCacheKey, ReferenceMatches>,
@@ -472,9 +483,19 @@ impl ReferenceCache {
             },
         }
     }
-    fn convert_to_key(key: (Vec<ContextKey>, VariableReference))
+    fn convert_to_key(key: (Vec<ContextKey>, VariableReference),
+                      method_structure: &HashMap<ZeroSpan, RangeEntry>)
                       -> ReferenceCacheKey {
         let (contexts, refr) = key;
+        let method_scope = contexts.last()
+            .and_then(|ck|if let ContextKey::Method(meth) = ck {
+                method_structure.get(meth.loc_span())
+                    .and_then(
+                        |re|re.find_smallest_scope_around(
+                            refr.loc_span().range.start()))
+            } else {
+                None
+            });
         let agnostic_context = contexts.into_iter().map(
             |con|match con {
                 ContextKey::Structure(sym) |
@@ -486,22 +507,25 @@ impl ReferenceCache {
             }).collect();
         let mut agnostic_reference = vec![];
         Self::flatten_ref(&refr.reference, &mut agnostic_reference);
-        (agnostic_context, agnostic_reference)
+        (agnostic_context, agnostic_reference, method_scope)
     }
 
-    pub fn get(&self, key: (Vec<ContextKey>,
-                            VariableReference))
+    pub fn get(&self,
+               key: (Vec<ContextKey>,
+                     VariableReference),
+               method_structure: &HashMap<ZeroSpan, RangeEntry>)
                -> Option<&ReferenceMatches> {
-        let agn_key = Self::convert_to_key(key);
+        let agn_key = Self::convert_to_key(key, method_structure);
         self.underlying_cache.get(&agn_key)
     }
 
     pub fn insert(&mut self,
                   key: (Vec<ContextKey>,
                         VariableReference),
-                  val: ReferenceMatches)
+                  val: ReferenceMatches,
+                  method_structure: &HashMap<ZeroSpan, RangeEntry>)
     {
-        let agn_key = Self::convert_to_key(key);
+        let agn_key = Self::convert_to_key(key, method_structure);
         self.underlying_cache.insert(agn_key, val);
     }
 }
@@ -1240,15 +1264,8 @@ impl DeviceAnalysis {
                          reference.clone());
         {
             if let Some(cached_result) = reference_cache.lock().unwrap()
-                .get(index_key.clone()) {
-                    // TODO: Caching currently does not work for references
-                    // within method bodies, as the same reference in different
-                    // locations may have different scopes
-                    if !context_chain.last()
-                        .and_then(|c|c.kind())
-                        .map_or(false, |k|k == DMLSymbolKind::Method) {
-                            return cached_result.clone();
-                        }
+                .get(index_key.clone(), method_structure) {
+                    return cached_result.clone();
                 }
         }
         let mut result = ReferenceMatches::new();
@@ -1257,7 +1274,9 @@ impl DeviceAnalysis {
                                            method_structure,
                                            reference_cache,
                                            &mut result);
-        reference_cache.lock().unwrap().insert(index_key, result.clone());
+        reference_cache.lock().unwrap().insert(index_key,
+                                               result.clone(),
+                                               method_structure);
         result
     }
 
