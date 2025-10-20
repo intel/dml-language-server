@@ -19,8 +19,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::Mutex;
 
-use itertools::Itertools;
-
 use lsp_types::{DiagnosticSeverity};
 use logos::Logos;
 use log::{debug, error, info, trace};
@@ -28,8 +26,9 @@ use rayon::prelude::*;
 
 use crate::actions::SourcedDMLError;
 use crate::actions::analysis_storage::TimestampedStorage;
-use crate::analysis::symbols::{SimpleSymbol, DMLSymbolKind, Symbol,
+use crate::analysis::symbols::{SimpleSymbol, DMLSymbolKind, SymbolMaker,
                                SymbolContainer, StructureSymbol, SymbolSource};
+pub use crate::analysis::symbols::SymbolRef;
 use crate::analysis::reference::{Reference,
                                  GlobalReference, VariableReference,
                                  ReferenceKind, NodeRef};
@@ -99,27 +98,6 @@ impl fmt::Display for DLSLimitation {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{} (issue#{})", self.description, self.issue_num)
     }
-}
-
-fn collapse_referencematches<T>(matches: T) -> ReferenceMatch
-where T : IntoIterator<Item = ReferenceMatch> {
-    matches.into_iter().fold(
-        ReferenceMatch::NotFound(vec![]),
-        |acc, rf|match (acc, rf) {
-            (ReferenceMatch::Found(mut f1), ReferenceMatch::Found(mut f2)) => {
-                f1.append(&mut f2);
-                ReferenceMatch::Found(f1)
-            },
-            (ReferenceMatch::NotFound(mut f1),
-             ReferenceMatch::NotFound(mut f2)) => {
-                f1.append(&mut f2);
-                ReferenceMatch::NotFound(f1)
-            },
-            (f @ ReferenceMatch::Found(_), _) => f,
-            (_, f @ ReferenceMatch::Found(_)) => f,
-            (f @ ReferenceMatch::WrongType(_), _) => f,
-            (_, f) => f,
-        })
 }
 
 // For things whose names are in one spot as a dmlstring
@@ -279,14 +257,14 @@ impl From<&MissingToken> for LocalDMLError {
 
 pub fn make_error_from_missing_content(
     range: ZeroRange, content: &MissingContent) -> LocalDMLError {
-        LocalDMLError {
-            range,
-            description: format!("Expected {}, got {}", content.description,
-                                 match content.ended_by {
-                                     Some(endtok) => endtok.kind.description(),
-                                     None => "EOF",
-                                 }),
-        }
+    LocalDMLError {
+        range,
+        description: format!("Expected {}, got {}", content.description,
+                             match content.ended_by {
+                                 Some(endtok) => endtok.kind.description(),
+                                 None => "EOF",
+                             }),
+    }
 }
 
 // Analysis from the perspective of a particular DML file
@@ -334,6 +312,17 @@ impl RangeEntry {
             &name.val, name.span.start_position().position)
     }
 
+    fn find_smallest_scope_around(&self, loc: ZeroPosition)
+                                  -> Option<ZeroRange> {
+        if self.range.contains_pos(loc) {
+            self.sub_ranges.iter()
+                .find_map(|sub|sub.find_smallest_scope_around(loc))
+                .or(Some(self.range))
+        } else {
+            None
+        }
+    }
+
     fn find_symbol_for_name(&self,
                             name: &str,
                             loc: ZeroPosition) -> Option<&SymbolRef> {
@@ -361,8 +350,6 @@ impl RangeEntry {
     }
 }
 
-// Mas symbol decl locations to symbols,
-pub type SymbolRef = Arc<Mutex<Symbol>>;
 #[derive(Debug, Clone, Default)]
 pub struct SymbolStorage {
     pub template_symbols: HashMap<ZeroSpan, SymbolRef>,
@@ -409,10 +396,58 @@ pub struct DeviceAnalysis {
 }
 
 #[derive(Debug, Clone)]
-pub enum ReferenceMatch {
-    Found(Vec<SymbolRef>),
+pub enum ReferenceMatches {
+    Found(HashSet<SymbolRef>),
     WrongType(SymbolRef),
-    NotFound(Vec<SymbolRef>),
+    NotFound(HashSet<SymbolRef>),
+}
+
+impl Default for ReferenceMatches {
+    fn default() -> Self {
+        Self::NotFound(HashSet::default())
+    }
+}
+
+impl ReferenceMatches {
+    pub fn add_match(&mut self, reference: SymbolRef) {
+        if !matches!(self, Self::WrongType(_)) {
+            if let Self::Found(ref mut references) = self {
+                references.insert(reference);
+            } else {
+                *self = Self::Found(HashSet::from([reference]));
+            }
+        }
+    }
+
+    pub fn add_suggestion(&mut self, reference: SymbolRef) {
+        if let Self::NotFound(ref mut references) = self {
+            references.insert(reference);
+        }
+    }
+
+    pub fn set_wrongtype(&mut self, reference: SymbolRef) {
+        *self = Self::WrongType(reference);
+    }
+
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn has_matches(&self) -> bool {
+        matches!(self, Self::Found(_))
+    }
+
+    pub fn merge_with(&mut self, other: Self) {
+        match other {
+            Self::Found(syms) => for sym in syms {
+                self.add_match(sym);
+            },
+            Self::NotFound(syms) => for sym in syms {
+                self.add_suggestion(sym);
+            },
+            Self::WrongType(sym) => self.set_wrongtype(sym),
+        }
+    }
 }
 
 /// TODO: Consider usage and variants of type hints
@@ -432,10 +467,10 @@ enum AgnConKey {
 // Agnostic reference
 type AgnRef = Vec<String>;
 
-type ReferenceCacheKey = (Vec<AgnConKey>, AgnRef);
+type ReferenceCacheKey = (Vec<AgnConKey>, AgnRef, Option<ZeroRange>);
 #[derive(Default)]
 struct ReferenceCache {
-    underlying_cache: HashMap<ReferenceCacheKey, ReferenceMatch>,
+    underlying_cache: HashMap<ReferenceCacheKey, ReferenceMatches>,
 }
 
 impl ReferenceCache {
@@ -448,9 +483,19 @@ impl ReferenceCache {
             },
         }
     }
-    fn convert_to_key(key: (Vec<ContextKey>, VariableReference))
+    fn convert_to_key(key: (Vec<ContextKey>, VariableReference),
+                      method_structure: &HashMap<ZeroSpan, RangeEntry>)
                       -> ReferenceCacheKey {
         let (contexts, refr) = key;
+        let method_scope = contexts.last()
+            .and_then(|ck|if let ContextKey::Method(meth) = ck {
+                method_structure.get(meth.loc_span())
+                    .and_then(
+                        |re|re.find_smallest_scope_around(
+                            refr.loc_span().range.start()))
+            } else {
+                None
+            });
         let agnostic_context = contexts.into_iter().map(
             |con|match con {
                 ContextKey::Structure(sym) |
@@ -462,22 +507,25 @@ impl ReferenceCache {
             }).collect();
         let mut agnostic_reference = vec![];
         Self::flatten_ref(&refr.reference, &mut agnostic_reference);
-        (agnostic_context, agnostic_reference)
+        (agnostic_context, agnostic_reference, method_scope)
     }
 
-    pub fn get(&self, key: (Vec<ContextKey>,
-                            VariableReference))
-               -> Option<&ReferenceMatch> {
-        let agn_key = Self::convert_to_key(key);
+    pub fn get(&self,
+               key: (Vec<ContextKey>,
+                     VariableReference),
+               method_structure: &HashMap<ZeroSpan, RangeEntry>)
+               -> Option<&ReferenceMatches> {
+        let agn_key = Self::convert_to_key(key, method_structure);
         self.underlying_cache.get(&agn_key)
     }
 
     pub fn insert(&mut self,
                   key: (Vec<ContextKey>,
                         VariableReference),
-                  val: ReferenceMatch)
+                  val: ReferenceMatches,
+                  method_structure: &HashMap<ZeroSpan, RangeEntry>)
     {
-        let agn_key = Self::convert_to_key(key);
+        let agn_key = Self::convert_to_key(key, method_structure);
         self.underlying_cache.insert(agn_key, val);
     }
 }
@@ -501,8 +549,8 @@ fn gather_scopes<'c>(next_scopes: Vec<&'c dyn Scope>,
         new_chain.push(scope);
         collected_scopes.push(new_chain.clone());
         gather_scopes(scope.defined_scopes(),
-                           new_chain,
-                           collected_scopes);
+                      new_chain,
+                      collected_scopes);
     }
 }
 
@@ -653,7 +701,7 @@ impl DeviceAnalysis {
             ContextKey::Method(sym) => {
                 if let Some(found_obj)
                     = curr_obj.get_object(sym.name_ref()) {
-                            if found_obj.resolve(&self.objects).as_shallow()
+                        if found_obj.resolve(&self.objects).as_shallow()
                             .map_or(false, |s|matches!(
                                 &s.variant,
                                 DMLShallowObjectVariant::Method(_))) {
@@ -736,32 +784,28 @@ impl DeviceAnalysis {
         vec![]
     }
 
-    fn resolved_to_symbol<'t, 'c>(&'c self, obj: DMLResolvedObject<'t, 'c>)
-                                  -> Option<Vec<&'c SymbolRef>> {
+    fn resolved_to_symbol<'t, 'c>(&'c self,
+                                  parent: &'c DMLCompositeObject,
+                                  obj: DMLResolvedObject<'t, 'c>)
+                                  -> Option<&'c SymbolRef> {
         match obj {
             DMLResolvedObject::CompObject(comp) =>
-                self.symbol_info.object_symbols.get(&comp.key)
-                .map(|r|vec![r]),
+                self.symbol_info.object_symbols.get(&comp.key),
             DMLResolvedObject::ShallowObject(shallow) =>
                 match &shallow.variant {
                     DMLShallowObjectVariant::Method(m) =>
-                        self.symbol_info.method_symbols.get(m.location())
-                        .map(|r|vec![r]),
+                        self.symbol_info.method_symbols.get(m.location()),
                     DMLShallowObjectVariant::Session(s) |
                     DMLShallowObjectVariant::Saved(s) =>
-                        self.symbol_info.variable_symbols.get(s.loc_span())
-                        .map(|r|vec![r]),
+                        self.symbol_info.variable_symbols.get(s.loc_span()),
                     DMLShallowObjectVariant::Constant(c) =>
-                        self.symbol_info.variable_symbols.get(c.loc_span())
-                        .map(|r|vec![r]),
+                        self.symbol_info.variable_symbols.get(c.loc_span()),
                     DMLShallowObjectVariant::Hook(h) =>
-                        self.symbol_info.variable_symbols.get(h.loc_span())
-                        .map(|r|vec![r]),
+                        self.symbol_info.variable_symbols.get(h.loc_span()),
                     DMLShallowObjectVariant::Parameter(p) =>
                         self.symbol_info.param_symbols.get(
-                            &(*p.loc_span(),
-                              p.name().val.to_string()))
-                        .map(|m|m.values().collect()),
+                            &(*p.loc_span(), p.name().val.to_string()))
+                        .and_then(|m|m.get(&parent.key))
                 },
         }
     }
@@ -769,118 +813,107 @@ impl DeviceAnalysis {
     fn lookup_def_in_comp_object<'c>(&'c self,
                                      obj: &'c DMLCompositeObject,
                                      name: &str,
-                                     _type_hint: Option<TypeHint>)
-                                     -> ReferenceMatch {
+                                     _type_hint: Option<TypeHint>,
+                                     ref_matches: &mut ReferenceMatches) {
         debug!("Looking up {} in {:?}", name, obj.identity());
         match name {
-            "this" => ReferenceMatch::Found(
-                vec![Arc::clone(self.symbol_info
-                                .object_symbols.get(&obj.key).unwrap())]),
-            _ => obj.get_object(name)
+            "this" => ref_matches.add_match(Arc::clone(
+                self.symbol_info.object_symbols.get(&obj.key).unwrap())),
+            _ => if let Some(res) = obj.get_object(name)
                 .map(|o|o.resolve(&self.objects))
-                .and_then(|r|self.resolved_to_symbol(r))
-                .map_or(ReferenceMatch::NotFound(vec![]),
-                        |res|ReferenceMatch::Found(res.into_iter()
-                                                   .map(Arc::clone)
-                                                   .collect()))
+                .and_then(|r|self.resolved_to_symbol(obj, r)) {
+                    ref_matches.add_match(Arc::clone(res))
+                },
         }
     }
 
     fn lookup_def_in_resolved<'t, 'c>(&'c self,
                                       obj: DMLResolvedObject<'t, 'c>,
                                       name: &str,
-                                      type_hint: Option<TypeHint>)
-                                      -> ReferenceMatch {
+                                      type_hint: Option<TypeHint>,
+                                      ref_matches: &mut ReferenceMatches) {
         match obj {
             DMLResolvedObject::CompObject(o) =>
-                self.lookup_def_in_comp_object(o, name, type_hint),
-            DMLResolvedObject::ShallowObject(o) => match
-                &o.variant {
+                self.lookup_def_in_comp_object(o, name, type_hint, ref_matches),
+            DMLResolvedObject::ShallowObject(o) =>
+                match &o.variant {
                     DMLShallowObjectVariant::Method(m) => {
-                        let syms: Vec<_> = m.get_decl().symbols().into_iter()
+                        for sym in m.get_decl().symbols().into_iter()
                             .filter(|struct_sym|
                                     struct_sym.get_name().as_str() == name)
                             .filter_map(|struct_sym|
                                         self.symbol_info.variable_symbols.get(
-                                            struct_sym.loc_span()))
-                            .map(Arc::clone)
-                            .collect();
-                        if syms.is_empty() {
-                            ReferenceMatch::NotFound(vec![])
-                        } else {
-                            ReferenceMatch::Found(syms)
-                        }
+                                            struct_sym.loc_span())) {
+                                ref_matches.add_match(Arc::clone(sym));
+                            }
                     },
                     DMLShallowObjectVariant::Parameter(p) => {
                         if let Some(param) = p.get_unambiguous_def() {
                             // TODO: Remove this when we can resolve 'dev' param
                             // using constant folding
                             if param.name().val.as_str() == "dev" {
-                                return self.lookup_def_in_resolved(
+                                self.lookup_def_in_resolved(
                                     self.get_device_obj().resolve(
                                         &self.objects),
                                     name,
-                                    type_hint);
+                                    type_hint,
+                                    ref_matches);
                             } else {
                                 // TODO: pre-evaluate params in objects that are
                                 // noderefs, so it is simple to re-do the lookup
                                 // here
                                 #[allow(clippy::single_match)]
                                 match param.value.as_ref() {
-                                    Some(ParamValue::Set(expr)) =>
-                                        return
-                                        collapse_referencematches(
-                                            self.expression_to_resolved_objects(
+                                    Some(ParamValue::Set(expr)) => {
+                                        let _: Vec<_> = self
+                                            .expression_to_resolved_objects(
                                                 expr, obj)
-                                                .into_iter()
-                                                .map(|res|
-                                                     self.lookup_def_in_resolved(
-                                                         res,
-                                                         name,
-                                                         type_hint.clone()))),
+                                            .into_iter()
+                                            .map(|res|
+                                                 self.lookup_def_in_resolved(
+                                                     res,
+                                                     name,
+                                                     type_hint.clone(),
+                                                     ref_matches))
+                                            .collect();
+                                    },
                                     _ => (),
                                 }
                             }
                         }
-                        ReferenceMatch::NotFound(vec![])
                     },
                     // TODO: Can we do _anything_ here? Perhaps defer to the
                     // default value (if any)?
                     DMLShallowObjectVariant::Session(_) |
-                    DMLShallowObjectVariant::Saved(_) => ReferenceMatch::NotFound(vec![]),
+                    DMLShallowObjectVariant::Saved(_) => (),
                     // Special case for hooks, 'send_now' is the only currently
                     // allowed member
                     DMLShallowObjectVariant::Hook(_) => if name == "send_now" {
-                        ReferenceMatch::Found(
-                            vec![Arc::clone(
-                                self.symbol_info.variable_symbols
-                                    .get(obj.location()).unwrap())])
-                    } else {
-                        ReferenceMatch::NotFound(vec![])
+                        ref_matches.add_match(
+                            Arc::clone(self.symbol_info.variable_symbols
+                                       .get(obj.location()).unwrap()));
                     },
-                    _ => {
+                    _ =>
+                    // NOTE: This is not a typeerror, but an internal error
                         error!("Internal error: Wanted to lookup symbol {} in \
                                 {:?}, but that's not something that can \
                                 contain symbols",
-                               name, obj);
-                        // NOTE: This is not a typeerror, but an internal error
-                        ReferenceMatch::NotFound(vec![])
-                    },
+                               name, obj),
                 }
         }
     }
 
-    fn lookup_global_from_noderef(&self, node: &NodeRef)
-                                  -> ReferenceMatch {
-        let mut symbols = vec![];
-        let suggestions = vec![];
+    fn lookup_global_from_noderef(&self,
+                                  node: &NodeRef,
+                                  ref_matches: &mut ReferenceMatches) {
+
         if let NodeRef::Simple(name) = node {
             if let Some(templ) = self.templates.templates.get(
                 name.val.as_str()) {
                 if let Some(templ_loc) = &templ.location {
                     if let Some(templ_sym) = self.symbol_info
                         .template_symbols.get(templ_loc) {
-                            symbols.push(Arc::clone(templ_sym));
+                            ref_matches.add_match(Arc::clone(templ_sym));
                         } else {
                             error!("Unexpectedly missing a template {}",
                                    name.val);
@@ -890,15 +923,12 @@ impl DeviceAnalysis {
         }
         // TODO: types
         // TODO: externs
-        if !symbols.is_empty() {
-            ReferenceMatch::Found(symbols)
-        } else {
-            ReferenceMatch::NotFound(suggestions)
-        }
     }
 
-    fn lookup_global_from_ref(&self, reference: &GlobalReference)
-                              -> ReferenceMatch {
+    fn lookup_global_from_ref(&self,
+                              reference: &GlobalReference)
+                              -> ReferenceMatches {
+        let mut ref_matches = ReferenceMatches::new();
         match &reference.kind {
             ReferenceKind::Template => {
                 if let Some(templ) = self.templates
@@ -908,52 +938,47 @@ impl DeviceAnalysis {
                             if let Some(templ_sym) =
                                 self.symbol_info.template_symbols
                                 .get(templ_loc) {
-                                    return ReferenceMatch::Found(
-                                        vec![Arc::clone(templ_sym)])
+                                    ref_matches.add_match(Arc::clone(templ_sym))
                                 } else {
                                     error!("Unexpectedly missing a template {}",
                                            reference.name);
                                 }
                         }
                     }
-                ReferenceMatch::NotFound(vec![])
             },
-            ReferenceKind::Type =>
-                ReferenceMatch::NotFound(vec![]),
-            _ => {
-                error!("Invalid global reference kind in {:?}", reference);
-                ReferenceMatch::NotFound(vec![])
-            },
+            // TODO: type lookup
+            ReferenceKind::Type => (),
+            _ => error!("Invalid global reference kind in {:?}", reference),
+        }
+        ref_matches
+    }
+
+    fn lookup_global_symbol(&self,
+                            sym: &SimpleSymbol,
+                            ref_matches: &mut ReferenceMatches) {
+        if DMLSymbolKind::Template == sym.kind  {
+            if let Some(sym) = self.symbol_info.template_symbols.get(&sym.loc) {
+                ref_matches.add_match(Arc::clone(sym));
+            } else {
+                // I dont think this can happen, so show an error
+                error!("Unexpectedly missing a template {}", sym.name);
+            }
         }
     }
 
-    fn lookup_global_symbol(&self, sym: &SimpleSymbol)
-                            -> ReferenceMatch {
-        match sym.kind {
-            DMLSymbolKind::Template => {
-                if let Some(sym) = self.symbol_info.template_symbols.get(&sym.loc) {
-                    ReferenceMatch::Found(vec![Arc::clone(sym)])
-                } else {
-                    // I dont think this can happen, so show an error
-                    error!("Unexpectedly missing a template {}",
-                           sym.name);
-                    ReferenceMatch::NotFound(vec![])
-                }
-            },
-            _ => ReferenceMatch::NotFound(vec![]),
-        }
-    }
-
-    fn lookup_def_in_obj(&self, obj: &DMLObject, sym: &SimpleSymbol)
-                         -> ReferenceMatch {
+    fn lookup_def_in_obj(&self,
+                         obj: &DMLObject,
+                         sym: &SimpleSymbol,
+                         ref_matches: &mut ReferenceMatches) {
         let resolved = obj.resolve(&self.objects);
         if resolved.as_comp().map_or(false, |c|c.kind == CompObjectKind::Device)
             && sym.kind == DMLSymbolKind::Template {
-                self.lookup_global_symbol(sym)
+                self.lookup_global_symbol(sym, ref_matches);
             } else {
                 self.lookup_def_in_resolved(resolved,
                                             sym.name_ref(),
-                                            None)
+                                            None,
+                                            ref_matches);
             }
     }
 
@@ -988,8 +1013,7 @@ impl DeviceAnalysis {
     pub fn lookup_symbols_by_contexted_symbol<'t>(
         &self,
         sym: &ContextedSymbol<'t>,
-        limitations: &mut HashSet<DLSLimitation>)
-        -> Vec<SymbolRef> {
+        limitations: &mut HashSet<DLSLimitation>) -> Vec<SymbolRef> {
         if matches!(sym.symbol.kind, DMLSymbolKind::Template |
                     DMLSymbolKind::Typedef | DMLSymbolKind::Extern)
         {
@@ -1011,16 +1035,15 @@ impl DeviceAnalysis {
 
         if let Some(objs) = mb_objs {
             debug!("Found {:?}", objs);
-            objs.into_iter()
-                .map(|o|self.lookup_def_in_obj(&o, sym.symbol))
-                .filter_map(|rm|match rm {
-                    ReferenceMatch::Found(syms) => Some(syms),
-                    _ => None,
-                })
-                .flatten()
-                .unique_by(|s|s.lock().unwrap().loc)
-                .collect()
-
+            let mut refs = ReferenceMatches::new();
+            let _: Vec<_> = objs.into_iter()
+                .map(|o|self.lookup_def_in_obj(&o, sym.symbol, &mut refs))
+                .collect();
+            if let ReferenceMatches::Found(syms) = refs {
+                syms.into_iter().collect()
+            } else {
+                vec![]
+            }
         } else {
             // TODO: Do we need to fall back on globals here? Can we get an
             // identifier from a spot that is generic enough to refer to a
@@ -1034,8 +1057,8 @@ impl DeviceAnalysis {
                                      symbol: &'t SymbolRef,
                                      node: &NodeRef,
                                      method_structure:
-                                     &HashMap<ZeroSpan, RangeEntry>)
-                                     -> ReferenceMatch {
+                                     &HashMap<ZeroSpan, RangeEntry>,
+                                     ref_matches: &mut ReferenceMatches) {
         let sym = symbol.lock().unwrap();
         match &sym.source {
             SymbolSource::DMLObject(obj) => {
@@ -1043,19 +1066,18 @@ impl DeviceAnalysis {
                 // is _probably_ smaller than the one of holding the key
                 let obj_copy = obj.clone();
                 drop(sym);
-                self.resolve_noderef_in_obj(&obj_copy, node, method_structure)
+                self.resolve_noderef_in_obj(&obj_copy,
+                                            node,
+                                            method_structure,
+                                            ref_matches)
             },
             // TODO: Cannot be resolved without constant folding
-            SymbolSource::MethodArg(_method, _name) =>
-                ReferenceMatch::NotFound(vec![]),
-            SymbolSource::MethodLocal(_method, _name) =>
-                ReferenceMatch::NotFound(vec![]),
+            SymbolSource::MethodArg(_method, _name) => (),
+            SymbolSource::MethodLocal(_method, _name) => (),
             // TODO: Fix once type system is sorted
-            SymbolSource::Type(_typed) =>
-                ReferenceMatch::NotFound(vec![]),
+            SymbolSource::Type(_typed) => (),
             // TODO: Handle lookups inside templates
-            SymbolSource::Template(_templ) =>
-                ReferenceMatch::NotFound(vec![]),
+            SymbolSource::Template(_templ) => (),
         }
     }
 
@@ -1065,21 +1087,20 @@ impl DeviceAnalysis {
                                             node: &DMLString,
                                             _type_hint: Option<()>,
                                             method_structure: &HashMap
-                                            <ZeroSpan, RangeEntry>)
-                                            -> ReferenceMatch {
+                                            <ZeroSpan, RangeEntry>,
+                                            ref_matches: &mut ReferenceMatches) {
         // TODO: is this 100% true?
         // We cannot lookup things from within a method without
         // the reference being contained within the span of the method
         if !meth.span().contains_pos(&node.span.start_position()) {
-            return ReferenceMatch::NotFound(vec![]);
+            return;
         }
 
         match node.val.as_str() {
             "this" =>
-                ReferenceMatch::Found(
-                    vec![Arc::clone(
-                        self.symbol_info.object_symbols.get(
-                            &obj.parent).unwrap())]),
+                ref_matches.add_match(Arc::clone(
+                    self.symbol_info.object_symbols.get(
+                        &obj.parent).unwrap())),
             "default" =>
             // NOTE: This is part of the hack that maps default
             // references in methods to the corret method decl.
@@ -1087,17 +1108,14 @@ impl DeviceAnalysis {
             // default call, and if so map the reference to the
             // method symbol
                 if meth.get_default().is_some() {
-                    self.symbol_info.method_symbols
-                        .get(obj.location())
-                        .map_or_else(
-                            ||ReferenceMatch::NotFound(vec![]),
-                            |sym|ReferenceMatch::Found(vec![
-                                Arc::clone(sym)]))
+                    if let Some(s) = self.symbol_info.method_symbols
+                        .get(obj.location()) {
+                            ref_matches.add_match(Arc::clone(s))
+                        }
                 } else {
                     // fairly sure 'default' cannot be a
                     // reference otherwise
                     // TODO: better error message here, somehow?
-                    ReferenceMatch::NotFound(vec![])
                 },
             _ => {
                 let local_sym = method_structure.get(meth.location())
@@ -1111,9 +1129,8 @@ impl DeviceAnalysis {
                     // this is not an internal error and is reported as a
                     // conflict while building the symbols
                     (Some(sym), _) |
-                    (_, Some(sym)) => ReferenceMatch::Found(
-                        vec![Arc::clone(sym)]),
-                    _ => ReferenceMatch::NotFound(vec![]),
+                    (_, Some(sym)) => ref_matches.add_match(Arc::clone(sym)),
+                    _ => (),
                 }
             },
         }
@@ -1123,8 +1140,8 @@ impl DeviceAnalysis {
                                   obj: &DMLObject,
                                   node: &NodeRef,
                                   method_structure: &HashMap<ZeroSpan,
-                                                             RangeEntry>)
-                                  -> ReferenceMatch {
+                                                             RangeEntry>,
+                                  ref_matches: &mut ReferenceMatches) {
         match node {
             NodeRef::Simple(simple) => {
                 let resolvedobj = obj.resolve(&self.objects);
@@ -1136,42 +1153,33 @@ impl DeviceAnalysis {
 
                     self.resolve_simple_noderef_in_method(shallow, m, simple,
                                                           None,
-                                                          method_structure)
+                                                          method_structure,
+                                                          ref_matches);
                 } else {
                     self.lookup_def_in_resolved(resolvedobj,
                                                 &simple.val,
-                                                None)
+                                                None,
+                                                ref_matches);
                 }
             },
             NodeRef::Sub(subnode, simple, _) => {
-                let sub = self.resolve_noderef_in_obj(obj,
-                                                      subnode,
-                                                      method_structure);
-                match sub {
-                    ReferenceMatch::Found(syms) => {
+                let mut intermediate_matches = ReferenceMatches::new();
+                self.resolve_noderef_in_obj(obj,
+                                            subnode,
+                                            method_structure,
+                                            &mut intermediate_matches);
+                match intermediate_matches {
+                    ReferenceMatches::Found(syms) => {
                         let wrapped_simple = NodeRef::Simple(simple.clone());
-                        let mut found_syms = vec![];
-                        let mut suggestions = vec![];
-                        for sub_result in syms.into_iter().map(
-                            |sym|self.resolve_noderef_in_symbol(
-                                &sym, &wrapped_simple, method_structure)) {
-                            match sub_result {
-                                ReferenceMatch::Found(mut sub_syms) =>
-                                    found_syms.append(&mut sub_syms),
-                                ReferenceMatch::NotFound(mut sub_suggestions) =>
-                                    suggestions.append(&mut sub_suggestions),
-                                // No need to have this be exhaustive,
-                                // early return is ok
-                                wt @ ReferenceMatch::WrongType(_) => return wt,
-                            }
-                        }
-                        if !found_syms.is_empty() {
-                            ReferenceMatch::Found(found_syms)
-                        } else {
-                            ReferenceMatch::NotFound(suggestions)
+                        for sym in syms {
+                            self.resolve_noderef_in_symbol(
+                                &sym,
+                                &wrapped_simple,
+                                method_structure,
+                                ref_matches);
                         }
                     },
-                    other => other,
+                    other => ref_matches.merge_with(other),
                 }
             }
         }
@@ -1180,27 +1188,29 @@ impl DeviceAnalysis {
     fn lookup_ref_in_obj(&self,
                          obj: &DMLObject,
                          reference: &VariableReference,
-                         method_structure: &HashMap<ZeroSpan, RangeEntry>)
-                         -> ReferenceMatch {
+                         method_structure: &HashMap<ZeroSpan, RangeEntry>,
+                         ref_matches: &mut ReferenceMatches) {
         match &reference.kind {
             ReferenceKind::Template |
             ReferenceKind::Type => {
                 internal_error!("Attempted to do a contexted lookup \
                                  of a global reference {:?}", reference);
-                return ReferenceMatch::NotFound(vec![]);
+                return;
             },
             _ => (),
         }
-        self.resolve_noderef_in_obj(obj, &reference.reference, method_structure)
-        // TODO: Could sanity the result towards the referencekind here
+        self.resolve_noderef_in_obj(obj,
+                                    &reference.reference,
+                                    method_structure,
+                                    ref_matches);
     }
 
     pub fn lookup_symbols_by_contexted_reference(
         &self,
         context_chain: &[ContextKey],
         reference: &VariableReference,
-        method_structure: &HashMap<ZeroSpan, RangeEntry>)
-        -> ReferenceMatch {
+        method_structure: &HashMap<ZeroSpan, RangeEntry>,
+        ref_matches: &mut ReferenceMatches) {
         debug!("Looking up {:?} : {:?} in device tree", context_chain,
                reference);
         // NOTE: This is actually unused, but contexts_to_objs is used
@@ -1210,26 +1220,12 @@ impl DeviceAnalysis {
             vec![self.get_device_obj().clone()],
             context_chain,
             &mut limitations) {
-            let mut syms = vec![];
-            let mut suggestions = vec![];
-            for result in objs.into_iter().map(
-                |o|self.lookup_ref_in_obj(&o, reference, method_structure)) {
-                match result {
-                    ReferenceMatch::Found(mut found_syms) =>
-                        syms.append(&mut found_syms),
-                    w @ ReferenceMatch::WrongType(_) =>
-                        return w,
-                    ReferenceMatch::NotFound(mut more_suggestions) =>
-                        suggestions.append(&mut more_suggestions),
-                }
+            for o in objs {
+                self.lookup_ref_in_obj(&o,
+                                       reference,
+                                       method_structure,
+                                       ref_matches);
             }
-            if syms.is_empty() {
-                ReferenceMatch::NotFound(suggestions)
-            } else {
-                ReferenceMatch::Found(syms)
-            }
-        } else {
-            ReferenceMatch::NotFound(vec![])
         }
     }
 
@@ -1239,7 +1235,7 @@ impl DeviceAnalysis {
         reference: &VariableReference,
         method_structure: &HashMap<ZeroSpan, RangeEntry>,
         reference_cache: &Mutex<ReferenceCache>)
-        -> ReferenceMatch {
+        -> ReferenceMatches {
         let mut recursive_cache = HashSet::default();
         self.find_target_for_reference_without_loop(context_chain,
                                                     reference,
@@ -1256,34 +1252,31 @@ impl DeviceAnalysis {
         reference_cache: &Mutex<ReferenceCache>,
         recursive_cache: &'t mut HashSet<(&'t [ContextKey],
                                           &'t VariableReference)>)
-        -> ReferenceMatch {
+        -> ReferenceMatches {
         // Prevent us from calling into the exact same reference lookup twice
         // within one lookup.
         if !recursive_cache.insert((context_chain, reference)) {
             internal_error!("Recursive reference lookup detected at \
                              {:?} under {:?}", reference, context_chain);
-            return ReferenceMatch::NotFound(vec![]);
+            return ReferenceMatches::new();
         }
         let index_key = (context_chain.to_vec(),
                          reference.clone());
         {
             if let Some(cached_result) = reference_cache.lock().unwrap()
-                .get(index_key.clone()) {
-                    // TODO: Caching currently does not work for references
-                    // within method bodies, as the same reference in different
-                    // locations may have different scopes
-                    if !context_chain.last()
-                        .and_then(|c|c.kind())
-                        .map_or(false, |k|k == DMLSymbolKind::Method) {
-                            return cached_result.clone();
-                        }
+                .get(index_key.clone(), method_structure) {
+                    return cached_result.clone();
                 }
         }
-
-        let result = self.find_target_for_reference_aux(
-            context_chain, reference, method_structure, reference_cache);
-        reference_cache.lock().unwrap()
-            .insert(index_key, result.clone());
+        let mut result = ReferenceMatches::new();
+        self.find_target_for_reference_aux(context_chain,
+                                           reference,
+                                           method_structure,
+                                           reference_cache,
+                                           &mut result);
+        reference_cache.lock().unwrap().insert(index_key,
+                                               result.clone(),
+                                               method_structure);
         result
     }
 
@@ -1292,37 +1285,33 @@ impl DeviceAnalysis {
         context_chain: &[ContextKey],
         reference: &VariableReference,
         method_structure: &HashMap<ZeroSpan, RangeEntry>,
-        reference_cache: &Mutex<ReferenceCache>)
-        -> ReferenceMatch {
+        reference_cache: &Mutex<ReferenceCache>,
+        reference_matches: &mut ReferenceMatches) {
         if context_chain.is_empty() {
             // Nothing matches the noderef except maybe globals
-            return self.lookup_global_from_noderef(&reference.reference);
+            self.lookup_global_from_noderef(
+                &reference.reference,
+                reference_matches,
+            );
+            return;
         }
 
-        match self.lookup_symbols_by_contexted_reference(
+        self.lookup_symbols_by_contexted_reference(
             // Ignore first element of chain, it is the device context
-            &context_chain[1..], reference, method_structure) {
-            f @ ReferenceMatch::Found(_) => f,
-            c @ ReferenceMatch::WrongType(_) => c,
-            ReferenceMatch::NotFound(mut suggestions) => {
-                let (_, new_chain) = context_chain.split_last().unwrap();
-                match self.find_target_for_reference(new_chain,
-                                                     reference,
-                                                     method_structure,
-                                                     reference_cache) {
-                    f @ ReferenceMatch::Found(_) => f,
-                    c @ ReferenceMatch::WrongType(_) => c,
-                    ReferenceMatch::NotFound(mut rest_suggestions) => {
-                        suggestions.append(&mut rest_suggestions);
-                        ReferenceMatch::NotFound(suggestions)
-                    },
-                }
-            },
+            &context_chain[1..],
+            reference,
+            method_structure,
+            reference_matches);
+        if !reference_matches.has_matches() {
+            let (_, new_chain) = context_chain.split_last().unwrap();
+            let sub_matches = self.find_target_for_reference(new_chain,
+                                                             reference,
+                                                             method_structure,
+                                                             reference_cache);
+            reference_matches.merge_with(sub_matches);
         }
     }
-}
 
-impl DeviceAnalysis {
     #[allow(clippy::ptr_arg)]
     fn match_references_in_scope<'c>(
         &'c self,
@@ -1348,7 +1337,7 @@ impl DeviceAnalysis {
                 };
 
                 match symbol_lookup {
-                    ReferenceMatch::NotFound(_suggestions) =>
+                    ReferenceMatches::NotFound(_suggestions) =>
                     // TODO: report suggestions?
                     // TODO: Uncomment reporting of errors here when
                     // semantics are strong enough that they are rare
@@ -1363,7 +1352,7 @@ impl DeviceAnalysis {
                     // This maps symbols->references, this is later
                     // used to create the inverse map
                     // (not done here because of ownership issues)
-                    ReferenceMatch::Found(symbols) =>
+                    ReferenceMatches::Found(symbols) =>
                         for symbol in &symbols {
                             let mut sym = symbol.lock().unwrap();
                             sym.references.insert(*reference.loc_span());
@@ -1383,7 +1372,7 @@ impl DeviceAnalysis {
                                     }
                                 }
                         },
-                    ReferenceMatch::WrongType(_) =>
+                    ReferenceMatches::WrongType(_) =>
                     //TODO: report mismatch,
                         (),
                 }
@@ -1421,7 +1410,7 @@ fn collect_toplevel(path: &Path, tree: &parsing::structure::TopAst,
     let mut report = vec![];
     let toplevel = TopLevel::from_ast(tree, &mut report, file);
     for error in report {
-         errors.push(error.with_file(path));
+        errors.push(error.with_file(path));
     }
     toplevel
 }
@@ -1603,51 +1592,51 @@ impl IsolatedAnalysis {
     }
 }
 
-fn objects_to_symbols(objects: &StructureContainer,
+fn objects_to_symbols(maker: &SymbolMaker,
+                      objects: &StructureContainer,
                       errors: &mut Vec<DMLError>,
                       method_structure: &mut HashMap
                       <ZeroSpan, RangeEntry>) -> SymbolStorage {
     let mut storage = SymbolStorage::default();
 
     for obj in objects.values() {
-        let new_symbol: SymbolRef = new_symbol_from_object(obj);
+        let new_symbol: SymbolRef = new_symbol_from_object(maker, obj);
         debug!("Comp obj symbol is: {:?}", new_symbol);
         storage.object_symbols.insert(obj.key, new_symbol);
         for subobj in obj.components.values() {
             // Non-shallow objects will be handled by the iteration
             // over objects
             if let DMLObject::ShallowObject(shallow) = subobj {
-                add_new_symbol_from_shallow(shallow, errors,
-                                            &mut storage, method_structure);
+                add_new_symbol_from_shallow(maker,
+                                            shallow,
+                                            errors,
+                                            &mut storage,
+                                            method_structure);
             }
         }
     }
     storage
 }
 
-fn template_to_symbol(template: &Arc<DMLTemplate>) -> Option<SymbolRef> {
+fn template_to_symbol(maker: &SymbolMaker,
+                      template: &Arc<DMLTemplate>) -> Option<SymbolRef> {
     // Do not create symbols for templates without location, they are dummy
     // missing templates
-    template.location.as_ref().map(|location| {
-        Arc::new(Mutex::new(Symbol {
-            loc: *location,
-            kind: DMLSymbolKind::Template,
-            references: HashSet::default(),
-            definitions: vec![*location],
-            declarations: vec![*location],
-            implementations: vec![],
-            bases: vec![],
-            source: SymbolSource::Template(Arc::clone(template)),
-            default_mappings: HashMap::default(),
-            // TODO: Should this be the trait type?
-            typed: None,
-        }))})
+    template.location.as_ref().map(|location|symbol_ref!(
+        maker,
+        *location,
+        DMLSymbolKind::Template,
+        SymbolSource::Template(Arc::clone(template)),
+        definitions = vec![*location],
+        declarations = vec![*location]
+    ))
 }
 
-fn extend_with_templates(storage: &mut SymbolStorage,
+fn extend_with_templates(maker: &SymbolMaker,
+                         storage: &mut SymbolStorage,
                          templates: &TemplateTraitInfo) {
     for template in templates.templates.values() {
-        if let Some(new_templ) = template_to_symbol(template) {
+        if let Some(new_templ) = template_to_symbol(maker, template) {
             let loc = new_templ.lock().unwrap().loc;
             if let Some(prev) = storage.template_symbols
                 .insert(loc, new_templ) {
@@ -1660,43 +1649,36 @@ fn extend_with_templates(storage: &mut SymbolStorage,
     }
 }
 
-fn new_symbol_from_object(object: &DMLCompositeObject) -> SymbolRef {
+fn new_symbol_from_object(maker: &SymbolMaker,
+                          object: &DMLCompositeObject) -> SymbolRef {
     let all_decl_defs: Vec<ZeroSpan> = object.all_decls.iter().map(
         |spec|*spec.loc_span()).collect();
-    Arc::new(Mutex::new(Symbol {
-        loc: object.declloc,
-        kind: DMLSymbolKind::CompObject(object.kind),
-        definitions: all_decl_defs.clone(),
-        declarations: all_decl_defs.clone(),
-        bases: all_decl_defs,
-        references: HashSet::default(),
-        implementations: vec![],
-        source: SymbolSource::DMLObject(
-            DMLObject::CompObject(object.key)),
-        default_mappings: HashMap::default(),
-        typed: None,
-    }))
+    symbol_ref!(
+        maker,
+        object.declloc,
+        DMLSymbolKind::CompObject(object.kind),
+        SymbolSource::DMLObject(DMLObject::CompObject(object.key)),
+        definitions = all_decl_defs.clone(),
+        declarations = all_decl_defs.clone(),
+        bases = all_decl_defs)
 }
 
-fn new_symbol_from_arg(methref: &Arc<DMLMethodRef>,
+fn new_symbol_from_arg(maker: &SymbolMaker,
+                       methref: &Arc<DMLMethodRef>,
                        arg: &DMLMethodArg) -> SymbolRef {
     let bases = vec![*arg.loc_span()];
     let definitions = vec![*arg.loc_span()];
     let declarations = vec![*arg.loc_span()];
-    Arc::new(Mutex::new(Symbol {
-        loc: *arg.loc_span(),
-        kind: DMLSymbolKind::MethodArg,
-        bases,
-        definitions,
-        declarations,
-        references: HashSet::default(),
-        implementations: vec![],
-        source: SymbolSource::MethodArg(Arc::clone(methref),
-                                        arg.name().clone()),
-        default_mappings: HashMap::default(),
-        // TODO: Obtain type
-        typed: None,
-    }))
+    symbol_ref!(
+        maker,
+        *arg.loc_span(),
+        DMLSymbolKind::MethodArg,
+        SymbolSource::MethodArg(Arc::clone(methref), arg.name().clone()),
+        bases = bases,
+        definitions = definitions,
+        declarations = declarations
+
+    )
 }
 
 fn log_non_same_insert<K>(map: &mut HashMap<K, SymbolRef>,
@@ -1725,7 +1707,8 @@ where K: std::hash::Hash + Eq + Clone,
 }
 
 #[allow(clippy::ptr_arg)]
-fn add_new_symbol_from_shallow(shallow: &DMLShallowObject,
+fn add_new_symbol_from_shallow(maker: &SymbolMaker,
+                               shallow: &DMLShallowObject,
                                errors: &mut Vec<DMLError>,
                                storage: &mut SymbolStorage,
                                method_structure: &mut HashMap
@@ -1756,22 +1739,18 @@ fn add_new_symbol_from_shallow(shallow: &DMLShallowObject,
              vec![*hook.loc_span()]),
     };
     debug!("Made symbol for {:?}", shallow);
-    let new_sym = Arc::new(Mutex::new(Symbol {
-        loc: *shallow.location(),
-        kind: shallow.kind(),
-        definitions,
-        declarations,
-        implementations: vec![],
-        references: HashSet::default(),
-        bases,
-        source: SymbolSource::DMLObject(
+    let new_sym = symbol_ref!(
+        maker,
+        *shallow.location(),
+        shallow.kind(),
+        SymbolSource::DMLObject(
             // TODO: Inefficient clone. Not terribly so, but worth
             // noting
             DMLObject::ShallowObject(shallow.clone())),
-        default_mappings: HashMap::default(),
-        // TODO: obtain type
-        typed: None,
-    }));
+        bases = bases,
+        definitions = definitions,
+        declarations = declarations);
+
     match &shallow.variant {
         DMLShallowObjectVariant::Parameter(_) => {
             log_non_same_insert(storage.param_symbols.entry(
@@ -1786,12 +1765,14 @@ fn add_new_symbol_from_shallow(shallow: &DMLShallowObject,
                                     *shallow.location(),
                                     new_sym) {
                 for arg in method_ref.args() {
-                    let new_argsymbol = new_symbol_from_arg(method_ref, arg);
+                    let new_argsymbol = new_symbol_from_arg(maker,
+                                                            method_ref,
+                                                            arg);
                     log_non_same_insert(&mut storage.variable_symbols,
                                         *arg.loc_span(),
                                         new_argsymbol);
                 }
-                add_method_scope_symbols(method_ref, method_structure,
+                add_method_scope_symbols(maker, method_ref, method_structure,
                                          storage, errors);
             },
         DMLShallowObjectVariant::Constant(_) |
@@ -1805,7 +1786,8 @@ fn add_new_symbol_from_shallow(shallow: &DMLShallowObject,
     }
 }
 
-fn add_method_scope_symbols(method: &Arc<DMLMethodRef>,
+fn add_method_scope_symbols(maker: &SymbolMaker,
+                            method: &Arc<DMLMethodRef>,
                             method_structure: &mut HashMap<ZeroSpan,
                                                            RangeEntry>,
                             storage: &mut SymbolStorage,
@@ -1818,7 +1800,8 @@ fn add_method_scope_symbols(method: &Arc<DMLMethodRef>,
     if !matches!(&*method.get_decl().body, StatementKind::Compound(_)) {
         error!("Internal Error: Method body was not a compound statement");
     }
-    add_new_method_scope_symbols(method,
+    add_new_method_scope_symbols(maker,
+                                 method,
                                  &method.get_decl().body,
                                  errors,
                                  storage,
@@ -1830,7 +1813,8 @@ fn add_method_scope_symbols(method: &Arc<DMLMethodRef>,
     }
 }
 
-fn add_new_method_scope_symbol<T>(method: &Arc<DMLMethodRef>,
+fn add_new_method_scope_symbol<T>(maker: &SymbolMaker,
+                                  method: &Arc<DMLMethodRef>,
                                   sym: &T,
                                   _typ: &DMLType,
                                   storage: &mut SymbolStorage,
@@ -1838,26 +1822,21 @@ fn add_new_method_scope_symbol<T>(method: &Arc<DMLMethodRef>,
 where
     T : StructureSymbol + DMLNamed + LocationSpan
 {
-    let symbol = Arc::new(Mutex::new(Symbol {
-        loc: *sym.loc_span(),
-        kind: sym.kind(),
-        definitions: vec![*sym.loc_span()],
-        declarations: vec![*sym.loc_span()],
-        implementations: vec![],
-        references: HashSet::default(),
-        bases: vec![],
-        source: SymbolSource::MethodLocal(
-            Arc::clone(method),
-            sym.name().clone()),
-        default_mappings: HashMap::default(),
+    let symbol = symbol_ref!(
+        maker,
+        *sym.loc_span(),
+        sym.kind(),
+        SymbolSource::MethodLocal(Arc::clone(method), sym.name().clone()),
+        definitions = vec![*sym.loc_span()],
+        declarations = vec![*sym.loc_span()]
         // TODO: resolve type
-        typed: None,
-    }));
+    );
     scope.symbols.insert(sym.name().val.clone(), Arc::clone(&symbol));
     storage.variable_symbols.insert(*sym.loc_span(), symbol);
 }
 
-fn enter_new_method_scope(method: &Arc<DMLMethodRef>,
+fn enter_new_method_scope(maker: &SymbolMaker,
+                          method: &Arc<DMLMethodRef>,
                           outer_stmnt_desc: &'static str,
                           stmnt: &Statement,
                           scope_span: &ZeroSpan,
@@ -1883,11 +1862,17 @@ fn enter_new_method_scope(method: &Arc<DMLMethodRef>,
         symbols: HashMap::default(),
         sub_ranges: vec![],
     };
-    add_new_method_scope_symbols(method, stmnt, errors, storage, &mut entry);
+    add_new_method_scope_symbols(maker,
+                                 method,
+                                 stmnt,
+                                 errors,
+                                 storage,
+                                 &mut entry);
     scope.sub_ranges.push(entry);
 }
 
-fn add_new_method_scope_symbols(method: &Arc<DMLMethodRef>,
+fn add_new_method_scope_symbols(maker: &SymbolMaker,
+                                method: &Arc<DMLMethodRef>,
                                 stmnt: &Statement,
                                 errors: &mut Vec<DMLError>,
                                 storage: &mut SymbolStorage,
@@ -1895,14 +1880,16 @@ fn add_new_method_scope_symbols(method: &Arc<DMLMethodRef>,
     match &**stmnt {
         StatementKind::Compound(content) =>
             for sub_stmnt in &content.statements {
-                add_new_method_scope_symbols(method,
+                add_new_method_scope_symbols(maker,
+                                             method,
                                              sub_stmnt,
                                              errors,
                                              storage,
                                              scope);
             },
         StatementKind::If(content) => {
-            enter_new_method_scope(method,
+            enter_new_method_scope(maker,
+                                   method,
                                    "if",
                                    &content.ifbody,
                                    content.ifbody.span(),
@@ -1910,7 +1897,8 @@ fn add_new_method_scope_symbols(method: &Arc<DMLMethodRef>,
                                    storage,
                                    scope);
             if let Some(elsebody) = &content.elsebody {
-                enter_new_method_scope(method,
+                enter_new_method_scope(maker,
+                                       method,
                                        "else",
                                        elsebody,
                                        elsebody.span(),
@@ -1921,7 +1909,8 @@ fn add_new_method_scope_symbols(method: &Arc<DMLMethodRef>,
         },
         StatementKind::HashIf(content) => {
             // TODO: this should be constant-folded if possible
-            enter_new_method_scope(method,
+            enter_new_method_scope(maker,
+                                   method,
                                    "#if",
                                    &content.ifbody,
                                    content.ifbody.span(),
@@ -1929,7 +1918,8 @@ fn add_new_method_scope_symbols(method: &Arc<DMLMethodRef>,
                                    storage,
                                    scope);
             if let Some(elsebody) = &content.elsebody {
-                enter_new_method_scope(method,
+                enter_new_method_scope(maker,
+                                       method,
                                        "#else",
                                        elsebody,
                                        elsebody.span(),
@@ -1939,7 +1929,8 @@ fn add_new_method_scope_symbols(method: &Arc<DMLMethodRef>,
             }
         },
         StatementKind::While(content) =>
-            enter_new_method_scope(method,
+            enter_new_method_scope(maker,
+                                   method,
                                    "while",
                                    &content.body,
                                    content.body.span(),
@@ -1947,7 +1938,8 @@ fn add_new_method_scope_symbols(method: &Arc<DMLMethodRef>,
                                    storage,
                                    scope),
         StatementKind::DoWhile(content) =>
-            enter_new_method_scope(method,
+            enter_new_method_scope(maker,
+                                   method,
                                    "do-while",
                                    &content.body,
                                    content.body.span(),
@@ -1963,14 +1955,16 @@ fn add_new_method_scope_symbols(method: &Arc<DMLMethodRef>,
 
             if let Some(ForPre::Declaration(variable)) = &content.pre {
                 for decl in &variable.vars {
-                    add_new_method_scope_symbol(method,
+                    add_new_method_scope_symbol(maker,
+                                                method,
                                                 decl,
                                                 &decl.typed,
                                                 storage,
                                                 &mut entry);
                 }
             }
-            enter_new_method_scope(method,
+            enter_new_method_scope(maker,
+                                   method,
                                    "for",
                                    &content.body,
                                    content.body.span(),
@@ -1987,13 +1981,15 @@ fn add_new_method_scope_symbols(method: &Arc<DMLMethodRef>,
                 symbols: HashMap::default(),
                 sub_ranges: vec![],
             };
-            add_new_method_scope_symbol(method,
+            add_new_method_scope_symbol(maker,
+                                        method,
                                         &content.ident,
                                         // TODO: infer type
                                         content.ident.loc_span(),
                                         storage,
                                         &mut entry);
-            enter_new_method_scope(method,
+            enter_new_method_scope(maker,
+                                   method,
                                    "select",
                                    &content.selectbranch,
                                    content.selectbranch.span(),
@@ -2001,7 +1997,8 @@ fn add_new_method_scope_symbols(method: &Arc<DMLMethodRef>,
                                    storage,
                                    &mut entry);
             scope.sub_ranges.push(entry);
-            enter_new_method_scope(method,
+            enter_new_method_scope(maker,
+                                   method,
                                    "select-else",
                                    &content.elsebranch,
                                    content.elsebranch.span(),
@@ -2010,14 +2007,16 @@ fn add_new_method_scope_symbols(method: &Arc<DMLMethodRef>,
                                    scope);
         },
         StatementKind::TryCatch(content) => {
-            enter_new_method_scope(method,
+            enter_new_method_scope(maker,
+                                   method,
                                    "try",
                                    &content.tryblock,
                                    content.tryblock.span(),
                                    errors,
                                    storage,
                                    scope);
-            enter_new_method_scope(method,
+            enter_new_method_scope(maker,
+                                   method,
                                    "catch",
                                    &content.catchblock,
                                    content.catchblock.span(),
@@ -2028,6 +2027,7 @@ fn add_new_method_scope_symbols(method: &Arc<DMLMethodRef>,
         StatementKind::VariableDecl(content) =>
             for decl in &content.vars {
                 add_new_method_scope_symbol(
+                    maker,
                     method,
                     decl,
                     &decl.typed,
@@ -2205,13 +2205,13 @@ impl DeviceAnalysis {
         // NAME of the methoddecl
         let mut method_structure: HashMap<ZeroSpan, RangeEntry>
             = HashMap::default();
-
-        let mut symbol_info = objects_to_symbols(&container,
+        let maker = SymbolMaker::new();
+        let mut symbol_info = objects_to_symbols(&maker,
+                                                 &container,
                                                  &mut errors,
                                                  &mut method_structure);
-
         // TODO: how do we store type info?
-        extend_with_templates(&mut symbol_info, &tt_info);
+        extend_with_templates(&maker, &mut symbol_info, &tt_info);
         //extend_with_types(&mut symbols, ??)
         let mut device = DeviceAnalysis {
             name: root.toplevel.device.unwrap().name.val,
