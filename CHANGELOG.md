@@ -8,6 +8,8 @@
 - Slight optimization to the memory usage of device-level analysis which
   should improve runtimes and reduce the chance of the DLS running out
   of memory on larger devices.
+- Optimization to reference matching when resolving parameters, which should
+  greatly speed up semantic analysis speed of larger devices.
 
 ## 0.9.13
 - Corrected the name of "explicit\_param\_decls" provisional. Note that it still

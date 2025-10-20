@@ -760,32 +760,28 @@ impl DeviceAnalysis {
         vec![]
     }
 
-    fn resolved_to_symbol<'t, 'c>(&'c self, obj: DMLResolvedObject<'t, 'c>)
-                                  -> Option<Vec<&'c SymbolRef>> {
+    fn resolved_to_symbol<'t, 'c>(&'c self,
+                                  parent: &'c DMLCompositeObject,
+                                  obj: DMLResolvedObject<'t, 'c>)
+                                  -> Option<&'c SymbolRef> {
         match obj {
             DMLResolvedObject::CompObject(comp) =>
-                self.symbol_info.object_symbols.get(&comp.key)
-                .map(|r|vec![r]),
+                self.symbol_info.object_symbols.get(&comp.key),
             DMLResolvedObject::ShallowObject(shallow) =>
                 match &shallow.variant {
                     DMLShallowObjectVariant::Method(m) =>
-                        self.symbol_info.method_symbols.get(m.location())
-                        .map(|r|vec![r]),
+                        self.symbol_info.method_symbols.get(m.location()),
                     DMLShallowObjectVariant::Session(s) |
                     DMLShallowObjectVariant::Saved(s) =>
-                        self.symbol_info.variable_symbols.get(s.loc_span())
-                        .map(|r|vec![r]),
+                        self.symbol_info.variable_symbols.get(s.loc_span()),
                     DMLShallowObjectVariant::Constant(c) =>
-                        self.symbol_info.variable_symbols.get(c.loc_span())
-                        .map(|r|vec![r]),
+                        self.symbol_info.variable_symbols.get(c.loc_span()),
                     DMLShallowObjectVariant::Hook(h) =>
-                        self.symbol_info.variable_symbols.get(h.loc_span())
-                        .map(|r|vec![r]),
+                        self.symbol_info.variable_symbols.get(h.loc_span()),
                     DMLShallowObjectVariant::Parameter(p) =>
                         self.symbol_info.param_symbols.get(
-                            &(*p.loc_span(),
-                              p.name().val.to_string()))
-                        .map(|m|m.values().collect()),
+                            &(*p.loc_span(), p.name().val.to_string()))
+                        .and_then(|m|m.get(&parent.key))
                 },
         }
     }
@@ -801,10 +797,8 @@ impl DeviceAnalysis {
                 self.symbol_info.object_symbols.get(&obj.key).unwrap())),
             _ => if let Some(res) = obj.get_object(name)
                 .map(|o|o.resolve(&self.objects))
-                .and_then(|r|self.resolved_to_symbol(r)) {
-                    for r in res {
-                        ref_matches.add_match(Arc::clone(r))
-                    }
+                .and_then(|r|self.resolved_to_symbol(obj, r)) {
+                    ref_matches.add_match(Arc::clone(res))
                 },
         }
     }
