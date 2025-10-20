@@ -549,7 +549,7 @@ pub mod tests {
         use crate::lint::rules::Rule;
         use crate::analysis::ZeroRange;
 
-        env_logger::init();
+        crate::logging::init();
 
         let source =
             "

@@ -16,10 +16,11 @@ use clap::{command, arg, Arg, ArgAction};
 
 use dls::dfa::ClientInterface;
 
+
 use log::debug;
 
 pub fn main() {
-    env_logger::init();
+    dls::logging::init();
     let code = main_inner();
     std::process::exit(match code {
         Ok(()) => 0,
