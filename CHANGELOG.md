@@ -10,6 +10,10 @@
   of memory on larger devices.
 - Optimizations to reference matching, which should greatly speed up semantic
   analysis speed of larger devices.
+- The DLS will now interrupt ongoing work when it would be redundant
+  (in some cases), resulting in performance improvements.
+- The DLS will now try to stop ongoing work when asked to shut down,
+  which should make it exit faster.
 
 ## 0.9.13
 - Corrected the name of "explicit\_param\_decls" provisional. Note that it still

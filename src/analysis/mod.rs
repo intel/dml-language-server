@@ -66,6 +66,7 @@ use crate::analysis::templating::traits::{DMLTemplate,
                                           TemplateTraitInfo};
 use crate::analysis::templating::types::DMLResolvedType;
 
+use crate::concurrency::AliveStatus;
 use crate::file_management::{PathResolver, CanonPath};
 
 use crate::vfs::{TextFile, Error};
@@ -1318,12 +1319,14 @@ impl DeviceAnalysis {
         scope_chain: Vec<&'c dyn Scope>,
         _report: &mut Vec<DMLError>,
         method_structure: &HashMap<ZeroSpan, RangeEntry>,
-        reference_cache: &Mutex<ReferenceCache>) {
+        reference_cache: &Mutex<ReferenceCache>,
+        status: &AliveStatus) {
         let current_scope = scope_chain.last().unwrap();
         let context_chain: Vec<ContextKey> = scope_chain
             .iter().map(|s|s.create_context()).collect();
         // NOTE: chunk number is arbitrarily picked that benches well
         current_scope.defined_references().par_chunks(25).for_each(|references|{
+            status.assert_alive();
             for reference in references {
                 debug!("In {:?}, Matching {:?}", context_chain, reference);
                 let symbol_lookup = match &reference {
@@ -1440,14 +1443,18 @@ type ResolvedImports = (HashSet<(CanonPath, Import)>,
                         HashSet<(PathBuf, Import)>);
 
 impl IsolatedAnalysis {
-    pub fn new(path: &CanonPath, clientpath: &PathBuf, file: TextFile)
+    pub fn new(path: &CanonPath,
+               clientpath: &PathBuf,
+               file: TextFile,
+               status: AliveStatus)
                -> Result<IsolatedAnalysis, Error> {
         trace!("local analysis: {} at {}", path.as_str(), path.as_str());
+        status.assert_alive();
         let filespec = FileSpec {
             path, file: &file
         };
         let (mut ast, provisionals, mut errors) = parse_file(path, filespec)?;
-
+        status.assert_alive();
         // Add invalid provisionals to errors
         for duped_provisional in &provisionals.duped_provisionals {
             errors.push(DMLError {
@@ -1503,6 +1510,7 @@ impl IsolatedAnalysis {
 
         let toplevel = collect_toplevel(path, &ast,
                                         &mut errors, filespec);
+        status.assert_alive();
         // sanity, clientpath and path should be the same file
         if CanonPath::from_path_buf(clientpath.clone()).map_or(
             true, |cp|&cp != path) {
@@ -1522,6 +1530,7 @@ impl IsolatedAnalysis {
             clientpath: clientpath.clone(),
             errors,
         };
+        status.assert_alive();
         info!("Produced an isolated analysis of {:?}", res.path);
         debug!("Produced an isolated analysis: {}", res);
         Ok(res)
@@ -2061,14 +2070,16 @@ impl DeviceAnalysis {
     fn match_references(&mut self,
                         bases: &Vec<IsolatedAnalysis>,
                         method_structure: &HashMap<ZeroSpan, RangeEntry>,
-                        errors: &mut Vec<DMLError>) {
+                        errors: &mut Vec<DMLError>,
+                        status: &AliveStatus) {
         info!("Match references");
         let reference_cache: Mutex<ReferenceCache> = Mutex::default();
         for scope_chain in all_scopes(bases) {
             self.match_references_in_scope(scope_chain,
                                            errors,
                                            method_structure,
-                                           &reference_cache);
+                                           &reference_cache,
+                                           status);
         }
     }
 
@@ -2102,9 +2113,11 @@ impl DeviceAnalysis {
 
     pub fn new(root: IsolatedAnalysis,
                timed_bases: Vec<TimestampedStorage<IsolatedAnalysis>>,
-               imp_map: HashMap<Import, String>)
+               imp_map: HashMap<Import, String>,
+               status: AliveStatus)
                -> Result<DeviceAnalysis, Error> {
         info!("device analysis: {:?}", root.path);
+        status.assert_alive();
 
         if root.toplevel.device.is_none() {
             return Err(Error::InternalError(
@@ -2115,7 +2128,7 @@ impl DeviceAnalysis {
             timed_bases.into_iter().map(|tss|tss.stored).collect();
 
         // Fake the implicit imports into the root toplevel
-        // We do this into bases, because that is the analysises that are
+        // We dro this into bases, because that is the analysises that are
         // used in analysis
         for base in &mut bases {
             if base.path == root.path {
@@ -2140,7 +2153,7 @@ impl DeviceAnalysis {
                              .expect("write string error");
                          s
                      }));
-
+        status.assert_alive();
         let mut errors = vec![];
 
         // Remove duplicate templates
@@ -2176,6 +2189,7 @@ impl DeviceAnalysis {
             trace!("Tracked file {} as template",
                    base.path.to_str().unwrap_or("no path"));
         }
+        status.assert_alive();
         let mut rank_maker = RankMaker::new();
         let tt_info = Self::make_templates_traits(&root.toplevel.start_of_file,
                                                   &mut rank_maker,
@@ -2183,7 +2197,7 @@ impl DeviceAnalysis {
                                                   &files,
                                                   &imp_map,
                                                   &mut errors);
-
+        status.assert_alive();
         // TODO: catch typedef/traitname overlaps
 
         // TODO: this is where we would do type resolution
@@ -2192,11 +2206,11 @@ impl DeviceAnalysis {
         let device_key = make_device(root.path.as_str(), &root.toplevel,
                                      &tt_info, imp_map, &mut container,
                                      &mut rank_maker, &mut errors).key;
-
+        status.assert_alive();
         // maps template declaration loc to objects
         let template_object_implementation_map =
             Self::template_object_map(&tt_info, &container);
-
+        status.assert_alive();
         info!("Generate symbols");
         // Used to handle scoping in methods when looking up local symbols,
         // NOTE: if this meta-information becomes relevant later, move this
@@ -2210,6 +2224,7 @@ impl DeviceAnalysis {
                                                  &container,
                                                  &mut errors,
                                                  &mut method_structure);
+        status.assert_alive();
         // TODO: how do we store type info?
         extend_with_templates(&maker, &mut symbol_info, &tt_info);
         //extend_with_types(&mut symbols, ??)
@@ -2226,11 +2241,14 @@ impl DeviceAnalysis {
             clientpath: root.path.clone().into(),
             dependant_files: bases.iter().map(|b|&b.path).cloned().collect(),
         };
+        status.assert_alive();
+        device.match_references(&bases,
+                                &method_structure,
+                                &mut errors,
+                                &status);
 
-        device.match_references(&bases, &method_structure, &mut errors);
-
-        // NOTE: This is when we previously pre-calculated the ref->symbol map, however
-        // the up-front analysis cost of this was too heavy
+        // NOTE: This is when we previously pre-calculated the ref->symbol map,
+        // however the up-front analysis cost of this was too heavy
         // device.inverse_references();
 
         info!("Invariant check");
@@ -2244,7 +2262,7 @@ impl DeviceAnalysis {
                 .push(error);
         }
         trace!("Errors are {:?}", device.errors);
-
+        status.assert_alive();
         info!("Done with device");
         Ok(device)
     }
