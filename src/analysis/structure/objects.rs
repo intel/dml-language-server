@@ -1016,7 +1016,7 @@ impl StructureSymbol for Method {
 
 impl Scope for Method {
     fn create_context(&self) -> ContextKey {
-        ContextKey::Structure(SimpleSymbol::make(self, self.kind()))
+        ContextKey::Method(SimpleSymbol::make(self, self.kind()))
     }
     fn defined_symbols(&self) -> Vec<&dyn StructureSymbol> {
         let mut symbols = self.arguments.to_symbols();
