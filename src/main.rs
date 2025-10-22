@@ -13,7 +13,7 @@ use clap::{Parser, command, arg};
 /// The main entry point to the DLS.
 // Parses CLI arguments and then runs the server.
 pub fn main() {
-    env_logger::init();
+    dls::logging::init();
     let exit_code = main_inner();
     std::process::exit(exit_code);
 }
