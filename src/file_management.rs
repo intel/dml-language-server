@@ -26,18 +26,6 @@ impl From<CanonPath> for PathBuf {
     }
 }
 
-impl From<PathBuf> for CanonPath {
-    fn from(from: PathBuf) -> CanonPath {
-        CanonPath::from_path_buf(from).unwrap()
-    }
-}
-
-impl From<&Path> for CanonPath {
-    fn from(from: &Path) -> CanonPath {
-        CanonPath::from_path_buf(from.to_path_buf()).unwrap()
-    }
-}
-
 impl CanonPath {
     pub fn from_path_buf(from: PathBuf) -> Option<CanonPath> {
         trace!("Trying to canonicalize {:?}", from);

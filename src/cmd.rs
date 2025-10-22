@@ -230,7 +230,7 @@ pub fn initialize(root_path: String) -> Request<server::InitializeRequest> {
 fn open(file_name: &str)
         -> Notification<DidOpenTextDocument> {
     let path = PathBuf::from_str(file_name).unwrap();
-    let canon_path: CanonPath = path.into();
+    let canon_path = CanonPath::from_path_buf(path).unwrap();
     let text = fs::read_to_string(canon_path.as_path()).unwrap();
     let uri = parse_uri(canon_path.to_str().unwrap()).unwrap();
     #[allow(deprecated)]

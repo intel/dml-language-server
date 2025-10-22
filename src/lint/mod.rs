@@ -182,7 +182,7 @@ impl LinterAnalysis {
     pub fn new(path: &Path, file: TextFile, cfg: LintCfg,  original_analysis: IsolatedAnalysis)
                -> Result<LinterAnalysis, Error> {
         debug!("local linting for: {:?}", path);
-        let canonpath: CanonPath = path.into();
+        let canonpath = CanonPath::from_path_buf(path.to_path_buf()).unwrap();
         let rules =  instantiate_rules(&cfg);
         let local_lint_errors = begin_style_check(original_analysis.ast, &file.text, &rules)?;
         let mut lint_errors = vec![];

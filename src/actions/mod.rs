@@ -491,7 +491,8 @@ impl <O: Output> InitActionContext<O> {
                         .filter(
                             |_|!config.lint_direct_only
                                 || direct_opens.contains(
-                                    &file.clone().into())
+                                    &CanonPath::from_path_buf(file.clone())
+                                        .unwrap())
                         ).cloned()
                         .map(|e|e.with_source("dml-lint")))
                 .collect();
@@ -572,7 +573,7 @@ impl <O: Output> InitActionContext<O> {
     }
 
     pub fn trigger_device_analysis(&self, file: &Path, out: &O) {
-        let canon_path: CanonPath = file.to_path_buf().into();
+        let canon_path = CanonPath::from_path_buf(file.to_path_buf()).unwrap();
         debug!("triggering devices dependant on {}", canon_path.as_str());
         self.update_analysis();
         let maybe_triggers = self.analysis.lock().unwrap().device_triggers
@@ -975,7 +976,8 @@ impl <O: Output> InitActionContext<O> {
         }
         let config = self.config.lock().unwrap().to_owned();
         if config.suppress_imports {
-            let canon_path: CanonPath = file.to_path_buf().into();
+            let canon_path = CanonPath::from_path_buf(file.to_path_buf())
+                .unwrap();
             if !self.direct_opens.lock().unwrap().contains(&canon_path) {
                 return;
             }

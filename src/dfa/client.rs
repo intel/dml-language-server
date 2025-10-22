@@ -172,7 +172,7 @@ impl ClientInterface {
     pub fn open_file(&mut self, path: &Path) -> anyhow::Result<()> {
         let mut content = vec![];
         // TODO: send an error if this fails
-        let canon_path: CanonPath = path.to_path_buf().into();
+        let canon_path = CanonPath::from_path_buf(path.to_path_buf()).unwrap();
         fs::File::open(canon_path.as_path())?.read_to_end(&mut content)?;
         let params = lsp_types::DidOpenTextDocumentParams {
             text_document: lsp_types::TextDocumentItem::new(
@@ -220,7 +220,7 @@ impl ClientInterface {
         let file: CanonPath =
             parse_file_path(&diagnostic_params.uri)
             .map_err(|e|RpcErrorKind::from(e.to_string()))
-            .map(|u|u.into())?;
+            .map(|u|CanonPath::from_path_buf(u).unwrap())?;
         trace!("Received diagnotics from server: {:?}",
                diagnostic_params.diagnostics);
         // For-now good-enough heuristic for if we are receiving a lint or not
