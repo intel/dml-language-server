@@ -480,7 +480,9 @@ impl AnalysisStorage {
         let device_trigger_holder = self.device_triggers.clone();
         self.device_analysis.retain(
             |k, _| !device_trigger_holder.get(k)
-                .unwrap().contains(&path.to_path_buf().into()));
+                .unwrap()
+                .contains(&CanonPath::from_path_buf(
+                    path.to_path_buf()).unwrap()));
     }
 
     pub fn update_analysis(&mut self, resolver: &PathResolver) {

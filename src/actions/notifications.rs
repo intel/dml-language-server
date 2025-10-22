@@ -153,7 +153,7 @@ impl BlockingNotificationAction for DidChangeTextDocument {
             .collect();
         ctx.vfs.on_changes(&changes).expect("error committing to VFS");
         ctx.analysis.lock().unwrap()
-            .mark_file_dirty(&file_path.to_path_buf().into());
+            .mark_file_dirty(&CanonPath::from_path_buf(file_path.to_path_buf()).unwrap());
 
         if !ctx.config.lock().unwrap().analyse_on_save {
             ctx.isolated_analyze(&file_path, None, &out);
