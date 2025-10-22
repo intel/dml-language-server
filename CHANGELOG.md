@@ -11,6 +11,8 @@
 - Optimizations to reference matching, which should greatly speed up semantic
   analysis speed of larger devices.
 - Adjusted error message in DFA
+- The DLS will now update the internal log-level when after a configuration
+  update
 
 ## 0.9.13
 - Corrected the name of "explicit\_param\_decls" provisional. Note that it still
