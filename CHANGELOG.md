@@ -17,6 +17,7 @@
   (in some cases), resulting in performance improvements.
 - The DLS will now try to stop ongoing work when asked to shut down,
   which should make it exit faster.
+- Adjusted error message in DFA when unable to open DLS binary
 
 ## 0.9.13
 - Corrected the name of "explicit\_param\_decls" provisional. Note that it still

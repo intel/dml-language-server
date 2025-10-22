@@ -144,7 +144,7 @@ fn main_inner() -> Result<(), i32> {
     let mut dlsclient = ClientInterface::start(&arg.binary, root, linting_enabled)
         .map_err(|e|{
             std::io::stdout().write_all(
-                format!("Failed to open client binary: {}\n",
+                format!("Failed to start client: {}\n",
                         e).as_bytes())
                 .ok();
             1})?;
