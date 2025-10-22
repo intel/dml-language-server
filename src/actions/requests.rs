@@ -2,17 +2,18 @@
 //  SPDX-License-Identifier: Apache-2.0 and MIT
 //! Requests that the DLS can respond to.
 
-use jsonrpc::error::{StandardError, standard_error};
+use jsonrpc::error::StandardError;
 use log::{debug, error, info, trace, warn};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+
 use std::collections::HashSet;
 use std::path::Path;
 
 use crate::actions::hover;
 use crate::actions::{AnalysisProgressKind, AnalysisWaitKind,
                      AnalysisCoverageSpec,
-                     ContextDefinition, InitActionContext};
+                     ContextDefinition, InitActionContext,
+                     rpc_error_code};
 use crate::actions::notifications::ContextDefinitionKindParam;
 use crate::analysis::{ZeroSpan, ZeroFilePosition, SymbolRef};
 use crate::analysis::reference::ReferenceKind;
@@ -148,13 +149,14 @@ fn fp_to_symbol_refs<O: Output>
     let (context_sym, reference) = (analysis.context_symbol_at_pos(fp)?,
                                     analysis.reference_at_pos(fp)?);
     debug!("Got {:?} and {:?}", context_sym, reference);
-    let canon_path = CanonPath::from_path_buf(fp.path()).unwrap();
+    let canon_path = CanonPath::from_path_buf(fp.path())
+        .ok_or(AnalysisLookupError::NoFile)?;
     // Rather than holding the lock throughout the request, clone
     // the filter
     let filter = Some(ctx.device_active_contexts.lock().unwrap().clone());
     let mut definitions = vec![];
     let analysises = analysis.all_device_analysises_containing_file(
-        &CanonPath::from_path_buf(fp.path()).unwrap());
+        &canon_path);
     if analysises.is_empty() {
         return Err(AnalysisLookupError::NoDeviceAnalysis);
     }
@@ -435,25 +437,26 @@ impl RequestAction for DocumentSymbolRequest {
         params: Self::Params,
     ) -> Result<Self::Response, ResponseError> {
         debug!("Handing doc symbol request {:?}", params);
-        let parse_canon_path = parse_file_path!(
-            &params.text_document.uri, "document symbols")
-            .map(CanonPath::from_path_buf);
+        let canon_path = {
+            let parsed = parse_file_path!(
+                &params.text_document.uri, "document symbols")
+                .map_err(|_|ResponseError::Message(
+                    rpc_error_code(StandardError::ParseError),
+                    "Failed to parse file path".to_string()))?;
+            make_canon_path!(parsed)?
+        };
 
-        if let Ok(Some(canon_path)) = parse_canon_path {
-            ctx.analysis.lock().unwrap()
-                // TODO: Info about missing isolated analysis?
-                .get_isolated_analysis(&canon_path)
-                .map(|isolated|{
-                    let context = isolated.toplevel.to_context();
-                    // Fold out the toplevel context
-                    let symbols = context.subsymbols.iter().map(
-                        subsymbol_to_document_symbol).collect();
-                    Some(DocumentSymbolResponse::Nested(symbols))
-                })
-                .or(Self::fallback_response())
-        } else {
-            Self::fallback_response()
-        }
+        ctx.analysis.lock().unwrap()
+        // TODO: Info about missing isolated analysis?
+            .get_isolated_analysis(&canon_path)
+            .map(|isolated|{
+                let context = isolated.toplevel.to_context();
+                // Fold out the toplevel context
+                let symbols = context.subsymbols.iter().map(
+                    subsymbol_to_document_symbol).collect();
+                Some(DocumentSymbolResponse::Nested(symbols))
+            })
+            .or(Self::fallback_response())
     }
 }
 
@@ -478,6 +481,8 @@ impl RequestAction for HoverRequest {
         })
     }
 }
+
+// this pattern repeats enough to warrant factoring out
 
 impl RequestAction for GotoImplementation {
     type Response = ResponseWithMessage<Option<GotoImplementationResponse>>;
@@ -504,12 +509,8 @@ impl RequestAction for GotoImplementation {
             }
             maybe_fp.unwrap()
         };
-        ctx.wait_for_state(
-            AnalysisProgressKind::DeviceDependencies,
-            AnalysisWaitKind::Work,
-            AnalysisCoverageSpec::Paths(
-                std::iter::once(CanonPath::from_path_buf(fp.path()).unwrap())
-                    .collect())).ok();
+        let canon_path = make_canon_path!(fp.path())?;
+        wait_for_device_path!(ctx, canon_path);
 
         let mut limitations = HashSet::new();
         match fp_to_symbol_refs(&fp, &ctx, &mut limitations) {
@@ -568,12 +569,8 @@ impl RequestAction for GotoDeclaration {
             }
             maybe_fp.unwrap()
         };
-        ctx.wait_for_state(
-            AnalysisProgressKind::DeviceDependencies,
-            AnalysisWaitKind::Work,
-            AnalysisCoverageSpec::Paths(
-                std::iter::once(CanonPath::from_path_buf(fp.path()).unwrap())
-                    .collect())).ok();
+        let canon_path = make_canon_path!(fp.path())?;
+        wait_for_device_path!(ctx, canon_path);
 
         let mut limitations = HashSet::new();
         match fp_to_symbol_refs(&fp, &ctx, &mut limitations) {
@@ -626,23 +623,19 @@ impl RequestAction for GotoDefinition {
             }
             maybe_fp.unwrap()
         };
-        ctx.wait_for_state(
-            AnalysisProgressKind::DeviceDependencies,
-            AnalysisWaitKind::Work,
-            AnalysisCoverageSpec::Paths(
-                std::iter::once(CanonPath::from_path_buf(fp.path()).unwrap())
-                    .collect())).ok();
+        let canon_path = make_canon_path!(fp.path())?;
+        wait_for_device_path!(ctx, canon_path);
 
         let mut limitations = HashSet::new();
         match fp_to_symbol_refs(&fp, &ctx, &mut limitations) {
             Ok(symbols) => {
                 let unique_locations: HashSet<ZeroSpan> =
                     symbols.into_iter()
-                    .flat_map(|d|d.lock().unwrap().definitions.clone()).collect();
+                    .flat_map(|d|d.lock().unwrap()
+                              .definitions.clone()).collect();
                 let lsp_locations: Vec<_> = unique_locations.into_iter()
                     .map(|l|ls_util::dls_to_location(&l))
                     .collect();
-                trace!("Requested definitions are {:?}", lsp_locations);
                 Ok(response_maybe_with_limitations(
                     &fp.path(),
                     Some(GotoDefinitionResponse::Array(lsp_locations)),
@@ -684,18 +677,17 @@ impl RequestAction for References {
             }
             maybe_fp.unwrap()
         };
-        ctx.wait_for_state(
-            AnalysisProgressKind::DeviceDependencies,
-            AnalysisWaitKind::Work,
-            AnalysisCoverageSpec::Paths(
-                std::iter::once(CanonPath::from_path_buf(fp.path()).unwrap())
-                    .collect())).ok();
+
+        let canon_path = make_canon_path!(fp.path())?;
+        wait_for_device_path!(ctx, canon_path);
+
         let mut limitations = HashSet::new();
         match fp_to_symbol_refs(&fp, &ctx, &mut limitations) {
             Ok(symbols) => {
                 let unique_locations: HashSet<ZeroSpan> =
                     symbols.into_iter()
-                    .flat_map(|d|d.lock().unwrap().references.clone()).collect();
+                    .flat_map(|d|d.lock().unwrap()
+                              .references.clone()).collect();
                 let lsp_locations: Vec<_> = unique_locations.into_iter()
                     .map(|l|ls_util::dls_to_location(&l))
                     .collect();
@@ -775,7 +767,7 @@ pub enum ExecuteCommandResponse {
 
 impl server::Response for ExecuteCommandResponse {
     fn send<O: Output>(self, id: server::RequestId, out: &O) {
-        // FIXME should handle the client's responses
+        // TODO: should handle the client's responses
         match self {
             ExecuteCommandResponse::ApplyEdit(ref params) => {
                 let id = out.provide_id();
@@ -809,10 +801,6 @@ impl RequestAction for ExecuteCommand {
         // TODO: handle specialized commands. or if no such commands, remove
         Self::fallback_response()
     }
-}
-
-fn rpc_error_code(code: StandardError) -> Value {
-    Value::from(standard_error(code, None).code)
 }
 
 impl RequestAction for CodeActionRequest {

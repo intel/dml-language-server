@@ -179,12 +179,18 @@ impl fmt::Display for LinterAnalysis {
 }
 
 impl LinterAnalysis {
-    pub fn new(path: &Path, file: TextFile, cfg: LintCfg,  original_analysis: IsolatedAnalysis)
+    pub fn new(path: &Path,
+               file: TextFile,
+               cfg: LintCfg,
+               original_analysis: IsolatedAnalysis)
                -> Result<LinterAnalysis, Error> {
         debug!("local linting for: {:?}", path);
-        let canonpath = CanonPath::from_path_buf(path.to_path_buf()).unwrap();
+        let canonpath = CanonPath::try_from_path_buf(path.to_path_buf())
+            .map_err(|e|Error::Io(Some(path.to_path_buf()),
+                                  Some(e.to_string())))?;
         let rules =  instantiate_rules(&cfg);
-        let local_lint_errors = begin_style_check(original_analysis.ast, &file.text, &rules)?;
+        let local_lint_errors = begin_style_check(
+            original_analysis.ast, &file.text, &rules)?;
         let mut lint_errors = vec![];
         for entry in local_lint_errors {
             let ident = entry.rule_ident;

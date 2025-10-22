@@ -10,6 +10,8 @@
   of memory on larger devices.
 - Optimizations to reference matching, which should greatly speed up semantic
   analysis speed of larger devices.
+- Fixed instances of the language server crashing when tracked files were
+  removed while it was running.
 
 ## 0.9.13
 - Corrected the name of "explicit\_param\_decls" provisional. Note that it still
