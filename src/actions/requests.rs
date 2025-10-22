@@ -678,6 +678,7 @@ impl RequestAction for GotoDefinition {
         let mut limitations = HashSet::new();
         match fp_to_symbol_refs(&fp, &ctx, &mut limitations) {
             Ok(symbols) => {
+                info!("Symbols referred to by fp were {:?}", symbols);
                 let unique_locations: HashSet<ZeroSpan> =
                     symbols.into_iter()
                     .flat_map(|d|d.lock().unwrap().definitions.clone()).collect();
