@@ -44,6 +44,7 @@ pub mod utility;
 pub mod vfs;
 #[cfg(test)]
 pub mod test;
+pub mod logging;
 
 type Span = span::Span<span::ZeroIndexed>;
 
