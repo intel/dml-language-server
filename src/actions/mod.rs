@@ -720,6 +720,11 @@ impl <O: Output> InitActionContext<O> {
                 self.report_errors(out);
             },
         }
+
+        // Re-update log level
+        if let Some(level) = self.config.lock().unwrap().server_debug_level {
+            crate::logging::set_global_log_level(level);
+        }
     }
 
     // Call before adding new analysis
