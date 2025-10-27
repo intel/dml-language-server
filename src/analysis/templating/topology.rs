@@ -580,20 +580,47 @@ pub fn rank_templates_aux<'t>(mut templates: HashMap<&'t str,
                                 severity: Some(DiagnosticSeverity::ERROR),
                             });
                     },
-                    inf => {
+                    InferiorVariant::Is(inf) => {
                         if !BUILTIN_TEMPLATES.iter().any(
                             |name|name==missing_template_name) {
-                            report.push(
-                                DMLError {
-                                    span: *inf.span(),
-                                    description: format!(
-                                        "No template; '{}'",
-                                        missing_template_name),
-                                related: vec![],
-                                severity: Some(DiagnosticSeverity::ERROR),
-                                });
+                            // The 'is' may contain more names than we
+                            // are looking for, find the particular name
+                            // that matches and use that span
+                            // Because the same name could be used multiple
+                            // times, but this only causes inferior binding
+                            // report one error per such span
+
+                            let spans: Vec<_> = inf.obj.names.iter()
+                                .filter(|dmlname|
+                                        &dmlname.val == missing_template_name)
+                                .map(|dmlname|dmlname.span())
+                                .collect();
+                            if spans.is_empty() {
+                                internal_error!("Unexpectedly no name \
+                                                 matching missing template \
+                                                 in {:?} (wanted {})",
+                                                inf, missing_template_name);
+                                continue;
+                            }
+                            for span in spans {
+                                report.push(
+                                    DMLError {
+                                        span: *span,
+                                        description: format!(
+                                            "No template; '{}'",
+                                            missing_template_name),
+                                        related: vec![],
+                                        severity: Some(
+                                            DiagnosticSeverity::ERROR),
+                                    });
+                            }
                         }
-                    }
+                    },
+                    inf => {
+                        internal_error!(
+                            "Unexpected template dependency through {:?}",
+                            inf);
+                    },
                 }
                 debug!("Added dummy missing template {}",
                        missing_template_name);
