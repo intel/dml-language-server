@@ -26,29 +26,22 @@ impl From<CanonPath> for PathBuf {
     }
 }
 
-impl From<PathBuf> for CanonPath {
-    fn from(from: PathBuf) -> CanonPath {
-        CanonPath::from_path_buf(from).unwrap()
-    }
-}
-
-impl From<&Path> for CanonPath {
-    fn from(from: &Path) -> CanonPath {
-        CanonPath::from_path_buf(from.to_path_buf()).unwrap()
-    }
-}
-
 impl CanonPath {
     pub fn from_path_buf(from: PathBuf) -> Option<CanonPath> {
-        trace!("Trying to canonicalize {:?}", from);
-        match fs::canonicalize(from) {
-            Ok(path) => Some(CanonPath(path)),
+        match Self::try_from_path_buf(from) {
+            Ok(path) => Some(path),
             Err(err) => {
                 debug!("Failed to canonicalize a path; {:?}", err);
                 None
             },
         }
     }
+
+    pub fn try_from_path_buf(from: PathBuf) ->
+        Result<CanonPath, std::io::Error> {
+            trace!("Trying to canonicalize {:?}", from);
+            fs::canonicalize(from).map(CanonPath)
+        }
 
     pub fn as_str(&self) -> &str {
         self.0.to_str().unwrap()

@@ -573,17 +573,17 @@ impl LinterJob {
            analysis: &mut AnalysisStorage,
            cfg: LintCfg,
            vfs: &Vfs,
-           device: CanonPath)
+           file: CanonPath)
            -> Result<LinterJob, String> {
 
         // TODO: Use some sort of timestamp from VFS instead of systemtime
         let timestamp = SystemTime::now();
         let mut hasher = DefaultHasher::new();
-        Hash::hash(&device, &mut hasher);
+        Hash::hash(&file, &mut hasher);
         let hash = hasher.finish();
-        if let Ok(isolated_analysis) = analysis.get_isolated_analysis(&device) {
+        if let Ok(isolated_analysis) = analysis.get_isolated_analysis(&file) {
             Ok(LinterJob {
-                file: device.to_owned(),
+                file: file.to_owned(),
                 timestamp,
                 report: analysis.report.clone(),
                 notify: analysis.notify.clone(),
@@ -591,7 +591,7 @@ impl LinterJob {
                 ast: isolated_analysis.to_owned(),
                 cfg,
                 token,
-                content: vfs.snapshot_file(&device)?,
+                content: vfs.snapshot_file(&file)?,
             })
         } else {
             Err("Failed to get isolated analysis to trigger LinterJob".to_string())

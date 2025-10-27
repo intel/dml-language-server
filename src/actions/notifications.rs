@@ -3,12 +3,13 @@
 //! One-way notifications that the DLS receives from the client.
 
 use crate::actions::{FileWatch, InitActionContext, VersionOrdering,
-                     ContextDefinition};
+                     ContextDefinition, rpc_error_code};
 use crate::file_management::CanonPath;
 use crate::span::{Span};
 use crate::vfs::{Change, VfsSpan};
 use crate::lsp_data::*;
 
+use jsonrpc::error::StandardError;
 use log::{debug, error, warn};
 use serde::{Serialize, Deserialize};
 
@@ -118,6 +119,7 @@ impl BlockingNotificationAction for DidChangeTextDocument {
         ctx.quiescent.store(false, Ordering::SeqCst);
         let file_path = parse_file_path!(
             &params.text_document.uri, "on_change")?;
+        let canon_path = make_canon_path!(file_path.to_path_buf())?;
         let version_num = params.text_document.version;
 
         match ctx.check_change_version(&file_path, version_num) {
@@ -152,8 +154,7 @@ impl BlockingNotificationAction for DidChangeTextDocument {
             })
             .collect();
         ctx.vfs.on_changes(&changes).expect("error committing to VFS");
-        ctx.analysis.lock().unwrap()
-            .mark_file_dirty(&file_path.to_path_buf().into());
+        ctx.analysis.lock().unwrap().mark_file_dirty(&canon_path);
 
         if !ctx.config.lock().unwrap().analyse_on_save {
             ctx.isolated_analyze(&file_path, None, &out);
