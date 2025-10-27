@@ -10,6 +10,7 @@
   of memory on larger devices.
 - Optimizations to reference matching, which should greatly speed up semantic
   analysis speed of larger devices.
+- Corrected range of error reporting of unknown templates
 
 ## 0.9.13
 - Corrected the name of "explicit\_param\_decls" provisional. Note that it still
