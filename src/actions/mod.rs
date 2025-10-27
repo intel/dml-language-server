@@ -41,11 +41,37 @@ use crate::span;
 use crate::span::{ZeroIndexed, FilePosition};
 use crate::vfs::Vfs;
 
+use jsonrpc::error::{standard_error, StandardError};
+use serde_json::Value;
+
 // Define macros before submodules
 macro_rules! parse_file_path {
     ($uri: expr, $log_name: expr) => {
         ignore_non_file_uri!(parse_file_path($uri), $uri, $log_name)
     };
+}
+
+pub fn rpc_error_code(code: StandardError) -> Value {
+    Value::from(standard_error(code, None).code)
+}
+
+macro_rules! wait_for_device_path {
+    ($ctx: expr, $path: expr) => {
+        $ctx.wait_for_state(
+            AnalysisProgressKind::DeviceDependencies,
+            AnalysisWaitKind::Work,
+            AnalysisCoverageSpec::Paths(
+                vec![$path])).expect("Failed to wait on device state")
+    }
+}
+
+macro_rules! make_canon_path {
+    ($path: expr) => {
+        CanonPath::try_from_path_buf($path)
+            .map_err(|e|ResponseError::Message(
+                rpc_error_code(StandardError::InternalError),
+                format!("Could not canonicalize file path: '{}'", e)))
+    }
 }
 
 // TODO: Support non-`file` URI schemes in VFS. We're currently ignoring them because
@@ -481,6 +507,8 @@ impl <O: Output> InitActionContext<O> {
             .collect();
         let direct_opens = self.direct_opens.lock().unwrap();
         for file in files {
+            let Some(canon_path) = CanonPath::from_path_buf(file.clone())
+            else { continue; };
             let mut sorted_errors: Vec<SourcedDMLError> =
                 isolated.get(file).into_iter().flatten().cloned()
                 .map(|e|e.with_source("dml"))
@@ -488,10 +516,8 @@ impl <O: Output> InitActionContext<O> {
                        .map(|e|e.with_source("dml")))
                 .chain(
                     lint.get(file).into_iter().flatten()
-                        .filter(
-                            |_|!config.lint_direct_only
-                                || direct_opens.contains(
-                                    &file.clone().into())
+                        .filter(|_|!config.lint_direct_only
+                                || direct_opens.contains(&canon_path)
                         ).cloned()
                         .map(|e|e.with_source("dml-lint")))
                 .collect();
@@ -572,7 +598,8 @@ impl <O: Output> InitActionContext<O> {
     }
 
     pub fn trigger_device_analysis(&self, file: &Path, out: &O) {
-        let canon_path: CanonPath = file.to_path_buf().into();
+        let Some(canon_path) =
+            CanonPath::from_path_buf(file.to_path_buf()) else { return; };
         debug!("triggering devices dependant on {}", canon_path.as_str());
         self.update_analysis();
         let maybe_triggers = self.analysis.lock().unwrap().device_triggers
@@ -974,12 +1001,12 @@ impl <O: Output> InitActionContext<O> {
             return;
         }
         let config = self.config.lock().unwrap().to_owned();
-        if config.suppress_imports {
-            let canon_path: CanonPath = file.to_path_buf().into();
-            if !self.direct_opens.lock().unwrap().contains(&canon_path) {
+        let Some(canon_path) = CanonPath::from_path_buf(file.to_path_buf())
+        else { return; };
+        if config.suppress_imports
+            && !self.direct_opens.lock().unwrap().contains(&canon_path) {
                 return;
             }
-        }
         let lint_config = self.lint_config.lock().unwrap().to_owned();
         debug!("Triggering linting analysis of {:?}", file);
         self.lint_analyze(file,
