@@ -4,6 +4,9 @@
 -->
 # Change Log
 
+# 0.9.15
+
+
 ## 0.9.14
 - Slight optimization to the memory usage of device-level analysis which
   should improve runtimes and reduce the chance of the DLS running out
