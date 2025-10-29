@@ -282,7 +282,7 @@ pub struct InitActionContext<O: Output> {
     pub config: Arc<Mutex<Config>>,
     pub lint_config: Arc<Mutex<LintCfg>>,
     pub sent_warnings: Arc<Mutex<HashSet<(u64, PathBuf)>>>,
-    jobs: Arc<Mutex<Jobs>>,
+    jobs: Arc<Mutex<Jobs<String>>>,
     pub client_capabilities: Arc<lsp_data::ClientCapabilities>,
     pub has_notified_missing_builtins: bool,
     /// Whether the server is performing cleanup (after having received
@@ -368,11 +368,12 @@ impl <O: Output> InitActionContext<O> {
         pid: u32,
         _client_supports_cmd_run: bool,
     ) -> InitActionContext<O> {
-        
+        let shut_down = Arc::new(AtomicBool::new(false));
         InitActionContext {
             vfs,
             analysis,
-            analysis_queue: Arc::new(AnalysisQueue::init()),
+            analysis_queue: Arc::new(AnalysisQueue::init(
+                Arc::clone(&shut_down))),
             current_notifier: Arc::default(),
             config,
             lint_config: Arc::new(Mutex::new(LintCfg::default())),
@@ -385,7 +386,7 @@ impl <O: Output> InitActionContext<O> {
             //client_supports_cmd_run,
             active_waits: Arc::default(),
             outstanding_requests: Arc::default(),
-            shut_down: Arc::new(AtomicBool::new(false)),
+            shut_down,
             pid,
             workspace_roots: Arc::default(),
             compilation_info: Arc::default(),
@@ -807,11 +808,25 @@ impl <O: Output> InitActionContext<O> {
         }
         self.maybe_start_progress(out);
         let (job, token) = ConcurrentJob::new();
-        self.add_job(job);
-
-        self.analysis_queue.enqueue_isolated_job(
+        let job_ident = format!("{}-isolated", path.as_str());
+        let enqueued = self.analysis_queue.enqueue_isolated_job(
             &mut self.analysis.lock().unwrap(),
-            &self.vfs, context, path, client_path.to_path_buf(), token);
+            &self.vfs, context, path.clone(),
+            client_path.to_path_buf(), token);
+        if  enqueued {
+            // Kill ongoing device analysises that depend on this path
+            if let Some(devices)
+                = self.analysis.lock().unwrap().device_triggers.get(&path) {
+                    for device in devices {
+                        self.kill_job(Self::device_job_id(device.as_str()));
+                    }
+                }
+            self.add_job(job_ident, job);
+        }
+    }
+
+    fn device_job_id(path: &str) -> String {
+        format!("{}-device", path)
     }
 
     fn device_analyze(&self, device: &CanonPath, out: &O) {
@@ -819,15 +834,17 @@ impl <O: Output> InitActionContext<O> {
         self.maybe_start_progress(out);
         self.maybe_add_device_context(device);
         let (job, token) = ConcurrentJob::new();
-        self.add_job(job);
+        let job_ident = Self::device_job_id(device.as_str());
         let locked_analysis = &mut self.analysis.lock().unwrap();
         let dependencies = locked_analysis.all_dependencies(device,
                                                             Some(device));
-        self.analysis_queue.enqueue_device_job(
+        if self.analysis_queue.enqueue_device_job(
             locked_analysis,
             device,
             dependencies,
-            token);
+            token) {
+            self.add_job(job_ident, job);
+        }
     }
 
     // (DeviceContextPath, IsActive, IsReady)
@@ -1031,20 +1048,37 @@ impl <O: Output> InitActionContext<O> {
             return;
         };
         let (job, token) = ConcurrentJob::new();
-        self.add_job(job);
+        // This not being the same ident as anlysis let's us lint something
+        // in parallel with it being device analyzed, there is still some
+        // redundancy with parallel lints and isolateds, but its not as
+        // severe as a lint job cancelling a device one
+        let job_ident = format!("{}-lint", path.as_str());
 
-        self.analysis_queue.enqueue_linter_job(
+        if self.analysis_queue.enqueue_linter_job(
             &mut self.analysis.lock().unwrap(),
             cfg,
-            &self.vfs, path, token);
+            &self.vfs, path, token) {
+            self.add_job(job_ident, job);
+        }
     }
 
-    pub fn add_job(&self, job: ConcurrentJob) {
-        self.jobs.lock().unwrap().add(job);
+    pub fn add_job(&self, ident: String, job: ConcurrentJob) {
+        self.jobs.lock().unwrap().add(ident, job);
+    }
+
+    pub fn kill_job(&self, ident: String) {
+        self.jobs.lock().unwrap().kill_ident(&ident);
     }
 
     pub fn wait_for_concurrent_jobs(&self) {
         self.jobs.lock().unwrap().wait_for_all();
+    }
+
+    // NOTE: since jobs, even if they exit by panicking, need to hit an
+    // exit point to do so, wait_for_concurrent_jobs should probably be
+    // called after this
+    pub fn stop_all_jobs(&self) {
+        self.jobs.lock().unwrap().kill_all();
     }
 
     /// See docs on VersionOrdering

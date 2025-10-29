@@ -32,7 +32,8 @@ use crate::lint::rules::indentation::{MAX_LENGTH_DEFAULT,
                                       INDENTATION_LEVEL_DEFAULT,
                                       setup_indentation_size
                                     };
-use crate::server::{maybe_notify_unknown_lint_fields, Output};                                    
+use crate::server::{maybe_notify_unknown_lint_fields, Output};
+use crate::concurrency::AliveStatus;
 
 pub fn parse_lint_cfg(path: PathBuf) -> Result<(LintCfg, Vec<String>), String> {
     debug!("Reading Lint configuration from {:?}", path);
@@ -182,15 +183,18 @@ impl LinterAnalysis {
     pub fn new(path: &Path,
                file: TextFile,
                cfg: LintCfg,
-               original_analysis: IsolatedAnalysis)
+               original_analysis: IsolatedAnalysis,
+               status: AliveStatus)
                -> Result<LinterAnalysis, Error> {
         debug!("local linting for: {:?}", path);
+        status.assert_alive();
         let canonpath = CanonPath::try_from_path_buf(path.to_path_buf())
             .map_err(|e|Error::Io(Some(path.to_path_buf()),
                                   Some(e.to_string())))?;
         let rules =  instantiate_rules(&cfg);
         let local_lint_errors = begin_style_check(
             original_analysis.ast, &file.text, &rules)?;
+        status.assert_alive();
         let mut lint_errors = vec![];
         for entry in local_lint_errors {
             let ident = entry.rule_ident;
