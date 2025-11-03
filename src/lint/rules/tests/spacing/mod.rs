@@ -1,3 +1,5 @@
+//  © 2024 Intel Corporation
+//  SPDX-License-Identifier: Apache-2.0 and MIT
 mod nsp_funpar;
 mod nsp_inparen;
 mod nsp_ptrdecl;
