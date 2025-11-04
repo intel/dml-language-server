@@ -8,6 +8,7 @@ use std::fs;
 
 use std::path::{Path, PathBuf};
 use std::ops::Deref;
+use std::cell::RefCell;
 
 // A path which we know to be canonical in the filesystem
 #[derive(Debug, Clone, Hash, Eq, PartialEq, Ord, PartialOrd)]
@@ -52,12 +53,14 @@ impl CanonPath {
 }
 
 /// This is how we resolve relative paths to in-workspace full paths
-#[derive(Eq, PartialEq, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct PathResolver {
     // Root is provided by context, who will pass this struct to threads for
     // import resolution
     roots: Vec<PathBuf>,
     include_paths: HashMap<CanonPath, Vec<PathBuf>>,
+    #[allow(clippy::type_complexity)]
+    cache: RefCell<HashMap<(PathBuf, Option<CanonPath>), Option<CanonPath>>>,
 }
 
 impl From<Option<PathBuf>> for PathResolver {
@@ -69,6 +72,7 @@ impl From<Option<PathBuf>> for PathResolver {
         PathResolver {
             roots,
             include_paths: HashMap::default(),
+            cache: RefCell::default(),
         }
     }
 }
@@ -117,6 +121,16 @@ impl PathResolver {
                                       path: &Path,
                                       context: Option<&CanonPath>)
                                       -> Option<CanonPath> {
+        self.cache.borrow_mut().entry((path.to_path_buf(), context.cloned()))
+            .or_insert_with(
+                ||self.resolve_with_maybe_context_impl(path, context))
+            .clone()
+    }
+
+    fn resolve_with_maybe_context_impl(&self,
+                                       path: &Path,
+                                       context: Option<&CanonPath>)
+                                       -> Option<CanonPath> {
         // Given some relative info, find a canonical file path
         // NOTE: Right now the relative info is a pathbuf, but this might
         // change later
