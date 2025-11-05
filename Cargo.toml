@@ -32,6 +32,7 @@ crossbeam = "0.8"
 crossbeam-deque = "0.8.1"
 crossbeam-utils = "0.8.7"
 env_logger = "0.11"
+git2 = "0.20.2"
 itertools = "0.14"
 jsonrpc = "0.18"
 lsp-types = { version = "0.97" }

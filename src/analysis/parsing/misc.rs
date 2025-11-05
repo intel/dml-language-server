@@ -1,7 +1,8 @@
-use crate::lint::rules::spacing::{NspPtrDeclArgs, SpPtrDeclArgs};
-use crate::lint::{rules::CurrentRules, AuxParams, DMLStyleError};
 //  © 2024 Intel Corporation
 //  SPDX-License-Identifier: Apache-2.0 and MIT
+
+use crate::lint::rules::spacing::{NspPtrDeclArgs, SpPtrDeclArgs};
+use crate::lint::{rules::CurrentRules, AuxParams, DMLStyleError};
 use crate::span::Range;
 use crate::analysis::parsing::lexer::TokenKind;
 use crate::analysis::parsing::parser::{Token, doesnt_understand_tokens,

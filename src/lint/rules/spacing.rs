@@ -1,3 +1,5 @@
+//  © 2024 Intel Corporation
+//  SPDX-License-Identifier: Apache-2.0 and MIT
 use itertools::izip;
 use std::convert::TryInto;
 use serde::{Deserialize, Serialize};

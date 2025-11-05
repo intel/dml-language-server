@@ -1,3 +1,5 @@
+//  © 2024 Intel Corporation
+//  SPDX-License-Identifier: Apache-2.0 and MIT
 use std::convert::TryInto;
 
 use crate::analysis::parsing::{expression::{CastContent, FunctionCallContent, ParenExpressionContent},
