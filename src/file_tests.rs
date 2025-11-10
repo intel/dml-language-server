@@ -19,17 +19,20 @@
 
 #[cfg(test)]
 mod test {
-    fn get_indexed_files_with_extension(extension: &'static str) ->  Vec<String> {
-        let repo = git2::Repository::open(".").expect("Could not open git repository");
-        let index = repo.index().expect("Could not get git index");
-        index.iter().filter_map(move |entry| {
-            let path = std::str::from_utf8(&entry.path).expect("Invalid UTF-8 in file path");
-            if path.ends_with(extension) {
-                Some(path.to_string())
-            } else {
-                None
-            }
-        }).collect()
+    fn get_files_with_extension(extension: &'static str) ->  Vec<String> {
+        let files = walkdir::WalkDir::new(".");
+        files.into_iter()
+            .filter_map(|e|e.ok())
+            .filter(|e|!e.path().starts_with("./target"))
+            .filter_map(move |entry| {
+                let path = entry.path().to_str()
+                    .expect("Invalid Unicode in file path");
+                if path.ends_with(extension) {
+                    Some(path.to_string())
+                } else {
+                    None
+                }
+            }).collect()
     }
 
     fn compare_linewise(canon: &str, content: &str) -> bool {
@@ -44,7 +47,7 @@ mod test {
     #[test]
     fn check_copyright_headers_rs() {
         let mut missmatching_files = vec![];
-        for path in get_indexed_files_with_extension(".rs") {
+        for path in get_files_with_extension(".rs") {
             let content = std::fs::read_to_string(&path)
                 .unwrap_or_else(|e|panic!("Could not read file {}, {}", path, e));
             if !compare_linewise(
@@ -63,7 +66,7 @@ mod test {
     #[test]
     fn check_copyright_headers_md() {
         let mut missmatching_files = vec![];
-        for path in get_indexed_files_with_extension(".md") {
+        for path in get_files_with_extension(".md") {
             let content = std::fs::read_to_string(&path)
                 .unwrap_or_else(|e| panic!("Could not read file {}, {}", path, e));
             if !compare_linewise(
