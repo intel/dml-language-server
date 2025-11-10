@@ -39,6 +39,7 @@ lsp-types = { version = "0.97" }
 lazy_static = "1.4"
 log = {version = "0.4", features = ["serde"]}
 logos = "0.15"
+openssl-sys = "0.9.109"
 rayon = "1"
 regex = "1.5.5"
 serde = "1.0"
