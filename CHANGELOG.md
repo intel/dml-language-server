@@ -5,7 +5,7 @@
 # Change Log
 
 # 0.9.15
-- Added support for line length and breaking rules break_func_call_open_paren, break_method_output, break_conditional_expression and break_before_binary_op.
+- Added support for line length and breaking rules regarding line-breaks after opening parentheses, method output arguments, conditional expressions and binary operands.
 - Added support for indendation rule indent_continuation_line.
 
 ## 0.9.14

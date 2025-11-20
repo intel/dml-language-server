@@ -137,7 +137,7 @@ impl BreakFuncCallOpenParenArgs {
             || ! IndentParenExprArgs::is_broken_after_lparen(
                 node.lparen.range(),
                 filtered_member_ranges.first()?.to_owned()) {
-            return None
+            return None;
         }
         Some(BreakFuncCallOpenParenArgs {
             members_ranges: filtered_member_ranges,

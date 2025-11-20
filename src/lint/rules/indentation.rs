@@ -795,8 +795,8 @@ impl IndentContinuationLineArgs {
                 let mut tokens = node.tokens();
                 Self::filter_out_last_semi_ranges(&mut tokens);
                 return Some(IndentContinuationLineArgs {
-                token_list: IndentParenExprArgs::filter_out_parenthesized_tokens(tokens),
-                expected_depth: depth,
+                    token_list: IndentParenExprArgs::filter_out_parenthesized_tokens(tokens),
+                    expected_depth: depth,
             })},
             _ => return None,
         }
