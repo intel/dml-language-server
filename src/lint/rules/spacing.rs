@@ -859,7 +859,8 @@ impl NspPtrDeclRule {
         if !self.enabled { return; }
         if let Some(ranges) = ranges {
             if let Some(op_range) = ranges.rightmost_multiply {
-                if has_space_between(&op_range, &ranges.identifier_range) {
+                if has_space_between(&op_range, &ranges.identifier_range)
+                   && ranges.identifier_range != ZeroRange::invalid() {
                     acc.push(self.create_err(ranges.identifier_range));
                 }
             }
