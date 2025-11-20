@@ -1,6 +1,27 @@
 use std::convert::TryInto;
 
-use crate::analysis::parsing::{expression::{CastContent, FunctionCallContent, ParenExpressionContent}, lexer::TokenKind, parser::Token, statement::{self, CompoundContent, DoContent, ForContent, ForeachContent, IfContent, StatementContent, SwitchCase, SwitchContent, WhileContent}, structure::{DMLObjectContent, MethodContent, ObjectStatementsContent}, tree::TreeElementTokenIterator, types::{BitfieldsContent, LayoutContent, StructTypeContent}};
+use crate::analysis::parsing::{expression::{CastContent,
+        FunctionCallContent,
+        ParenExpressionContent},
+    lexer::TokenKind,
+    parser::Token,
+    statement::{self,
+        CompoundContent,
+        DoContent,
+        ForContent,
+        ForeachContent,
+        IfContent,
+        StatementContent,
+        SwitchCase,
+        SwitchContent,
+        WhileContent},
+    structure::{DMLObjectContent,
+        MethodContent,
+        ObjectStatementsContent},
+    tree::TreeElementTokenIterator,
+    types::{BitfieldsContent,
+        LayoutContent,
+        StructTypeContent}};
 use crate::span::{Range, ZeroIndexed};
 use crate::analysis::parsing::tree::{ZeroRange, Content, TreeElement};
 use serde::{Deserialize, Serialize};
