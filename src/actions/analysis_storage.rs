@@ -475,12 +475,13 @@ impl AnalysisStorage {
         }
     }
 
-    pub fn discard_dependant_device_analysis(&mut self, path: &Path) {
+    pub fn discard_dependant_device_analysis(&mut self, path: &CanonPath) {
         // There is probably a more rustic way to do this
         let device_trigger_holder = self.device_triggers.clone();
         self.device_analysis.retain(
             |k, _| !device_trigger_holder.get(k)
-                .unwrap().contains(&path.to_path_buf().into()));
+                .unwrap()
+                .contains(path));
     }
 
     pub fn update_analysis(&mut self, resolver: &PathResolver) {
@@ -655,7 +656,7 @@ impl AnalysisStorage {
         trace!("Marked {} as dirty", path.as_str());
         self.isolated_analysis.remove(path);
         self.lint_analysis.remove(path);
-        self.discard_dependant_device_analysis(path.as_path());
+        self.discard_dependant_device_analysis(path);
         self.invalidators.insert(path.clone(), SystemTime::now());
         self.last_use.remove(path);
     }

@@ -4,9 +4,26 @@
 -->
 # Change Log
 
-## 0.9.14
+# 0.9.15
 - Added support for line length and breaking rules break_func_call_open_paren, break_method_output, break_conditional_expression and break_before_binary_op.
 - Added support for indendation rule indent_continuation_line.
+
+## 0.9.14
+- Slight optimization to the memory usage of device-level analysis which
+  should improve runtimes and reduce the chance of the DLS running out
+  of memory on larger devices.
+- Optimizations to reference matching, which should greatly speed up semantic
+  analysis speed of larger devices.
+- Corrected range of error reporting of unknown templates
+- Fixed instances of the language server crashing when tracked files were
+  removed while it was running.
+- The DLS will now interrupt ongoing work when it would be redundant
+  (in some cases), resulting in performance improvements.
+- The DLS will now try to stop ongoing work when asked to shut down,
+  which should make it exit faster.
+- Adjusted error message in DFA when unable to open DLS binary
+- The DLS will now update the internal log-level when after a configuration
+  update
 
 ## 0.9.13
 - Corrected the name of "explicit\_param\_decls" provisional. Note that it still
