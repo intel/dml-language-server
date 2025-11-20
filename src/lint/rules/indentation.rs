@@ -794,11 +794,11 @@ impl IndentContinuationLineArgs {
             DMLObjectContent::Typedef(_) => {
                 let mut tokens = node.tokens();
                 Self::filter_out_last_semi_ranges(&mut tokens);
-                return Some(IndentContinuationLineArgs {
+                Some(IndentContinuationLineArgs {
                     token_list: IndentParenExprArgs::filter_out_parenthesized_tokens(tokens),
                     expected_depth: depth,
             })},
-            _ => return None,
+            _ => None,
         }
     }
 }
@@ -817,7 +817,7 @@ impl IndentContinuationLineRule {
         }
     }
 
-    pub fn check<'a> (&self, acc: &mut Vec<DMLStyleError>,
+    pub fn check(&self, acc: &mut Vec<DMLStyleError>,
         args: Option<IndentContinuationLineArgs>) {
         if !self.enabled { return; }
         let Some(args) = args else { return; };

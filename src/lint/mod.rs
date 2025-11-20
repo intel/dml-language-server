@@ -314,8 +314,7 @@ fn obtain_lint_annotations(file: &str) -> (Vec<DMLStyleError>,
         last_line = row;
         if let Some(capture) = LINT_ANNOTATION.captures(line) {
             let has_pre = capture.get(1)
-                .map_or(false,
-                        |m|!m.is_empty() &&
+                .is_some_and(|m|!m.is_empty() &&
                         JUST_WHITESPACE.captures(m.as_str()).is_none());
             let op_capture = capture.get(2).unwrap();
             let operation = match op_capture.as_str() {
@@ -421,7 +420,7 @@ fn remove_disabled_lints(errors: &mut Vec<DMLStyleError>,
             !annotations.whole_file.contains(
                 &LintAnnotation::Allow(error.rule_type)) &&
                 !annotations.line_specific.get(&error.error.range.row_start.0)
-                .map_or(false, |annots|annots.contains(
+                .is_some_and(|annots|annots.contains(
                     &LintAnnotation::Allow(error.rule_type)))
         }
     );
