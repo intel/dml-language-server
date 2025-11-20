@@ -1,3 +1,5 @@
+//  © 2024 Intel Corporation
+//  SPDX-License-Identifier: Apache-2.0 and MIT
 use serde::{Deserialize, Serialize};
 use crate::analysis::parsing::lexer::TokenKind;
 use crate::analysis::parsing::parser::Token;

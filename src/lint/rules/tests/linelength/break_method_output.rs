@@ -1,3 +1,5 @@
+//  © 2024 Intel Corporation
+//  SPDX-License-Identifier: Apache-2.0 and MIT
 use crate::lint::rules::tests::common::{set_up, assert_snippet};
 use crate::lint::rules::RuleType;
 
