@@ -16,8 +16,15 @@ use crate::analysis::parsing::parser::{doesnt_understand_tokens,
                                        FileParser, Parse, ParseContext,
                                        FileInfo};
 use crate::analysis::LocalDMLError;
-use crate::lint::rules::spacing::{NspFunparArgs, NspInparenArgs, SpBracesArgs, SpPunctArgs};
-use crate::lint::rules::indentation::{IndentCodeBlockArgs, IndentClosingBraceArgs, IndentParenExprArgs};
+use crate::lint::rules::linelength::{BreakFuncCallOpenParenArgs, BreakMethodOutputArgs};
+use crate::lint::rules::spacing::{SpBracesArgs,
+                                  NspInparenArgs,
+                                  NspFunparArgs,
+                                  SpPunctArgs};
+use crate::lint::rules::indentation::{IndentCodeBlockArgs,
+    IndentClosingBraceArgs,
+    IndentParenExprArgs,
+    IndentContinuationLineArgs};
 use crate::lint::{rules::CurrentRules, AuxParams, DMLStyleError};
 use crate::analysis::reference::{Reference, ReferenceKind};
 use crate::analysis::FileSpec;
@@ -232,11 +239,13 @@ impl TreeElement for MethodContent {
         }
         errors
     }
-    fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, _aux: AuxParams) {
+    fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, aux: AuxParams) {
         rules.nsp_funpar.check(NspFunparArgs::from_method(self), acc);
         rules.nsp_inparen.check(NspInparenArgs::from_method(self), acc);
         rules.sp_punct.check(SpPunctArgs::from_method(self), acc);
         rules.indent_paren_expr.check(IndentParenExprArgs::from_method(self), acc);
+        rules.break_func_call_open_paren.check(BreakFuncCallOpenParenArgs::from_method(self, aux.depth), acc);
+        rules.break_method_output.check(BreakMethodOutputArgs::from_method(self), acc);
     }
 }
 
@@ -1927,6 +1936,9 @@ impl TreeElement for DMLObjectContent {
             Self::Subdevice(content) => create_subs![content],
             Self::Template(content) => create_subs![content],
         }
+    }
+    fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, aux: AuxParams) {
+        rules.indent_continuation_line.check(acc, IndentContinuationLineArgs::from_dml_object_content(self, aux.depth));
     }
 }
 
