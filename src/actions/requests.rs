@@ -15,7 +15,9 @@ use crate::actions::{AnalysisProgressKind, AnalysisWaitKind,
                      ContextDefinition, InitActionContext,
                      rpc_error_code};
 use crate::actions::notifications::ContextDefinitionKindParam;
-use crate::analysis::{ZeroSpan, ZeroFilePosition, SymbolRef};
+use crate::analysis::{Named, DeclarationSpan, LocationSpan, DLSLimitation,
+                      SymbolRef, ZeroFilePosition, ZeroSpan,
+                      isolated_template_limitation};
 use crate::analysis::reference::ReferenceKind;
 use crate::analysis::symbols::SimpleSymbol;
 use crate::config::Config;
@@ -43,8 +45,7 @@ pub use crate::lsp_data::request::{
 };
 
 pub use crate::lsp_data::{self as lsp_data, *};
-use crate::analysis::{Named, DeclarationSpan, LocationSpan,
-                      DLSLimitation, ISOLATED_TEMPLATE_LIMITATION};
+
 use crate::analysis::structure::objects::CompObjectKind;
 
 use crate::analysis::scope::{SymbolContext, SubSymbol, ContextKey, Scope};
@@ -127,11 +128,13 @@ where
 }
 
 
-pub const TYPE_SEMANTIC_LIMITATION: DLSLimitation = DLSLimitation {
-    issue_num: 65,
-    description: "The DLS does not currently support semantic analysis of \
-                  types, including reference finding",
-};
+pub fn type_semantic_limitation() -> DLSLimitation {
+    DLSLimitation {
+        issue_num: 65,
+        description: "The DLS does not currently support semantic analysis of \
+                      types, including reference finding".to_string(),
+    }
+}
 
 // TODO: This function is getting bloated, refactor into several smaller ones
 fn fp_to_symbol_refs<O: Output>
@@ -185,7 +188,7 @@ fn fp_to_symbol_refs<O: Output>
             // Should be guaranteed by the context reference lookup above
             // (isolated analysis does exist)
             if refr.reference_kind() == ReferenceKind::Type {
-                relevant_limitations.insert(TYPE_SEMANTIC_LIMITATION);
+                relevant_limitations.insert(type_semantic_limitation());
             }
 
             let first_context = analysis.first_context_at_pos(fp).unwrap();
@@ -210,9 +213,11 @@ fn fp_to_symbol_refs<O: Output>
                 definitions.append(
                     &mut device.symbols_of_ref(*refr.loc_span()));
             }
-            if let Some(ContextKey::Template(_)) = first_context {
+            if let Some(ContextKey::Template(templ)) = first_context {
                 if !any_template_used {
-                    relevant_limitations.insert(ISOLATED_TEMPLATE_LIMITATION);
+                    relevant_limitations.insert(
+                        isolated_template_limitation(templ.name.as_str())
+                    );
                 }
             }
         },
