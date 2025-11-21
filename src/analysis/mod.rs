@@ -82,17 +82,16 @@ pub const IMPLICIT_IMPORTS: [&str; 2] = ["dml-builtins.dml",
 // The issue number is used as the _unique identifier_ for this
 // limitation, and should be the number of an open GITHUB
 // issue.
-#[allow(dead_code)]
-const EXAMPLE: DLSLimitation =
-    DLSLimitation {
-        issue_num: 42,
-        description: "Example of a DLS limitation",
-    };
+// Example:
+// DLSLimitation {
+//         issue_num: 42,
+//         description: "Example of a DLS limitation".to_string(),
+//     };
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash,)]
 pub struct DLSLimitation {
     pub issue_num: u64,
-    pub description: &'static str,
+    pub description: String,
 }
 
 impl fmt::Display for DLSLimitation {
@@ -555,11 +554,17 @@ fn gather_scopes<'c>(next_scopes: Vec<&'c dyn Scope>,
     }
 }
 
-pub const ISOLATED_TEMPLATE_LIMITATION: DLSLimitation = DLSLimitation {
-    issue_num: 31,
-    description: "References from, and definitions inside, templates cannot \
-                  be evaluated without an instantiating object",
-};
+pub fn isolated_template_limitation(template_name: &str) -> DLSLimitation {
+    DLSLimitation {
+        issue_num: 31,
+        description:
+        format!("References from, and definitions inside, a template \
+                 cannot be evaluated \
+                 without an instantiating object. Open a device file \
+                 that uses the template '{}' to obtain such information.",
+                 template_name),
+    }
+}
 
 impl DeviceAnalysis {
     pub fn get_device_obj(&self) -> &DMLObject {
@@ -731,7 +736,9 @@ impl DeviceAnalysis {
                                 .get(loc))
                     {
                         if templ_impls.is_empty() {
-                            limitations.insert(ISOLATED_TEMPLATE_LIMITATION);
+                            limitations.insert(
+                                isolated_template_limitation(&templ.name)
+                            );
                         }
                         return self.contexts_to_objs(
                             templ_impls
