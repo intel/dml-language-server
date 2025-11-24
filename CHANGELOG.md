@@ -10,6 +10,8 @@
 - Optimizations in how the server resolves file paths, should reduce
   time-to-ready for the server when first starting by about 50%, depending
   on the complexity of the include tree.
+- Improved feedback to user when attempting to obtain symbol information on
+  a symbol inside an unused template.
 
 ## 0.9.14
 - Slight optimization to the memory usage of device-level analysis which
