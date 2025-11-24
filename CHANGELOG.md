@@ -4,7 +4,9 @@
 -->
 # Change Log
 
-# 0.9.15
+## 0.9.16
+
+## 0.9.15
 - Added support for line length and breaking rules regarding line-breaks after opening parentheses, method output arguments, conditional expressions and binary operands.
 - Added support for indendation rule indent_continuation_line.
 - Optimizations in how the server resolves file paths, should reduce
