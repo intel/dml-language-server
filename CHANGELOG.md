@@ -4,6 +4,9 @@
 -->
 # Change Log
 
+## 0.9.17
+
+
 ## 0.9.16
 - DLS will no longer incorrectly warn about the compile_commands not being under
   a workspace root when it in fact is
