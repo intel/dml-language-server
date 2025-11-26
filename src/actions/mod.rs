@@ -462,7 +462,7 @@ impl <O: Output> InitActionContext<O> {
                     compile_info.clone()) {
                     let workspaces = self.workspace_roots.lock().unwrap();
                     if !workspaces.is_empty() &&
-                        workspaces.iter().any(
+                        !workspaces.iter().any(
                             |root|parse_file_path!(&root.uri, "workspace")
                                 .map_or(false, |p|canon_path.as_path()
                                         .starts_with(p))) {

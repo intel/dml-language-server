@@ -5,6 +5,8 @@
 # Change Log
 
 ## 0.9.16
+- DLS will no longer incorrectly warn about the compile_commands not being under
+  a workspace root when it in fact is
 
 ## 0.9.15
 - Added support for line length and breaking rules regarding line-breaks after opening parentheses, method output arguments, conditional expressions and binary operands.
