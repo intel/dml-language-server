@@ -1,5 +1,8 @@
+//  © 2024 Intel Corporation
+//  SPDX-License-Identifier: Apache-2.0 and MIT
 pub mod spacing;
 pub mod indentation;
+pub mod linelength;
 
 #[cfg(test)]
 pub mod tests;
@@ -15,7 +18,18 @@ use spacing::{NspFunparRule,
               NspPtrDeclRule,
               SpPunctRule,
               SpReservedRule};
-use indentation::{LongLinesRule, IndentNoTabRule, IndentCodeBlockRule, IndentClosingBraceRule, IndentParenExprRule, IndentSwitchCaseRule, IndentEmptyLoopRule};
+use indentation::{LongLinesRule,
+    IndentNoTabRule,
+    IndentCodeBlockRule,
+    IndentClosingBraceRule,
+    IndentParenExprRule,
+    IndentSwitchCaseRule,
+    IndentEmptyLoopRule,
+    IndentContinuationLineRule};
+use linelength::{BreakBeforeBinaryOpRule,
+    BreakFuncCallOpenParenRule,
+    BreakConditionalExpressionRule,
+    BreakMethodOutputRule};
 use crate::lint::{LintCfg, DMLStyleError};
 use crate::analysis::{LocalDMLError, parsing::tree::ZeroRange};
 
@@ -37,7 +51,12 @@ pub struct CurrentRules {
     pub indent_closing_brace: IndentClosingBraceRule,
     pub indent_paren_expr: IndentParenExprRule,
     pub indent_switch_case: IndentSwitchCaseRule,
-    pub indent_empty_loop: IndentEmptyLoopRule
+    pub indent_empty_loop: IndentEmptyLoopRule,
+    pub indent_continuation_line: IndentContinuationLineRule,
+    pub break_func_call_open_paren: BreakFuncCallOpenParenRule,
+    pub break_method_output: BreakMethodOutputRule,
+    pub break_conditional_expression: BreakConditionalExpressionRule,
+    pub break_before_binary_op: BreakBeforeBinaryOpRule, // Placeholder for future rule
 }
 
 pub fn  instantiate_rules(cfg: &LintCfg) -> CurrentRules {
@@ -59,7 +78,12 @@ pub fn  instantiate_rules(cfg: &LintCfg) -> CurrentRules {
         indent_closing_brace: IndentClosingBraceRule::from_options(&cfg.indent_closing_brace),
         indent_paren_expr: IndentParenExprRule { enabled: cfg.indent_paren_expr.is_some() },
         indent_switch_case: IndentSwitchCaseRule::from_options(&cfg.indent_switch_case),
-        indent_empty_loop: IndentEmptyLoopRule::from_options(&cfg.indent_empty_loop)
+        indent_empty_loop: IndentEmptyLoopRule::from_options(&cfg.indent_empty_loop),
+        indent_continuation_line: IndentContinuationLineRule::from_options(&cfg.indent_continuation_line),
+        break_func_call_open_paren: BreakFuncCallOpenParenRule::from_options(&cfg.break_func_call_open_paren),
+        break_method_output: BreakMethodOutputRule { enabled: cfg.break_method_output.is_some() },
+        break_conditional_expression: BreakConditionalExpressionRule::from_options(&cfg.break_conditional_expression),
+        break_before_binary_op: BreakBeforeBinaryOpRule { enabled: cfg.break_before_binary_op.is_some() },
     }
 }
 
@@ -94,6 +118,10 @@ pub enum RuleType {
     NspUnary,
     NspTrailing,
     LL1,
+    LL2,
+    LL3,
+    LL5,
+    LL6,
     IN2,
     IN3,
     IN4,

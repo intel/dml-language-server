@@ -1,6 +1,6 @@
 [package]
 name = "dls"
-version = "0.9.14"
+version = "0.9.17"
 edition = "2018"
 authors = []
 description = "Simics DML language server"
@@ -36,7 +36,7 @@ itertools = "0.14"
 jsonrpc = "0.18"
 lsp-types = { version = "0.97" }
 lazy_static = "1.4"
-log = "0.4"
+log = {version = "0.4", features = ["serde"]}
 logos = "0.15"
 rayon = "1"
 regex = "1.5.5"

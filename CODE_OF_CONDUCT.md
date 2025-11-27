@@ -1,3 +1,7 @@
+<!--
+  © 2024 Intel Corporation
+  SPDX-License-Identifier: Apache-2.0 and MIT
+-->
 # Contributor Covenant Code of Conduct
 
 ## Our Pledge

@@ -18,5 +18,10 @@
     "indent_paren_expr": {},
     "indent_switch_case": {},
     "indent_empty_loop": {},
+    "indent_continuation_line": {},
+    "break_func_call_open_paren": {},
+    "break_method_output": {},
+    "break_conditional_expression": {},
+    "break_before_binary_op": {},
     "annotate_lints": true
 }

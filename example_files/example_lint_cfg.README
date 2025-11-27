@@ -1,3 +1,5 @@
+//  © 2024 Intel Corporation
+//  SPDX-License-Identifier: Apache-2.0 and MIT
 // This is an example and explanation of a configuration file for
 // the DLS linting module
 // NOTE: This file CANNOT be used as-is, since it contains in-line comments.

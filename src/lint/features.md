@@ -1,3 +1,7 @@
+<!--
+  © 2024 Intel Corporation
+  SPDX-License-Identifier: Apache-2.0 and MIT
+-->
 # Supported Rules
 
 Below are listed the currently supported rules for linting:
@@ -47,5 +51,24 @@ Below are listed the currently supported rules for linting:
 
 ## Line Length
 - **LL1**, `long_lines`: Lines should be kept shorter than 80 characters. This limit can be set to a custom value
+- **LL2**, `break_before_binary_op`: Break long lines before binary operators, not after
+```
+    x = (a_very_long_expression
+         + another_very_long_expression)
+        * a_third_long_expression;
+```
+- **LL3**, `break_conditional_expression`: Break conditional expressions before the ?, or both before the ? and before the :.
+- **LL5**, `break_method_output`: Break long method declarations with output parameters before the arrow.
+```
+    method inquiry_status(uint64 physical_address)
+        -> (uint16 status) {
+        ...
+    }
+```
+- **LL6**, `break_func_call_open_paren`: Function and method invocations can be broken after the opening parenthesis, with the continuation lines indented one level.
+```
+    signal_interface *my_interface = SIM_get_interface(
+        other_object, SIGNAL_INTERFACE);
+```
 
 ##### Check [Issue #76 For remaining and planned checks](https://github.com/intel/dml-language-server/issues/76)

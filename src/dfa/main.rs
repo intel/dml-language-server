@@ -16,10 +16,11 @@ use clap::{command, arg, Arg, ArgAction};
 
 use dls::dfa::ClientInterface;
 
+
 use log::debug;
 
 pub fn main() {
-    env_logger::init();
+    dls::logging::init();
     let code = main_inner();
     std::process::exit(match code {
         Ok(()) => 0,
@@ -143,7 +144,7 @@ fn main_inner() -> Result<(), i32> {
     let mut dlsclient = ClientInterface::start(&arg.binary, root, linting_enabled)
         .map_err(|e|{
             std::io::stdout().write_all(
-                format!("Failed to open client binary: {}\n",
+                format!("Failed to start client: {}\n",
                         e).as_bytes())
                 .ok();
             1})?;

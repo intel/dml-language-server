@@ -1,9 +1,12 @@
+//  © 2024 Intel Corporation
+//  SPDX-License-Identifier: Apache-2.0 and MIT
 mod no_tabs;
 mod code_block;
 mod closing_brace;
 mod paren_expr;
 mod switch_case;
 mod empty_loop;
+mod continuation_line;
 
 use crate::lint::rules::tests::common::assert_snippet;
 use crate::lint::rules::RuleType;

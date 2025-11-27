@@ -93,9 +93,9 @@ impl BlockingRequestAction for ShutdownRequest {
         _out: O,
     ) -> Result<Self::Response, ResponseError> {
         if let Ok(ctx) = ctx.inited() {
-            // wait for pending jobs before ack-ing
-            ctx.wait_for_concurrent_jobs();
             ctx.shut_down.store(true, Ordering::SeqCst);
+            ctx.stop_all_jobs();
+            ctx.wait_for_concurrent_jobs();
             Ok(Ack)
         } else {
             Err(ResponseError::Message(
@@ -270,7 +270,7 @@ impl BlockingRequestAction for InitializeRequest {
             });
         }
         if let ActionContext::Init(ref mut initctx) = ctx {
-            initctx.update_workspaces(workspaces, vec![]);
+            initctx.update_workspaces(workspaces, vec![], &out);
             let temp_resolver = initctx.construct_resolver();
             for file in IMPLICIT_IMPORTS {
                 debug!("Requesting analysis of builtin file {}", file);
@@ -601,7 +601,6 @@ impl<O: Output> LsService<O> {
     /// the appropriate action. Returns a `ServerStateChange` that describes how
     /// the service should proceed now that the message has been handled.
     pub fn handle_message(&mut self, mess: RawMessage) -> ServerStateChange {
-
         // If we're in shutdown mode, ignore any messages other than 'exit'.
         // This is not actually in the spec; I'm not sure we should do this,
         // but it kinda makes sense.

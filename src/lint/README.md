@@ -1,3 +1,7 @@
+<!--
+  © 2024 Intel Corporation
+  SPDX-License-Identifier: Apache-2.0 and MIT
+-->
 # Lint module architecture
 
 The linting jobs for a file are triggered after the abstract syntax tree (AST) representation of a source file has been created by the IsolatedAnalysisJob run for that file.

@@ -41,11 +41,37 @@ use crate::span;
 use crate::span::{ZeroIndexed, FilePosition};
 use crate::vfs::Vfs;
 
+use jsonrpc::error::{standard_error, StandardError};
+use serde_json::Value;
+
 // Define macros before submodules
 macro_rules! parse_file_path {
     ($uri: expr, $log_name: expr) => {
         ignore_non_file_uri!(parse_file_path($uri), $uri, $log_name)
     };
+}
+
+pub fn rpc_error_code(code: StandardError) -> Value {
+    Value::from(standard_error(code, None).code)
+}
+
+macro_rules! wait_for_device_path {
+    ($ctx: expr, $path: expr) => {
+        $ctx.wait_for_state(
+            AnalysisProgressKind::DeviceDependencies,
+            AnalysisWaitKind::Work,
+            AnalysisCoverageSpec::Paths(
+                vec![$path])).expect("Failed to wait on device state")
+    }
+}
+
+macro_rules! make_canon_path {
+    ($path: expr) => {
+        CanonPath::try_from_path_buf($path)
+            .map_err(|e|ResponseError::Message(
+                rpc_error_code(StandardError::InternalError),
+                format!("Could not canonicalize file path: '{}'", e)))
+    }
 }
 
 // TODO: Support non-`file` URI schemes in VFS. We're currently ignoring them because
@@ -237,6 +263,8 @@ pub struct InitActionContext<O: Output> {
     // the root workspaces
     pub workspace_roots: Arc<Mutex<Vec<Workspace>>>,
 
+    pub cached_path_resolver: Arc<Mutex<Option<PathResolver>>>,
+
     // directly opened files
     pub direct_opens: Arc<Mutex<HashSet<CanonPath>>>,
     pub compilation_info: Arc<Mutex<CompilationInfoStorage>>,
@@ -256,7 +284,7 @@ pub struct InitActionContext<O: Output> {
     pub config: Arc<Mutex<Config>>,
     pub lint_config: Arc<Mutex<LintCfg>>,
     pub sent_warnings: Arc<Mutex<HashSet<(u64, PathBuf)>>>,
-    jobs: Arc<Mutex<Jobs>>,
+    jobs: Arc<Mutex<Jobs<String>>>,
     pub client_capabilities: Arc<lsp_data::ClientCapabilities>,
     pub has_notified_missing_builtins: bool,
     /// Whether the server is performing cleanup (after having received
@@ -342,15 +370,17 @@ impl <O: Output> InitActionContext<O> {
         pid: u32,
         _client_supports_cmd_run: bool,
     ) -> InitActionContext<O> {
-        
+        let shut_down = Arc::new(AtomicBool::new(false));
         InitActionContext {
             vfs,
             analysis,
-            analysis_queue: Arc::new(AnalysisQueue::init()),
+            analysis_queue: Arc::new(AnalysisQueue::init(
+                Arc::clone(&shut_down))),
             current_notifier: Arc::default(),
             config,
             lint_config: Arc::new(Mutex::new(LintCfg::default())),
             jobs: Arc::default(),
+            cached_path_resolver: Arc::default(),
             direct_opens: Arc::default(),
             quiescent: Arc::new(AtomicBool::new(false)),
             prev_changes: Arc::default(),
@@ -359,7 +389,7 @@ impl <O: Output> InitActionContext<O> {
             //client_supports_cmd_run,
             active_waits: Arc::default(),
             outstanding_requests: Arc::default(),
-            shut_down: Arc::new(AtomicBool::new(false)),
+            shut_down,
             pid,
             workspace_roots: Arc::default(),
             compilation_info: Arc::default(),
@@ -392,11 +422,16 @@ impl <O: Output> InitActionContext<O> {
 
     pub fn update_workspaces(&self,
                              mut add: Vec<Workspace>,
-                             remove: Vec<Workspace>) {
+                             remove: Vec<Workspace>,
+                             out: &O) {
+        let any_change = !(add.is_empty() && remove.is_empty());
         if let Ok(mut workspaces) = self.workspace_roots.lock() {
             workspaces.retain(|workspace|
                               remove.iter().all(|rem|rem != workspace));
             workspaces.append(&mut add);
+        }
+        if any_change {
+            self.update_compilation_info(out);
         }
     }
 
@@ -418,11 +453,16 @@ impl <O: Output> InitActionContext<O> {
         trace!("Updating compile info");
         if let Ok(config) = self.config.lock() {
             if let Some(compile_info) = &config.compile_info_path {
+                // Ensure resolver exists
+                self.construct_resolver();
+                // And then remove it from storage (invalidates it)
+                let old_resolver = self.cached_path_resolver.lock()
+                    .expect("Failed to grab resolver").take().unwrap();
                 if let Some(canon_path) = CanonPath::from_path_buf(
                     compile_info.clone()) {
                     let workspaces = self.workspace_roots.lock().unwrap();
                     if !workspaces.is_empty() &&
-                        workspaces.iter().any(
+                        !workspaces.iter().any(
                             |root|parse_file_path!(&root.uri, "workspace")
                                 .map_or(false, |p|canon_path.as_path()
                                         .starts_with(p))) {
@@ -441,8 +481,7 @@ impl <O: Output> InitActionContext<O> {
                             *ci = compilation_info;
                         }
                         self.analysis.lock().unwrap()
-                            .update_all_context_dependencies(
-                                self.construct_resolver());
+                            .update_all_context_dependencies(old_resolver);
                     },
                     Err(e) => {
                         error!("Failed to update compilation info: {}", e);
@@ -481,6 +520,8 @@ impl <O: Output> InitActionContext<O> {
             .collect();
         let direct_opens = self.direct_opens.lock().unwrap();
         for file in files {
+            let Some(canon_path) = CanonPath::from_path_buf(file.clone())
+            else { continue; };
             let mut sorted_errors: Vec<SourcedDMLError> =
                 isolated.get(file).into_iter().flatten().cloned()
                 .map(|e|e.with_source("dml"))
@@ -488,10 +529,8 @@ impl <O: Output> InitActionContext<O> {
                        .map(|e|e.with_source("dml")))
                 .chain(
                     lint.get(file).into_iter().flatten()
-                        .filter(
-                            |_|!config.lint_direct_only
-                                || direct_opens.contains(
-                                    &file.clone().into())
+                        .filter(|_|!config.lint_direct_only
+                                || direct_opens.contains(&canon_path)
                         ).cloned()
                         .map(|e|e.with_source("dml-lint")))
                 .collect();
@@ -572,7 +611,8 @@ impl <O: Output> InitActionContext<O> {
     }
 
     pub fn trigger_device_analysis(&self, file: &Path, out: &O) {
-        let canon_path: CanonPath = file.to_path_buf().into();
+        let Some(canon_path) =
+            CanonPath::from_path_buf(file.to_path_buf()) else { return; };
         debug!("triggering devices dependant on {}", canon_path.as_str());
         self.update_analysis();
         let maybe_triggers = self.analysis.lock().unwrap().device_triggers
@@ -692,6 +732,11 @@ impl <O: Output> InitActionContext<O> {
                 self.report_errors(out);
             },
         }
+
+        // Re-update log level
+        if let Some(level) = self.config.lock().unwrap().server_debug_level {
+            crate::logging::set_global_log_level(level);
+        }
     }
 
     // Call before adding new analysis
@@ -743,6 +788,10 @@ impl <O: Output> InitActionContext<O> {
     }
 
     pub fn construct_resolver(&self) -> PathResolver {
+        if let Some(resolver) = self.cached_path_resolver.lock()
+            .unwrap().as_ref() {
+                return resolver.clone();
+            }
         trace!("About to construct resolver");
         let mut toret: PathResolver =
                self.client_capabilities.root.clone().into();
@@ -755,6 +804,7 @@ impl <O: Output> InitActionContext<O> {
                                                  .into_iter().collect()))
                                 .collect());
         trace!("Constructed resolver: {:?}", toret);
+        *self.cached_path_resolver.lock().unwrap() = Some(toret.clone());
         toret
     }
 
@@ -780,11 +830,25 @@ impl <O: Output> InitActionContext<O> {
         }
         self.maybe_start_progress(out);
         let (job, token) = ConcurrentJob::new();
-        self.add_job(job);
-
-        self.analysis_queue.enqueue_isolated_job(
+        let job_ident = format!("{}-isolated", path.as_str());
+        let enqueued = self.analysis_queue.enqueue_isolated_job(
             &mut self.analysis.lock().unwrap(),
-            &self.vfs, context, path, client_path.to_path_buf(), token);
+            &self.vfs, context, path.clone(),
+            client_path.to_path_buf(), token);
+        if  enqueued {
+            // Kill ongoing device analysises that depend on this path
+            if let Some(devices)
+                = self.analysis.lock().unwrap().device_triggers.get(&path) {
+                    for device in devices {
+                        self.kill_job(Self::device_job_id(device.as_str()));
+                    }
+                }
+            self.add_job(job_ident, job);
+        }
+    }
+
+    fn device_job_id(path: &str) -> String {
+        format!("{}-device", path)
     }
 
     fn device_analyze(&self, device: &CanonPath, out: &O) {
@@ -792,15 +856,17 @@ impl <O: Output> InitActionContext<O> {
         self.maybe_start_progress(out);
         self.maybe_add_device_context(device);
         let (job, token) = ConcurrentJob::new();
-        self.add_job(job);
+        let job_ident = Self::device_job_id(device.as_str());
         let locked_analysis = &mut self.analysis.lock().unwrap();
         let dependencies = locked_analysis.all_dependencies(device,
                                                             Some(device));
-        self.analysis_queue.enqueue_device_job(
+        if self.analysis_queue.enqueue_device_job(
             locked_analysis,
             device,
             dependencies,
-            token);
+            token) {
+            self.add_job(job_ident, job);
+        }
     }
 
     // (DeviceContextPath, IsActive, IsReady)
@@ -974,12 +1040,12 @@ impl <O: Output> InitActionContext<O> {
             return;
         }
         let config = self.config.lock().unwrap().to_owned();
-        if config.suppress_imports {
-            let canon_path: CanonPath = file.to_path_buf().into();
-            if !self.direct_opens.lock().unwrap().contains(&canon_path) {
+        let Some(canon_path) = CanonPath::from_path_buf(file.to_path_buf())
+        else { return; };
+        if config.suppress_imports
+            && !self.direct_opens.lock().unwrap().contains(&canon_path) {
                 return;
             }
-        }
         let lint_config = self.lint_config.lock().unwrap().to_owned();
         debug!("Triggering linting analysis of {:?}", file);
         self.lint_analyze(file,
@@ -1004,20 +1070,37 @@ impl <O: Output> InitActionContext<O> {
             return;
         };
         let (job, token) = ConcurrentJob::new();
-        self.add_job(job);
+        // This not being the same ident as anlysis let's us lint something
+        // in parallel with it being device analyzed, there is still some
+        // redundancy with parallel lints and isolateds, but its not as
+        // severe as a lint job cancelling a device one
+        let job_ident = format!("{}-lint", path.as_str());
 
-        self.analysis_queue.enqueue_linter_job(
+        if self.analysis_queue.enqueue_linter_job(
             &mut self.analysis.lock().unwrap(),
             cfg,
-            &self.vfs, path, token);
+            &self.vfs, path, token) {
+            self.add_job(job_ident, job);
+        }
     }
 
-    pub fn add_job(&self, job: ConcurrentJob) {
-        self.jobs.lock().unwrap().add(job);
+    pub fn add_job(&self, ident: String, job: ConcurrentJob) {
+        self.jobs.lock().unwrap().add(ident, job);
+    }
+
+    pub fn kill_job(&self, ident: String) {
+        self.jobs.lock().unwrap().kill_ident(&ident);
     }
 
     pub fn wait_for_concurrent_jobs(&self) {
         self.jobs.lock().unwrap().wait_for_all();
+    }
+
+    // NOTE: since jobs, even if they exit by panicking, need to hit an
+    // exit point to do so, wait_for_concurrent_jobs should probably be
+    // called after this
+    pub fn stop_all_jobs(&self) {
+        self.jobs.lock().unwrap().kill_all();
     }
 
     /// See docs on VersionOrdering

@@ -10,6 +10,7 @@ use std::hash::{Hash, Hasher};
 use std::panic::RefUnwindSafe;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::AtomicBool;
 use std::thread::{self, Thread};
 use std::time::SystemTime;
 use crate::lint::LintCfg;
@@ -48,7 +49,7 @@ pub struct AnalysisQueue {
 
 impl AnalysisQueue {
     // Create a new queue and start the worker thread.
-    pub fn init() -> AnalysisQueue {
+    pub fn init(no_more_work: Arc<AtomicBool>) -> AnalysisQueue {
         let queue = Arc::default();
         let device_tracker = Arc::default();
         let isolated_tracker = Arc::default();
@@ -56,7 +57,8 @@ impl AnalysisQueue {
             let queue = Arc::clone(&queue);
             let device_tracker = Arc::clone(&device_tracker);
             let isolated_tracker = Arc::clone(&isolated_tracker);
-            || AnalysisQueue::run_worker_thread(queue,
+            || AnalysisQueue::run_worker_thread(no_more_work,
+                                                queue,
                                                 device_tracker,
                                                 isolated_tracker)
         })
@@ -71,13 +73,15 @@ impl AnalysisQueue {
                               cfg: LintCfg,
                               vfs: &Vfs,
                               file: CanonPath,
-                              tracking_token: JobToken) {
+                              tracking_token: JobToken) -> bool {
         match LinterJob::new(tracking_token, storage, cfg, vfs, file) {
             Ok(newjob) => {
                 self.enqueue(QueuedJob::FileLinterJob(newjob));
+                true
             },
             Err(desc) => {
                 error!("Failed to enqueue Linter job: {}", desc);
+                false
             }
         }
     }
@@ -88,7 +92,7 @@ impl AnalysisQueue {
                                 context: Option<CanonPath>,
                                 path: CanonPath,
                                 client_path: PathBuf,
-                                tracking_token: JobToken) {
+                                tracking_token: JobToken) -> bool {
         match IsolatedAnalysisJob::new(tracking_token,
                                        storage,
                                        context,
@@ -100,19 +104,22 @@ impl AnalysisQueue {
             Ok(newjob) => {
                 debug!("Enqueued isolated analysis job of {}",
                        newjob.path.as_str());
-                self.enqueue(QueuedJob::IsolatedAnalysisJob(newjob))
+                self.enqueue(QueuedJob::IsolatedAnalysisJob(newjob));
+                true
             },
             Err(desc) => {
                 error!("Failed to enqueue isolated job: {}", desc);
+                false
             }
         }
     }
 
+    // Returns true if job actually queued
     pub fn enqueue_device_job(&self,
                               storage: &mut AnalysisStorage,
                               device: &CanonPath,
                               bases: HashSet<CanonPath>,
-                              tracking_token: JobToken) {
+                              tracking_token: JobToken) -> bool {
         match DeviceAnalysisJob::new(tracking_token, storage, bases, device) {
             Ok(newjob) => {
                 if let Some((_, previous_bases)) = self.device_tracker
@@ -135,14 +142,16 @@ impl AnalysisQueue {
                         if !newer_bases {
                             debug!("Skipped enqueueing device analysis job of \
                                     {:?}, no new dependencies", device);
-                            return;
+                            return false;
                         }
                     }
                 debug!("Enqueued device analysis job of {:?}", device);
-                self.enqueue(QueuedJob::DeviceAnalysisJob(newjob))
+                self.enqueue(QueuedJob::DeviceAnalysisJob(newjob));
+                true
             },
             Err(desc) => {
                 error!("Failed to create device analysis job; {}", desc);
+                false
             }
         }
     }
@@ -162,10 +171,15 @@ impl AnalysisQueue {
         self.worker_thread.unpark();
     }
 
-    fn run_worker_thread(queue: Arc<Mutex<Vec<QueuedJob>>>,
+    fn run_worker_thread(no_more_work: Arc<AtomicBool>,
+                         queue: Arc<Mutex<Vec<QueuedJob>>>,
                          device_tracker: Arc<Mutex<InFlightDeviceJobTracker>>,
                          isolated_tracker: Arc<Mutex<InFlightIsolatedJobTracker>>) {
         loop {
+            if no_more_work.load(std::sync::atomic::Ordering::SeqCst) {
+                thread::park();
+                continue;
+            }
             let job = {
                 let mut queue = queue.lock().unwrap();
                 if queue.is_empty() {
@@ -379,7 +393,7 @@ pub struct IsolatedAnalysisJob {
     content: TextFile,
     context: Option<CanonPath>,
     hash: u64,
-    _token: JobToken,
+    token: JobToken,
 }
 
 impl IsolatedAnalysisJob {
@@ -408,7 +422,7 @@ impl IsolatedAnalysisJob {
             hash,
             context,
             content,
-            _token: token,
+            token,
         })
     }
 
@@ -416,7 +430,8 @@ impl IsolatedAnalysisJob {
         info!("Started work on isolated analysis of {}", self.path.as_str());
         match IsolatedAnalysis::new(&self.path,
                                     &self.client_path,
-                                    self.content) {
+                                    self.content,
+                                    self.token.status) {
             Ok(analysis) => {
                 let new_context = if analysis.is_device_file() {
                     Some(self.path.clone())
@@ -451,7 +466,7 @@ pub struct DeviceAnalysisJob {
     report: ResultChannel,
     notify: channel::Sender<ServerToHandle>,
     hash: u64,
-    _token: JobToken,
+    token: JobToken,
 }
 
 impl DeviceAnalysisJob {
@@ -510,7 +525,7 @@ impl DeviceAnalysisJob {
             report: analysis.report.clone(),
             notify: analysis.notify.clone(),
             hash,
-            _token: token,
+            token,
         })
     }
 
@@ -519,7 +534,10 @@ impl DeviceAnalysisJob {
               self.root.path,
               self.bases.iter().map(|i|&i.stored.path)
               .collect::<Vec<&CanonPath>>());
-        match DeviceAnalysis::new(self.root, self.bases, self.import_sources) {
+        match DeviceAnalysis::new(self.root,
+                                  self.bases,
+                                  self.import_sources,
+                                  self.token.status) {
             Ok(analysis) => {
                 info!("Finished device analysis of {:?}", analysis.name);
                 self.notify.send(ServerToHandle::DeviceAnalysisDone(
@@ -547,7 +565,7 @@ pub struct LinterJob {
     hash: u64,
     ast: IsolatedAnalysis,
     cfg: LintCfg,
-    _token: JobToken,
+    token: JobToken,
 }
 
 impl LinterJob {
@@ -555,25 +573,25 @@ impl LinterJob {
            analysis: &mut AnalysisStorage,
            cfg: LintCfg,
            vfs: &Vfs,
-           device: CanonPath)
+           file: CanonPath)
            -> Result<LinterJob, String> {
 
         // TODO: Use some sort of timestamp from VFS instead of systemtime
         let timestamp = SystemTime::now();
         let mut hasher = DefaultHasher::new();
-        Hash::hash(&device, &mut hasher);
+        Hash::hash(&file, &mut hasher);
         let hash = hasher.finish();
-        if let Ok(isolated_analysis) = analysis.get_isolated_analysis(&device) {
+        if let Ok(isolated_analysis) = analysis.get_isolated_analysis(&file) {
             Ok(LinterJob {
-                file: device.to_owned(),
+                file: file.to_owned(),
                 timestamp,
                 report: analysis.report.clone(),
                 notify: analysis.notify.clone(),
                 hash,
                 ast: isolated_analysis.to_owned(),
                 cfg,
-                _token: token,
-                content: vfs.snapshot_file(&device)?,
+                token,
+                content: vfs.snapshot_file(&file)?,
             })
         } else {
             Err("Failed to get isolated analysis to trigger LinterJob".to_string())
@@ -582,7 +600,11 @@ impl LinterJob {
 
     fn process(self) {
         debug!("Started work on isolated linting of {:?}", self.file);
-        match LinterAnalysis::new(&self.file, self.content, self.cfg, self.ast) {
+        match LinterAnalysis::new(&self.file,
+                                  self.content,
+                                  self.cfg,
+                                  self.ast,
+                                  self.token.status) {
             Ok(analysis) => {
                 self.report.send(TimestampedStorage::make_linter_result(
                     self.timestamp,

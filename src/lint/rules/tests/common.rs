@@ -1,3 +1,5 @@
+//  © 2024 Intel Corporation
+//  SPDX-License-Identifier: Apache-2.0 and MIT
 use crate::lint::{begin_style_check, DMLStyleError, LintCfg};
 use crate::lint::rules::{instantiate_rules, CurrentRules, RuleType};
 use crate::lint::tests::create_ast_from_snippet;
