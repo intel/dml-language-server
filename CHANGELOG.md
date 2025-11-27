@@ -5,7 +5,7 @@
 # Change Log
 
 ## 0.9.17
-
+- Fixed linter wrongly throwing an error on space after `defined` keyword
 
 ## 0.9.16
 - DLS will no longer incorrectly warn about the compile_commands not being under
@@ -55,7 +55,6 @@
 - Added support for spacing linting rules SpReserved, SpBinop, SpTernary, SpPtrDecl and NspPtrDecl.
 - Fixed inability to goto definition/reference on template references in 'in each' and 'for each' constructs
 - Fixed incorrect parsing of comments at the last line of a file
-- Fixed linter wrongly throwing an error on space after `defined` keyword
 
 ## 0.9.12
 - Added 'simics\_util\_vect' as a known provisional (with no DLS semantics)
