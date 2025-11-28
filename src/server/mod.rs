@@ -277,7 +277,7 @@ impl BlockingRequestAction for InitializeRequest {
                 if let Some(path) = temp_resolver
                     .resolve_under_any_context(Path::new(file)) {
                         let pathb: PathBuf = path.into();
-                        initctx.isolated_analyze(pathb.as_path(), None, &out);
+                        initctx.isolated_analyze(pathb.as_path(), None, None, &out);
                     }
             }
         } else {
@@ -422,11 +422,13 @@ impl<O: Output> LsService<O> {
                             // or error reporting will complain later
                             if let Some(file) = ctx.construct_resolver()
                                 .resolve_with_maybe_context(&file,
-                                                            context.as_ref()) {
+                                                            context.as_ref(),
+                                                            Some(&path)) {
                                     if !config.suppress_imports {
                                         trace!("Analysing imported file {}",
                                             file.to_str().unwrap());
                                         ctx.isolated_analyze(&file,
+                                                            Some(path.clone()),
                                                             context.clone(),
                                                             &self.output);
                                     }
@@ -455,13 +457,13 @@ impl<O: Output> LsService<O> {
                         ctx.report_errors(&self.output);
                     }
                 },
-                ServerToHandle::AnalysisRequest(importpath, context) => {
+                ServerToHandle::AnalysisRequest(importpath, context, source) => {
                     if let ActionContext::Init(ctx) = &mut self.ctx {
                         if !ctx.config.lock().unwrap().to_owned().suppress_imports {
                             debug!("Analysing imported file {}",
                                &importpath.to_str().unwrap());
                             ctx.isolated_analyze(
-                                &importpath, context, &self.output);
+                                &importpath, Some(source), context, &self.output);
                         }
                     }
                 }
@@ -649,7 +651,7 @@ pub enum ServerToHandle {
     IsolatedAnalysisDone(CanonPath, Option<CanonPath>, Vec<PathBuf>),
     DeviceAnalysisDone(CanonPath),
     LinterDone(CanonPath),
-    AnalysisRequest(PathBuf, Option<CanonPath>),
+    AnalysisRequest(PathBuf, Option<CanonPath>, CanonPath),
 }
 
 // Indicates how the server should proceed.

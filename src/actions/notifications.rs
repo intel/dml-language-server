@@ -84,7 +84,7 @@ impl BlockingNotificationAction for DidOpenTextDocument {
         ctx.vfs.set_file(&file_path, &params.text_document.text);
         ctx.add_direct_open(file_path.to_path_buf());
         if !ctx.config.lock().unwrap().analyse_on_save {
-            ctx.isolated_analyze(&file_path, None, &out);
+            ctx.isolated_analyze(&file_path, None, None, &out);
         }
         ctx.report_errors(&out);
         Ok(())
@@ -157,7 +157,7 @@ impl BlockingNotificationAction for DidChangeTextDocument {
         ctx.analysis.lock().unwrap().mark_file_dirty(&canon_path);
 
         if !ctx.config.lock().unwrap().analyse_on_save {
-            ctx.isolated_analyze(&file_path, None, &out);
+            ctx.isolated_analyze(&file_path, None, None, &out);
         }
         Ok(())
     }
@@ -234,7 +234,7 @@ impl BlockingNotificationAction for DidSaveTextDocument {
         ctx.vfs.file_saved(&file_path).unwrap();
 
         if ctx.config.lock().unwrap().analyse_on_save {
-            ctx.isolated_analyze(&file_path, None, &out);
+            ctx.isolated_analyze(&file_path, None, None, &out);
         }
 
         Ok(())

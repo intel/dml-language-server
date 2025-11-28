@@ -1577,7 +1577,7 @@ impl IsolatedAnalysis {
 
         for (path, import) in import_paths {
             if let Some(found_path) = resolver.resolve_with_maybe_context(
-                &path, context) {
+                &path, context, Some(&self.path)) {
                 found.insert((found_path, import.obj));
             } else {
                 missing.insert((path, import.obj));
