@@ -3,7 +3,7 @@
 //! Contains utilities and file management
 use log::{debug, trace};
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fs;
 
 use std::path::{Path, PathBuf};
@@ -90,11 +90,6 @@ impl PathResolver {
         self.include_paths = include_paths.clone();
     }
 
-    pub fn resolve_with_context(&self, path: &Path, context: &CanonPath)
-                                -> Option<CanonPath> {
-        self.resolve_with_maybe_context(path, Some(context))
-    }
-
     pub fn resolve_under_any_context(&self, path: &Path)
                                      -> Option<CanonPath> {
         for context in self.include_paths.keys() {
@@ -104,17 +99,6 @@ impl PathResolver {
             }
         }
         None
-    }
-
-    pub fn resolve_under_contexts<'t, T>(&self, path: &Path,
-                                     contexts: T) -> HashSet<CanonPath>
-    where T: IntoIterator<Item=&'t CanonPath> {
-        contexts.into_iter()
-            .filter_map(|c|self.resolve_with_context(path, c)).collect()
-    }
-
-    pub fn resolve(&self, path: &Path) -> Option<CanonPath> {
-        self.resolve_with_maybe_context(path, None)
     }
 
     pub fn resolve_with_maybe_context(&self,
