@@ -46,3 +46,15 @@ fn no_space_unary_correct() {
     let rules = set_up();
     assert_snippet(NO_SPACE_UNARY_CORRECT, vec![], &rules);
 }
+
+static UNARY_EXCEPTIONS: &str = "
+method this_is_some_method(conf_object_t *dummy_obj) {
+    if (!defined attr_workaround)
+        return;
+}
+";
+#[test]
+fn unary_exceptions() {
+    let rules = set_up();
+    assert_snippet(UNARY_EXCEPTIONS, vec![], &rules);
+}

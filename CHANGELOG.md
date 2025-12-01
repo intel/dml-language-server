@@ -5,7 +5,7 @@
 # Change Log
 
 ## 0.9.17
-
+- Fixed linter wrongly throwing an error on space after `defined` keyword
 
 ## 0.9.16
 - DLS will no longer incorrectly warn about the compile_commands not being under
