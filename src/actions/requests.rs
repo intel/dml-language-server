@@ -227,8 +227,8 @@ fn fp_to_symbol_refs<O: Output>
 
 fn handle_default_remapping<O: Output>
     (ctx: &InitActionContext<O>,
-     symbols: Vec<SymbolRef>,
-     fp: &ZeroFilePosition) -> HashSet<ZeroSpan>
+     symbols: &[SymbolRef],
+     fp: &ZeroFilePosition) -> Option<HashSet<ZeroSpan>>
 {
     let analysis = ctx.analysis.lock().unwrap();
     let refr_opt = analysis.reference_at_pos(fp);
@@ -239,7 +239,7 @@ fn handle_default_remapping<O: Output>
             // If we are at a defaut reference,
             // remap symbol references to methods
             // to the correct decl site, leave others as-is
-            return symbols.into_iter()
+            return Some(symbols.iter()
                 .flat_map(|d|'sym: {
                     let sym = d.lock().unwrap();
                     if sym.kind == DMLSymbolKind::Method {
@@ -248,13 +248,11 @@ fn handle_default_remapping<O: Output>
                                 break 'sym vec![*loc];
                             }
                     }
-                    sym.declarations.clone()
-                }).collect();
+                    vec![]
+                }).collect());
         }
     }
-    symbols.into_iter()
-        .flat_map(|d|d.lock().unwrap().declarations.clone())
-        .collect()
+    None
 }
 
 /// The result of a deglob action for a single wildcard import.
@@ -617,8 +615,11 @@ impl RequestAction for GotoDeclaration {
         match fp_to_symbol_refs(&fp, &ctx, &mut limitations) {
             Ok(symbols) => {
                 let unique_locations = handle_default_remapping(&ctx,
-                                                                symbols,
-                                                                &fp);
+                                                                &symbols,
+                                                                &fp)
+                    .unwrap_or_else(||symbols.into_iter()
+                        .flat_map(|d|d.lock().unwrap().declarations.clone())
+                        .collect());
                 let lsp_locations = unique_locations.into_iter()
                     .map(|l|ls_util::dls_to_location(&l))
                     .collect();
@@ -676,10 +677,14 @@ impl RequestAction for GotoDefinition {
         let mut limitations = HashSet::new();
         match fp_to_symbol_refs(&fp, &ctx, &mut limitations) {
             Ok(symbols) => {
-                let unique_locations: HashSet<ZeroSpan> =
-                    symbols.into_iter()
-                    .flat_map(|d|d.lock().unwrap()
-                              .definitions.clone()).collect();
+                let unique_locations = handle_default_remapping(&ctx,
+                                                                &symbols,
+                                                                &fp)
+                    .unwrap_or_else(||symbols.into_iter()
+                        .flat_map(|d|d.lock().unwrap().definitions.clone())
+                        .collect()
+                        );
+
                 let lsp_locations: Vec<_> = unique_locations.into_iter()
                     .map(|l|ls_util::dls_to_location(&l))
                     .collect();
@@ -697,6 +702,25 @@ impl RequestAction for GotoDefinition {
             },
         }
     }
+}
+
+fn filter_out_unpointed_defaults(fp: &ZeroFilePosition,
+                                 symbols: &[SymbolRef])
+                                 -> HashSet<ZeroSpan> {
+    symbols
+        .iter()
+        .flat_map(|d|{
+            let sym = d.lock().unwrap();
+            let ignored_defaults = sym.default_mappings
+                .iter()
+                .filter(|(_, ref_loc)|!ref_loc.contains_pos(fp))
+                .map(|(decl_loc, _)|*decl_loc)
+                .collect::<HashSet<_>>();
+            sym.references.iter().filter(|loc| {
+                !ignored_defaults.contains(loc)
+            }).cloned().collect::<Vec<_>>()
+        })
+        .collect()
 }
 
 impl RequestAction for References {
@@ -737,10 +761,7 @@ impl RequestAction for References {
         let mut limitations = HashSet::new();
         match fp_to_symbol_refs(&fp, &ctx, &mut limitations) {
             Ok(symbols) => {
-                let unique_locations: HashSet<ZeroSpan> =
-                    symbols.into_iter()
-                    .flat_map(|d|d.lock().unwrap()
-                              .references.clone()).collect();
+                let unique_locations = filter_out_unpointed_defaults(&fp, &symbols);
                 let lsp_locations: Vec<_> = unique_locations.into_iter()
                     .map(|l|ls_util::dls_to_location(&l))
                     .collect();

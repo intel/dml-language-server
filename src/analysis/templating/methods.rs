@@ -294,6 +294,16 @@ pub enum DMLMethodRef {
 }
 
 impl DMLMethodRef {
+    pub fn get_disambiguation_name(&self) -> Option<String> {
+        match self {
+            DMLMethodRef::TraitMethod(trt, _) =>
+                Some(format!("templates.{}.{}",
+                             trt.name,
+                             self.identity())),
+            DMLMethodRef::ConcreteMethod(_) => None,
+        }
+    }
+
     pub fn get_decl(&self) -> &MethodDecl {
         match self {
             Self::TraitMethod(_, decl) => decl,
@@ -301,11 +311,11 @@ impl DMLMethodRef {
         }
     }
 
-    pub fn get_default(&self) -> Option<Arc<DMLMethodRef>> {
+    pub fn get_default(&self) -> Option<DefaultCallReference> {
         match self {
             Self::TraitMethod(_, _) => None,
             Self::ConcreteMethod(decl) => decl.default_call
-                .as_ref().map(Arc::clone),
+                .as_ref().cloned(),
         }
     }
 
@@ -329,19 +339,22 @@ impl DMLMethodRef {
             DMLMethodRef::ConcreteMethod(concmeth) => concmeth.get_all_defs(),
         }
     }
-    pub fn get_base(&self) -> MethodDecl {
-        match self {
+    // Invariant: Return is non-empty
+    pub fn get_bases(&self) -> Vec<MethodDecl> {
+        let to_return = match self {
             DMLMethodRef::TraitMethod(_, decl) => {
-                decl.clone()
+                vec![decl.clone()]
             },
             DMLMethodRef::ConcreteMethod(meth) => {
-                if let Some(default) = &meth.default_call {
-                    default.get_base()
+                if let Some(default_ref) = &meth.default_call {
+                    default_ref.get_bases()
                 } else {
-                    meth.decl.clone()
+                    vec![meth.decl.clone()]
                 }
             }
-        }
+        };
+        assert!(!to_return.is_empty());
+        to_return
     }
 }
 
@@ -414,14 +427,53 @@ impl DeclarationSpan for DMLMethodRef {
             DMLMethodRef::ConcreteMethod(decl) => decl.span(),
         }
     }
- }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DefaultCallReference {
+    Valid(Arc<DMLMethodRef>),
+    Ambiguous(Vec<Arc<DMLMethodRef>>),
+}
+
+impl DefaultCallReference {
+    pub fn get_bases(&self) -> Vec<MethodDecl> {
+        match self {
+            DefaultCallReference::Valid(method) => method.get_bases(),
+            DefaultCallReference::Ambiguous(methods) => 
+                methods.iter().flat_map(|m|m.get_bases()).collect(),
+        }
+    }
+
+    pub fn get_all_decls(&self) -> Vec<ZeroSpan> {
+        match self {
+            DefaultCallReference::Valid(method) => method.get_all_decls(),
+            DefaultCallReference::Ambiguous(methods) =>
+                methods.iter().flat_map(|m|m.get_all_decls()).collect(),
+        }
+    }
+
+    pub fn get_all_defs(&self) -> Vec<ZeroSpan> {
+        match self {
+            DefaultCallReference::Valid(method) => method.get_all_defs(),
+            DefaultCallReference::Ambiguous(methods) =>
+                methods.iter().flat_map(|m|m.get_all_defs()).collect(),
+        }
+    }
+
+    pub fn as_valid(&self) -> Option<&Arc<DMLMethodRef>> {
+        match self {
+            DefaultCallReference::Valid(method) => Some(method),
+            DefaultCallReference::Ambiguous(_) => None,
+        }
+    }
+}
 
 // This is roughly equivalent with a non-codegenned method in DMLC
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DMLConcreteMethod {
     pub decl: MethodDecl,
     // where the default call goes (None if invalid)
-    pub default_call: Option<Arc<DMLMethodRef>>,
+    pub default_call: Option<DefaultCallReference>,
 }
 
 impl DMLConcreteMethod {
