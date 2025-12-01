@@ -28,9 +28,7 @@ use crate::analysis::structure::toplevel::{ExistCondition, ObjectDecl,
 use crate::analysis::symbols::{DMLSymbolKind};
 use crate::analysis::templating::Declaration;
 use crate::analysis::templating::types::eval_type;
-use crate::analysis::templating::methods::{DMLMethodRef,
-                                           MethodDecl, MethodDeclaration,
-                                           DMLConcreteMethod};
+use crate::analysis::templating::methods::{DMLConcreteMethod, DMLMethodRef, DefaultCallReference, MethodDecl, MethodDeclaration};
 use crate::analysis::templating::topology::{InEachStruct, InferiorVariant,
                                             Rank, RankDesc, RankDescKind,
                                             RankMaker, topsort};
@@ -1891,13 +1889,16 @@ fn add_methods(obj: &mut DMLCompositeObject,
                 continue;
             }
             let defaults = default_map.get(method).unwrap();
-            let default = if defaults.len() == 1 {
-                let decl = defaults.iter().next().unwrap();
-                trace!("Default call decl is {:?}", decl);
-                trace!("And the current map is {:?}", decl_to_method);
-                Some(decl_to_method.get(decl).unwrap())
-            } else {
-                None
+            let default = match defaults.len() {
+                1 => {
+                    let decl = defaults.iter().next().unwrap();
+                    trace!("Default call decl is {:?}", decl);
+                    trace!("And the current map is {:?}", decl_to_method);
+                    Some(DefaultCallReference::Valid(Arc::clone(decl_to_method.get(decl).unwrap())))
+                },
+                0 => None,
+                _ => Some(DefaultCallReference::Ambiguous(
+                    defaults.iter().map(|d| Arc::clone(decl_to_method.get(d).unwrap())).collect())),
             };
             trace!("Default call would be {:?}", default);
             for decl in default_map.get(method).unwrap() {
@@ -1927,7 +1928,7 @@ fn add_methods(obj: &mut DMLCompositeObject,
             let new_method = Arc::new(DMLMethodRef::ConcreteMethod(
                 DMLConcreteMethod {
                     decl: (*method).clone(),
-                    default_call: default.cloned(),
+                    default_call: default,
                 }));
             trace!("Inserted dependent methoddecl {:?}", new_method);
             decl_to_method.insert((*method).clone(), new_method);

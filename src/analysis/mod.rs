@@ -26,8 +26,7 @@ use rayon::prelude::*;
 
 use crate::actions::SourcedDMLError;
 use crate::actions::analysis_storage::TimestampedStorage;
-use crate::analysis::symbols::{SimpleSymbol, DMLSymbolKind, SymbolMaker,
-                               SymbolContainer, StructureSymbol, SymbolSource};
+use crate::analysis::symbols::{DMLSymbolKind, SimpleSymbol, StructureSymbol, SymbolContainer, SymbolMaker, SymbolSource};
 pub use crate::analysis::symbols::SymbolRef;
 use crate::analysis::reference::{Reference,
                                  GlobalReference, VariableReference,
@@ -60,8 +59,7 @@ use crate::analysis::templating::objects::{make_device, DMLObject,
 use crate::analysis::templating::topology::{RankMaker,
                                             rank_templates,
                                             create_templates_traits};
-use crate::analysis::templating::methods::{MethodDeclaration, DMLMethodRef,
-                                           DMLMethodArg};
+use crate::analysis::templating::methods::{DMLMethodArg, DMLMethodRef, DefaultCallReference, MethodDeclaration};
 use crate::analysis::templating::traits::{DMLTemplate,
                                           TemplateTraitInfo};
 use crate::analysis::templating::types::DMLResolvedType;
@@ -1320,11 +1318,56 @@ impl DeviceAnalysis {
         }
     }
 
+    fn handle_symbol_ref(symbol: &SymbolRef,
+                         reference: &Reference,
+                         report: &mut Vec<DMLError>) {
+        let ambiguous_desc: &'static str 
+            = "Ambiguous default call, you may need to clarify the template ordering or use a template-qualified-method-implementation-call";
+        
+        let mut sym = symbol.lock().unwrap();
+        sym.references.insert(*reference.loc_span());
+        if let Some(meth) = sym.source
+            .as_object()
+            .and_then(DMLObject::as_shallow)
+            .and_then(|s|s.variant.as_method()) {
+            if let Some(var) = reference.as_variable_ref() {
+                if var.reference.to_string().as_str()
+                    == "default" {
+                    if let Some(default_decl_ref) = meth.get_default() {
+                        match default_decl_ref {
+                            DefaultCallReference::Valid(default_decl) =>
+                                {
+                                sym.default_mappings.insert(
+                                    *var.loc_span(),
+                                    *default_decl.location());
+                                },
+                            DefaultCallReference::Ambiguous(ambiguous_decls) =>
+                                report.push(DMLError {
+                                    span: *var.loc_span(),
+                                    description: ambiguous_desc.to_string(),
+                                    severity: Some(DiagnosticSeverity::ERROR),
+                                    related: ambiguous_decls
+                                        .iter()
+                                        .map(|d|(*d.location(),
+                                            format!("Possible candidate for default call{}",
+                                            d.get_disambiguation_name()
+                                                .map_or_else(||"".to_string(),
+                                                             |n|format!(", can be explicitly called as 'this.{}'", n)))
+                                        ))
+                                        .collect(),
+                                }),
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     #[allow(clippy::ptr_arg)]
     fn match_references_in_scope<'c>(
         &'c self,
         scope_chain: Vec<&'c dyn Scope>,
-        _report: &mut Vec<DMLError>,
+        report: &mut Vec<DMLError>,
         method_structure: &HashMap<ZeroSpan, RangeEntry>,
         reference_cache: &Mutex<ReferenceCache>,
         status: &AliveStatus) {
@@ -1332,8 +1375,9 @@ impl DeviceAnalysis {
         let context_chain: Vec<ContextKey> = scope_chain
             .iter().map(|s|s.create_context()).collect();
         // NOTE: chunk number is arbitrarily picked that benches well
-        current_scope.defined_references().par_chunks(25).for_each(|references|{
+        report.extend(current_scope.defined_references().par_chunks(25).flat_map(|references|{
             status.assert_alive();
+            let mut local_reports = vec![];
             for reference in references {
                 debug!("In {:?}, Matching {:?}", context_chain, reference);
                 let symbol_lookup = match &reference {
@@ -1364,30 +1408,15 @@ impl DeviceAnalysis {
                     // (not done here because of ownership issues)
                     ReferenceMatches::Found(symbols) =>
                         for symbol in &symbols {
-                            let mut sym = symbol.lock().unwrap();
-                            sym.references.insert(*reference.loc_span());
-                            if let Some(meth) = sym.source
-                                .as_object()
-                                .and_then(DMLObject::as_shallow)
-                                .and_then(|s|s.variant.as_method()) {
-                                    if let Some(default_decl) = meth.get_default() {
-                                        if let Some(var) = reference.as_variable_ref() {
-                                            if var.reference.to_string().as_str()
-                                                == "default" {
-                                                    sym.default_mappings.insert(
-                                                        *var.loc_span(),
-                                                        *default_decl.location());
-                                                }
-                                        }
-                                    }
-                                }
+                            Self::handle_symbol_ref(symbol, reference, &mut local_reports);
                         },
                     ReferenceMatches::WrongType(_) =>
                     //TODO: report mismatch,
                         (),
                 }
             }
-        })
+            local_reports.into_par_iter()
+        }).collect::<Vec<_>>());
     }
 }
 
@@ -1737,7 +1766,7 @@ fn add_new_symbol_from_shallow(maker: &SymbolMaker,
              param.declarations.iter()
              .map(|(_, def)|*def.loc_span()).collect()),
         DMLShallowObjectVariant::Method(method_ref) =>
-            (vec![*method_ref.get_base().location()],
+            (method_ref.get_bases().iter().map(|b|*b.location()).collect(),
              method_ref.get_all_defs(),
              method_ref.get_all_decls()),
         DMLShallowObjectVariant::Constant(constant) =>
