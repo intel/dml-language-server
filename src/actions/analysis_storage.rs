@@ -443,7 +443,9 @@ impl AnalysisStorage {
                     debug!("-> server; analyze {}", dependency.as_str());
                     self.notify.send(ServerToHandle::AnalysisRequest(
                         dependency.clone().to_path_buf(),
-                        context.cloned())).ok();
+                        context.cloned(),
+                        path.clone()
+                    )).ok();
                     self.unresolved_dependency
                         .entry(dependency.clone())
                         .or_default().insert(context.cloned());

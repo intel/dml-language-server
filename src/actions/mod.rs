@@ -810,6 +810,8 @@ impl <O: Output> InitActionContext<O> {
 
     pub fn isolated_analyze(&self,
                             client_path: &Path,
+                            // Path from which this file was included
+                            source_path: Option<CanonPath>,
                             context: Option<CanonPath>,
                             out: &O) {
         debug!("Wants isolated analysis of {:?}{}",
@@ -818,7 +820,9 @@ impl <O: Output> InitActionContext<O> {
                .unwrap_or_default());
         let path = if let Some(p) =
             self.construct_resolver()
-            .resolve_with_maybe_context(client_path, context.as_ref()) {
+            .resolve_with_maybe_context(client_path,
+                                        context.as_ref(),
+                                        source_path.as_ref()) {
                 p
             } else {
                 debug!("Could not canonicalize client path {:?}", client_path);
@@ -1049,37 +1053,30 @@ impl <O: Output> InitActionContext<O> {
         let lint_config = self.lint_config.lock().unwrap().to_owned();
         debug!("Triggering linting analysis of {:?}", file);
         self.lint_analyze(file,
-                          None,
+                          canon_path,
                           lint_config,
                           out);
     }
 
     fn lint_analyze(&self,
                     file: &Path,
-                    context: Option<CanonPath>,
+                    real_path: CanonPath,
                     cfg: LintCfg,
                     out: &O) {
         debug!("Wants to lint {:?}", file);
         self.maybe_start_progress(out);
-        let path = if let Some(p) =
-        self.construct_resolver()
-        .resolve_with_maybe_context(file, context.as_ref()) {
-            p
-        } else {
-            debug!("Could not canonicalize client path {:?}", file);
-            return;
-        };
+
         let (job, token) = ConcurrentJob::new();
         // This not being the same ident as anlysis let's us lint something
         // in parallel with it being device analyzed, there is still some
         // redundancy with parallel lints and isolateds, but its not as
         // severe as a lint job cancelling a device one
-        let job_ident = format!("{}-lint", path.as_str());
+        let job_ident = format!("{}-lint", real_path.as_str());
 
         if self.analysis_queue.enqueue_linter_job(
             &mut self.analysis.lock().unwrap(),
             cfg,
-            &self.vfs, path, token) {
+            &self.vfs, real_path, token) {
             self.add_job(job_ident, job);
         }
     }

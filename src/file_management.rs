@@ -1,9 +1,9 @@
 //  © 2024 Intel Corporation
 //  SPDX-License-Identifier: Apache-2.0 and MIT
 //! Contains utilities and file management
-use log::{debug, trace};
+use log::{debug, error, trace};
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fs;
 
 use std::path::{Path, PathBuf};
@@ -90,55 +90,77 @@ impl PathResolver {
         self.include_paths = include_paths.clone();
     }
 
-    pub fn resolve_with_context(&self, path: &Path, context: &CanonPath)
-                                -> Option<CanonPath> {
-        self.resolve_with_maybe_context(path, Some(context))
-    }
-
     pub fn resolve_under_any_context(&self, path: &Path)
                                      -> Option<CanonPath> {
         for context in self.include_paths.keys() {
             if let Some(cp) = self.resolve_with_maybe_context(
-                path, Some(context)) {
+                path, Some(context), None) {
                 return Some(cp);
             }
         }
         None
     }
 
-    pub fn resolve_under_contexts<'t, T>(&self, path: &Path,
-                                     contexts: T) -> HashSet<CanonPath>
-    where T: IntoIterator<Item=&'t CanonPath> {
-        contexts.into_iter()
-            .filter_map(|c|self.resolve_with_context(path, c)).collect()
-    }
-
-    pub fn resolve(&self, path: &Path) -> Option<CanonPath> {
-        self.resolve_with_maybe_context(path, None)
-    }
-
     pub fn resolve_with_maybe_context(&self,
                                       path: &Path,
-                                      context: Option<&CanonPath>)
-                                      -> Option<CanonPath> {
+                                      context: Option<&CanonPath>,
+                                      extra_path: Option<&CanonPath>
+                                    ) -> Option<CanonPath> {
         self.cache.borrow_mut().entry((path.to_path_buf(), context.cloned()))
             .or_insert_with(
-                ||self.resolve_with_maybe_context_impl(path, context))
+                ||if path.starts_with("./") || path.starts_with("../") {
+                    self.resolve_from_relative(path, extra_path)
+                } else {
+                    self.resolve_with_maybe_context_impl(
+                        path, context, extra_path)
+                }
+            )
             .clone()
+    }
+
+    fn resolve_from_relative(&self,
+                             relative: &Path,
+                             source: Option<&CanonPath>)
+                             -> Option<CanonPath> {
+        trace!("Resolving {:?} relative to {:?}", relative, source);
+        if let Some(source_path) = source {
+            if let Some(parent) = source_path.as_path().parent() {
+                let to_try = parent.join(relative);
+                trace!("Looking in {:?}", to_try);
+                return Self::try_path(to_try);
+            }
+        }
+        internal_error!(
+            "No source path available when resolving a relative path");
+        None
+    }
+
+    fn try_path(path: PathBuf) -> Option<CanonPath> {
+        if let Ok(info) = fs::metadata(&path) {
+            if info.is_file() {
+                debug!("Resolved {:?} to {:?}", path,
+                        // Fairly sure this can never fail
+                        fs::canonicalize(&path).unwrap());
+                return CanonPath::from_path_buf(path);
+            }
+        }
+        None
     }
 
     fn resolve_with_maybe_context_impl(&self,
                                        path: &Path,
-                                       context: Option<&CanonPath>)
+                                       context: Option<&CanonPath>,
+                                       extra_path: Option<&CanonPath>)
                                        -> Option<CanonPath> {
         // Given some relative info, find a canonical file path
         // NOTE: Right now the relative info is a pathbuf, but this might
         // change later
-        // rough priority is include_paths -> workspace_folders > root > rel
+        // rough priority is include_paths -> workspace_folders > root
         // Obtain workspace
         trace!("Resolving {:?} at {:?} with roots {:?} and includes {:?}",
                path, context, self.roots, self.include_paths);
         let mut roots = vec![];
+
         if let Some(extra) = context.cloned() {
                 // Find the root path is the include path that is the longest
                 // pre-path of context, those are the include paths to use
@@ -165,19 +187,16 @@ impl PathResolver {
             } else {
                 roots.extend(self.roots.clone());
             }
-
+        if let Some(extra) = extra_path {
+            roots.push(extra.clone().into());
+        }
         // directory order is largely undefined, I think
         for dir in roots {
             for to_try in [dir.join(path), dir.join("1.4").join(path)] {
                 trace!("Looking in {:?}", to_try);
-                if let Ok(info) = fs::metadata(&to_try) {
-                    if info.is_file() {
-                        debug!("Resolved {:?} to {:?}",
-                               path,
-                               // Fairly sure this can never fail
-                               fs::canonicalize(&to_try).unwrap());
-                        return CanonPath::from_path_buf(to_try);
-                    }
+                let tried = Self::try_path(to_try.to_owned());
+                if tried.is_some() {
+                    return tried;
                 }
             }
         }
