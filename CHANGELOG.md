@@ -4,6 +4,9 @@
 -->
 # Change Log
 
+## 0.9.18
+
+
 ## 0.9.17
 - Fixed linter wrongly throwing an error on space after `defined` keyword
 - Fixed relative import resolution ("../" and "./")
