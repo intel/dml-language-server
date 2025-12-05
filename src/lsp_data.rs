@@ -80,7 +80,9 @@ where
 pub fn parse_uri(pathb: &str) -> Result<Uri, UriGenerationError> {
     let canonical = Path::new(pathb)
         .canonicalize()
-        .expect("Could not canonicalize file name");
+        .map_err(|e|UriGenerationError(
+            format!("Could not canonicalize path '{}'; {}",
+                    pathb, e)))?;
     let mut path = canonical.to_str().unwrap();
     // workaround for UNC path (see https://github.com/rust-lang/rust/issues/42869)
     // NOTE: The issue reference is dead but I trust the past

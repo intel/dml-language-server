@@ -549,8 +549,7 @@ impl <O: Output> InitActionContext<O> {
                         sorted_errors.iter()
                             .map(SourcedDMLError::to_diagnostic).collect(),
                         None)),
-                // The Url crate does not report interesting errors
-                Err(_) => error!("Could not convert {:?} to Url", file),
+                Err(e) => error!("Could not convert {:?} to Url; {}", file, e),
             }
         }
         notifier.notify_end_diagnostics();
