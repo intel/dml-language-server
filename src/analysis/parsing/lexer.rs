@@ -34,7 +34,7 @@ fn ident(lex: &mut Lexer<'_, TokenKind>) -> bool {
               "unsigned", "void", "volatile", "while",
               "delete", "inline", "new", "restrict", "template", "throw", "try",
               "catch", "this",
-              // reserved from C++, specutively
+              // reserved from C++, speculatively
               "class", "namespace", "private", "protected", "public", "using",
               "virtual")
 }
@@ -49,50 +49,48 @@ fn char_constant(_lex: &mut Lexer<'_, TokenKind>) -> bool {
     true
 }
 
-// TODO: These will break on unicode characters
-// NOTE: I am not sure whether out current input handling breaks previous
-//       to this breaking, on unicode characters
-fn handle_multiline_comment(lex: &mut Lexer<'_, TokenKind>) -> bool {
-    use logos::internal::LexerInternal;
+fn handle_multiline_comment(lex: &mut Lexer<'_, TokenKind>) -> TokenKind {
     if lex.slice() == "/*" {
         loop {
-            if let Some(b'*') = lex.read() {
-                lex.bump(1);
-                if let Some(b'/') = lex.read() {
+            if lex.remainder().starts_with('*') {
+                lex.bump('*'.len_utf8());
+                if lex.remainder().starts_with('/') {
+                    lex.bump('/'.len_utf8());
                     break;
                 }
             } else {
-                let first_four_bytes = &lex.remainder();
-                if let Some(c) = first_four_bytes.chars().next() {
+                let next_char = &lex.remainder().chars().next();
+                if let Some(c) = next_char {
                     lex.bump(c.len_utf8());
                 } else {
-                    return false;
+                    return TokenKind::LexerError;
                 }
             }
         }
     }
-    lex.bump(1);
-    true
+    TokenKind::MultilineComment
 }
 
-fn handle_cblock(lex: &mut Lexer<'_, TokenKind>) -> bool {
-    use logos::internal::LexerInternal;
+fn handle_cblock(lex: &mut Lexer<'_, TokenKind>) -> TokenKind {
     if lex.slice() == "%{" {
         loop {
-            if let Some(b'%') = lex.read() {
-                lex.bump(1);
-                if let Some(b'}') = lex.read() {
+            if lex.remainder().starts_with('%') {
+                lex.bump('%'.len_utf8());
+                if lex.remainder().starts_with('}') {
+                    lex.bump('}'.len_utf8());
                     break;
-                } else {
-                    lex.bump(1);
                 }
             } else {
-                lex.bump(1);
+                let next_char = &lex.remainder().chars().next();
+                if let Some(c) = next_char {
+                    lex.bump(c.len_utf8());
+                } else {
+                    return TokenKind::LexerError;
+                }
             }
         }
     }
-    lex.bump(1);
-    true
+    TokenKind::CBlock
 }
 
 #[derive(Logos, Debug, PartialEq, Copy, Clone)]
@@ -418,7 +416,7 @@ pub enum TokenKind {
     Newline,
     #[regex(r"[\t\r ]+")]
     Whitespace,
-    #[regex(r"(//[^\n]*\n?)")]
+    #[regex(r"(//[^\n]*\n?)", allow_greedy=true)]
     Comment,
     #[regex(r"(/\*)", handle_multiline_comment)]
     MultilineComment,
@@ -602,7 +600,11 @@ mod test {
         ($input: expr, $ ( $e: expr),*) => {
             let mut lexer = TokenKind::lexer($input);
             $(
-                assert_eq!(lexer.next(), Some(Ok($e)));
+                {
+                    let next = lexer.next();
+                    assert_eq!(next, Some(Ok($e)),
+                               "Got {:?}, expected {:?}", next, $e);
+                }
             )*
             assert_eq!(lexer.next(), None);
         };
@@ -642,6 +644,36 @@ mod test {
     fn multiline_comment() {
         check_lexer_stream!("/* ** **/", MultilineComment);
         check_lexer_stream!("/* \n* / * \n */", MultilineComment);
+        check_lexer_stream!("/* \n* /* \n */", MultilineComment);
+        check_lexer_stream!("/* \u{1F608} */", MultilineComment);
+        check_lexer_stream!("/* \n* ... \n */ dml",
+                            MultilineComment, Whitespace, DML
+        );
+    }
+
+    #[test]
+    fn c_block() {
+        check_lexer_stream!("%{ ** %}", CBlock);
+        check_lexer_stream!("%{ \n* % } \n %}", CBlock);
+        check_lexer_stream!("%{ \n* {% \n %}", CBlock);
+        check_lexer_stream!("%{ \u{1F608} %}", CBlock);
+        check_lexer_stream!("%{ \n* ... \n %} device",
+                            CBlock, Whitespace, Device);
+    }
+
+    #[test]
+    fn test_unended_cblock() {
+        let mut lexer = TokenKind::lexer("%{ \n");
+        assert_eq!(lexer.next(), Some(Ok(TokenKind::LexerError)));
+        let mut lexer = TokenKind::lexer("%{ \n%");
+        assert_eq!(lexer.next(), Some(Ok(TokenKind::LexerError)));
+    }
+    #[test]
+    fn test_unended_multiline_comment() {
+        let mut lexer = TokenKind::lexer("/* \n");
+        assert_eq!(lexer.next(), Some(Ok(TokenKind::LexerError)));
+        let mut lexer = TokenKind::lexer("/* \n*");
+        assert_eq!(lexer.next(), Some(Ok(TokenKind::LexerError)));
     }
 
     #[test]

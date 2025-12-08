@@ -386,9 +386,11 @@ impl <'a> FileParser<'a> {
                     let captures = MULTILINE_END.captures(content).unwrap();
                     match (captures.get(2), captures.get(3)) {
                         (Some(case1), None) =>
-                            self.current_column = case1.as_str().len() as u32,
+                            self.current_column =
+                              case1.as_str().encode_utf16().count() as u32,
                         (None, Some(case2)) =>
-                            self.current_column += case2.as_str().len() as u32,
+                            self.current_column +=
+                              case2.as_str().encode_utf16().count() as u32,
                         _ => panic!("Internal Parser Error: \
                                      Broken multiline comment handling"),
                     }
@@ -407,9 +409,10 @@ impl <'a> FileParser<'a> {
                     let captures = MULTILINE_END.captures(content).unwrap();
                     let end_column = match (captures.get(2), captures.get(3)) {
                         (Some(case1), None) =>
-                            case1.as_str().len() as u32,
+                            case1.as_str().encode_utf16().count() as u32,
                         (None, Some(case2)) =>
-                            self.current_column + case2.as_str().len() as u32,
+                            self.current_column
+                            + case2.as_str().encode_utf16().count() as u32,
                         _ => panic!("Internal Parser Error: \
                                      Broken cblock handling"),
                     };
@@ -437,7 +440,7 @@ impl <'a> FileParser<'a> {
     }
 
     fn set_next_tok(&mut self, kind: TokenKind) {
-        let slice_len = self.lexer.slice().len() as u32;
+        let slice_len = self.lexer.slice().encode_utf16().count() as u32;
         self.next_token = Some(Token::new(
             kind,
             Position::<ZeroIndexed>::from_u32(self.previous_line,
@@ -559,6 +562,24 @@ mod test {
                 kind: TokenKind::LBrace,
             }
         );
+    }
+
+    // NOTE: The server currently only supports UTF-16
+    // position encoding (which is the default, and required)
+    // Meaning larger-than-utf8 characters must be broken into
+    // utf-16 pieces
+    #[test]
+    fn unicode_column_numbering() {
+        // Here the 3-byte unicode char becomes 2 utf-16 chars,
+        // meaning what would normally be a 8-char prefix is actually
+        // 9
+        check_parser_stream!(
+            "/* \u{1F608} */ dml",
+            Token {
+                range: ZeroRange::from_u32(0, 0, 9, 12),
+                prefixrange: ZeroRange::from_u32(0, 0, 0, 9),
+                kind: TokenKind::DML,
+            });
     }
 
     #[test]

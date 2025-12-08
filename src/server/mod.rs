@@ -686,6 +686,7 @@ fn server_caps<O: Output>(_ctx: &ActionContext<O>) -> ServerCapabilities {
         inline_value_provider: None,
         linked_editing_range_provider: None,
         moniker_provider: None,
+        // NOTE: This means we default to utf-16
         position_encoding: None,
         semantic_tokens_provider: None,
         text_document_sync: Some(TextDocumentSyncCapability::Options(
