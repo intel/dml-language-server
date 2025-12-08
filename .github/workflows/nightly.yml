@@ -1,12 +1,10 @@
-name: Archive Binary
+name: Nightly Test
 
 permissions: read-all
 
 on:
-  push:
-      branches: [ "main" ]
-  pull_request:
-      branches: [ "main" ]
+  schedule:
+      - cron: "0 0 * * *"
   workflow_dispatch:
 jobs:
   build-package:
@@ -24,6 +22,7 @@ jobs:
     with:
       binary_name: ${{ matrix.binary }}
       output_binary_name: dml-server-${{ matrix.os }}
+      parity_test_path: ./dmlc-repo/test
       log-dir: ${{ matrix.binary }}-logs
       os: ${{ matrix.os }}
   check-package:

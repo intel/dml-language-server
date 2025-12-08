@@ -759,4 +759,48 @@ mod test {
             kind: TokenKind::CondOp,
         }, TokenKind::IntConstant.description())]);
     }
+
+        // Sanity to check we never break simple parsing
+    #[test]
+    #[ignore]
+    fn parity_test() {
+        let test_root = std::env::var("PARITY_TEST_ROOT").unwrap();
+        let mut file_count = 0;
+        let failed_files: Vec<_> = walkdir::WalkDir::new(test_root)
+            .into_iter()
+            .filter_map(|r|r.ok())
+            .filter(|e|!e.file_type().is_dir())
+            .filter_map(|e|e.path().to_str().map(ToString::to_string))
+            .filter(|f|!f.contains("errors")
+                    && !f.contains("1.2")
+                    && !f.contains("bugs")
+                    && !f.contains("legacy")
+                    && f.ends_with(".dml"))
+            .filter_map(|f|{
+                let read_file = std::fs::read_to_string(&f);
+                if let Err(e) = read_file {
+                    return Some(format!("Failed to read {}; {}", f, e));
+                }
+                let read_file = read_file.unwrap();
+                let lexer = TokenKind::lexer(&read_file);
+                let errors: Vec<_> = lexer.filter(
+                    |tok|matches!(
+                        tok,
+                        Ok(TokenKind::LexerError) | Err(_))).collect();
+                if !errors.is_empty() {
+                    return Some(format!(
+                        "Failed to parse {} with the following errors: {}",
+                        f,
+                        errors.into_iter().map(|e|format!("{:?}", e))
+                            .collect::<Vec<_>>().join(", ")));
+                }
+                file_count += 1;
+                None
+            }).collect();
+        assert!(failed_files.is_empty(),
+                "{}",
+                failed_files.join("\n"));
+        println!("Successfully parsed {} files from PARITY_TEST_ROOT",
+                 file_count);
+    }
 }
