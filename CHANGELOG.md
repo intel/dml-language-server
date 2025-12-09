@@ -5,7 +5,7 @@
 # Change Log
 
 ## 0.9.18
-
+- Fixed a rare case where the DLS would crash when reporting device contexts
 
 ## 0.9.17
 - Fixed linter wrongly throwing an error on space after `defined` keyword

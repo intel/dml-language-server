@@ -1075,13 +1075,18 @@ impl RequestAction for GetKnownContextsRequest {
             })
            .filter_map(
                |(path, b, r)|
-               parse_uri(path.as_str()).ok()
-                   .map(|uri|
-                        ContextDefinitionParam {
+               parse_uri(path.as_str())
+                   .map_or_else(
+                    |e|{
+                        internal_error!("Wanted to report a device context which could not be converted to an URI; {}", e);
+                        None
+                    },
+                    |uri|
+                        Some(ContextDefinitionParam {
                             kind: ContextDefinitionKindParam::Device(uri),
                             active: b,
                             ready: r,
-                        }))
+                        })))
            .collect()
         )
     }
