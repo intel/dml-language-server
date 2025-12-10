@@ -386,9 +386,11 @@ impl <'a> FileParser<'a> {
                     let captures = MULTILINE_END.captures(content).unwrap();
                     match (captures.get(2), captures.get(3)) {
                         (Some(case1), None) =>
-                            self.current_column = case1.as_str().len() as u32,
+                            self.current_column =
+                              case1.as_str().encode_utf16().count() as u32,
                         (None, Some(case2)) =>
-                            self.current_column += case2.as_str().len() as u32,
+                            self.current_column +=
+                              case2.as_str().encode_utf16().count() as u32,
                         _ => panic!("Internal Parser Error: \
                                      Broken multiline comment handling"),
                     }
@@ -407,9 +409,10 @@ impl <'a> FileParser<'a> {
                     let captures = MULTILINE_END.captures(content).unwrap();
                     let end_column = match (captures.get(2), captures.get(3)) {
                         (Some(case1), None) =>
-                            case1.as_str().len() as u32,
+                            case1.as_str().encode_utf16().count() as u32,
                         (None, Some(case2)) =>
-                            self.current_column + case2.as_str().len() as u32,
+                            self.current_column
+                            + case2.as_str().encode_utf16().count() as u32,
                         _ => panic!("Internal Parser Error: \
                                      Broken cblock handling"),
                     };
@@ -437,7 +440,7 @@ impl <'a> FileParser<'a> {
     }
 
     fn set_next_tok(&mut self, kind: TokenKind) {
-        let slice_len = self.lexer.slice().len() as u32;
+        let slice_len = self.lexer.slice().encode_utf16().count() as u32;
         self.next_token = Some(Token::new(
             kind,
             Position::<ZeroIndexed>::from_u32(self.previous_line,
@@ -559,6 +562,24 @@ mod test {
                 kind: TokenKind::LBrace,
             }
         );
+    }
+
+    // NOTE: The server currently only supports UTF-16
+    // position encoding (which is the default, and required)
+    // Meaning larger-than-utf8 characters must be broken into
+    // utf-16 pieces
+    #[test]
+    fn unicode_column_numbering() {
+        // Here the 3-byte unicode char becomes 2 utf-16 chars,
+        // meaning what would normally be a 8-char prefix is actually
+        // 9
+        check_parser_stream!(
+            "/* \u{1F608} */ dml",
+            Token {
+                range: ZeroRange::from_u32(0, 0, 9, 12),
+                prefixrange: ZeroRange::from_u32(0, 0, 0, 9),
+                kind: TokenKind::DML,
+            });
     }
 
     #[test]
@@ -737,5 +758,49 @@ mod test {
             prefixrange: ZeroRange::from_u32(0, 0, 5, 6),
             kind: TokenKind::CondOp,
         }, TokenKind::IntConstant.description())]);
+    }
+
+        // Sanity to check we never break simple parsing
+    #[test]
+    #[ignore]
+    fn parity_test() {
+        let test_root = std::env::var("PARITY_TEST_ROOT").unwrap();
+        let mut file_count = 0;
+        let failed_files: Vec<_> = walkdir::WalkDir::new(test_root)
+            .into_iter()
+            .filter_map(|r|r.ok())
+            .filter(|e|!e.file_type().is_dir())
+            .filter_map(|e|e.path().to_str().map(ToString::to_string))
+            .filter(|f|!f.contains("errors")
+                    && !f.contains("1.2")
+                    && !f.contains("bugs")
+                    && !f.contains("legacy")
+                    && f.ends_with(".dml"))
+            .filter_map(|f|{
+                let read_file = std::fs::read_to_string(&f);
+                if let Err(e) = read_file {
+                    return Some(format!("Failed to read {}; {}", f, e));
+                }
+                let read_file = read_file.unwrap();
+                let lexer = TokenKind::lexer(&read_file);
+                let errors: Vec<_> = lexer.filter(
+                    |tok|matches!(
+                        tok,
+                        Ok(TokenKind::LexerError) | Err(_))).collect();
+                if !errors.is_empty() {
+                    return Some(format!(
+                        "Failed to parse {} with the following errors: {}",
+                        f,
+                        errors.into_iter().map(|e|format!("{:?}", e))
+                            .collect::<Vec<_>>().join(", ")));
+                }
+                file_count += 1;
+                None
+            }).collect();
+        assert!(failed_files.is_empty(),
+                "{}",
+                failed_files.join("\n"));
+        println!("Successfully parsed {} files from PARITY_TEST_ROOT",
+                 file_count);
     }
 }

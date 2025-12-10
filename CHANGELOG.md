@@ -6,6 +6,10 @@
 
 ## 0.9.18
 - Fixed a rare case where the DLS would crash when reporting device contexts
+- Fixed issue where the DLS may fail to parse files with unended cblock headers
+  or footers
+- The DLS will no longer fail to parse files with unicode characters in cblock
+  header or footers, or in multiline comments
 
 ## 0.9.17
 - Fixed linter wrongly throwing an error on space after `defined` keyword

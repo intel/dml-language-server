@@ -14,6 +14,10 @@ on:
         description: "Name of uploaded binary artifact"
         type: string
         default: "dls"
+      parity_test_path:
+        description: "If set, will run parser parity test on .dml files under path (see parser/test.rs for details on ignored folders and tests)"
+        type: string
+        default: ""
       log-dir:
         description: "Folder to put cargo logs in"
         required: false
@@ -46,6 +50,18 @@ jobs:
         run: |
           set -o pipefail
           cargo test --verbose  2>&1 | tee -a ${{ inputs.log-dir }}/test.log
+      - name: Prepare Parity Test
+        if: ${{ inputs.parity_test_path != '' }}
+        uses: actions/checkout@v4
+        with:
+          repository: intel/device-modeling-language
+          path: ${{ inputs.parity_test_path }}
+      - name: Parity Test
+        shell: bash
+        if: ${{ inputs.parity_test_path != '' }}
+        run: |
+          set -o pipefail
+          PARITY_TEST_ROOT=${{ inputs.parity_test_path }}/test cargo test --verbose -- --ignored --nocapture 2>&1 | tee -a ${{ inputs.log-dir }}/test.log
       - name: Clippy
         shell: bash
         if: ${{ success() || failure() }}
