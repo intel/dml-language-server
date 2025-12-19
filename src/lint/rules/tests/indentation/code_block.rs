@@ -354,3 +354,44 @@ fn toplevel_hashif_incorrect() {
     );
     assert_snippet(TOPLEVEL_HASHIF_INCORRECT, expected_errors, &rules);
 }
+
+static NESTED_HASHIF_CORRECT: &str = "
+constant FEATURE_SUPPORTED = false;
+
+method signal_feature() {
+    #if (!FEATURE_SUPPORTED) {
+        return 1;
+    } #else {
+        return 0;
+    }
+}
+";
+
+#[test]
+fn nested_hashif_correct() {
+    let rules = set_up();
+    assert_snippet(NESTED_HASHIF_CORRECT, vec![], &rules);
+}
+
+static NESTED_HASHIF_INCORRECT: &str = "
+constant FEATURE_SUPPORTED = false;
+
+method signal_feature() {
+    #if (!FEATURE_SUPPORTED) {
+return 1;
+    } #else {
+            return 0;
+    }
+}
+";
+
+#[test]
+fn nested_hashif_incorrect() {
+    let rules = set_up();
+    let expected_errors = define_expected_errors!(
+        RuleType::IN3,
+        (5, 5, 0, 9),
+        (7, 7, 12, 21),
+    );
+    assert_snippet(NESTED_HASHIF_INCORRECT, expected_errors, &rules);
+}
