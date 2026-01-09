@@ -152,7 +152,7 @@ impl TreeElement for CompoundContent {
     fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, aux: AuxParams) {
         rules.sp_brace.check(SpBracesArgs::from_compound(self), acc);
         rules.indent_code_block.check(IndentCodeBlockArgs::from_compound_content(self, aux.depth), acc);
-        rules.indent_closing_brace.check(IndentClosingBraceArgs::from_compound_content(self, aux.depth), acc);
+        rules.indent_closing_brace.check(IndentClosingBraceArgs::from_compound_content(self, aux.parent_statement_start_col), acc);
     }
     fn should_increment_depth(&self) -> bool {
         true
@@ -438,6 +438,9 @@ impl TreeElement for IfContent {
                      &self.rparen,
                      &self.truebranch,
                      &self.elsebranch)
+    }
+    fn should_save_outer_start_col(&self) -> bool { 
+        true
     }
     fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, _aux: AuxParams) {
         rules.nsp_inparen.check(NspInparenArgs::from_if(self), acc);
@@ -1122,7 +1125,7 @@ impl TreeElement for SwitchContent {
     fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>,
                       rules: &CurrentRules, aux: AuxParams)
     {
-        rules.indent_closing_brace.check(IndentClosingBraceArgs::from_switch_content(self, aux.depth), acc);
+        rules.indent_closing_brace.check(IndentClosingBraceArgs::from_switch_content(self, self.switchtok.range().col_start.0), acc);
         rules.indent_paren_expr.check(IndentParenExprArgs::from_switch(self), acc);
     }
 }

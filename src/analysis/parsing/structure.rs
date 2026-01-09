@@ -31,6 +31,8 @@ use crate::analysis::FileSpec;
 use crate::span::Range;
 use crate::vfs::TextFile;
 
+use super::parser::Token;
+
 fn object_contexts(context: &ParseContext)
                    -> (ParseContext, ParseContext) {
     fn understands_semi(token: TokenKind) -> bool {
@@ -238,6 +240,9 @@ impl TreeElement for MethodContent {
             });
         }
         errors
+    }
+    fn should_save_outer_start_col(&self) -> bool {
+        true
     }
     fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, aux: AuxParams) {
         rules.nsp_funpar.check(NspFunparArgs::from_method(self), acc);
@@ -731,7 +736,7 @@ impl TreeElement for ObjectStatementsContent {
     fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, aux: AuxParams) {
         rules.sp_brace.check(SpBracesArgs::from_obj_stmts(self), acc);
         rules.indent_code_block.check(IndentCodeBlockArgs::from_obj_stmts_content(self, aux.depth), acc);
-        rules.indent_closing_brace.check(IndentClosingBraceArgs::from_obj_stmts_content(self, aux.depth), acc);
+        rules.indent_closing_brace.check(IndentClosingBraceArgs::from_obj_stmts_content(self, aux.parent_statement_start_col), acc);
     }
     fn should_increment_depth(&self) -> bool {
         matches!(self, ObjectStatementsContent::List(lbrace, list, rbrace)
@@ -1061,6 +1066,9 @@ impl TreeElement for RegisterContent {
         }
     }
     fn references<'a>(&self, _accumulator: &mut Vec<Reference>, _file: FileSpec<'a>) {}
+    fn should_save_outer_start_col(&self) -> bool {
+        true
+    }
 }
 
 impl Parse<DMLObjectContent> for RegisterContent {
@@ -1130,6 +1138,9 @@ impl TreeElement for FieldContent {
         }
     }
     fn references<'a>(&self, _accumulator: &mut Vec<Reference>, _file: FileSpec<'a>) {}
+    fn should_save_outer_start_col(&self) -> bool {
+        true
+    }
 }
 
 impl Parse<DMLObjectContent> for FieldContent {
@@ -1615,6 +1626,9 @@ impl TreeElement for TypedefContent {
     fn post_parse_sanity(&self, _file: &TextFile) -> Vec<LocalDMLError> {
         self.decl.ensure_named()
     }
+    fn should_save_outer_start_col(&self) -> bool {
+        true
+    }
 }
 
 // Special case, to distinguish between extern cdecl and extern typedef, the
@@ -1952,6 +1966,11 @@ impl TreeElement for DMLObjectContent {
     }
     fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, aux: AuxParams) {
         rules.indent_continuation_line.check(acc, IndentContinuationLineArgs::from_dml_object_content(self, aux.depth));
+    }
+    fn save_outer_start_col(&self, aux: &mut AuxParams) {
+        if let Some(token) = self.tokens().first() {
+            aux.parent_statement_start_col = token.range.col_start.0;
+        }
     }
 }
 
