@@ -107,8 +107,11 @@ pub trait TreeElement {
     }
 
     fn style_check(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, mut aux: AuxParams) {
+        if self.should_save_outer_start_col() {
+            self.save_outer_start_col(&mut aux);
+        }
         if self.should_increment_depth() {
-            aux.depth += 1;
+            aux.depth = aux.depth.wrapping_add(1);
         }
         self.evaluate_rules(acc, rules, aux);
         for sub in self.subs() {
@@ -116,8 +119,13 @@ pub trait TreeElement {
         }
     }
     fn should_increment_depth(&self) -> bool {false}  // default don't increment
+    fn should_save_outer_start_col(&self) -> bool {false} // default don't save
     fn evaluate_rules(&self, _acc: &mut Vec<DMLStyleError>, _rules: &CurrentRules, _aux: AuxParams) {} // default NOOP
-}
+    fn save_outer_start_col(&self, aux: &mut AuxParams) {
+        if let Some(token) = self.tokens().first() {
+            aux.parent_statement_start_col = token.range.col_start.0;
+        }
+    }}
 
 impl <T: ?Sized + TreeElement> ReferenceContainer for T {
     fn collect_references<'a>(&self,

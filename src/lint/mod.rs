@@ -245,7 +245,7 @@ impl LinterAnalysis {
 fn begin_style_check(ast: TopAst, file: &str, rules: &CurrentRules) -> Result<Vec<DMLStyleError>, Error> {
     let (mut invalid_lint_annot, lint_annot) = obtain_lint_annotations(file);
     let mut linting_errors: Vec<DMLStyleError> = vec![];
-    ast.style_check(&mut linting_errors, rules, AuxParams { depth: 0 });
+    ast.style_check(&mut linting_errors, rules, AuxParams { depth: 0, parent_statement_start_col: 0 });
 
     // Per line checks
     let lines: Vec<&str> = file.lines().collect();
@@ -438,6 +438,8 @@ pub struct AuxParams {
     // Individual nodes update depth to affect level of their
     // nested TreeElements. See more in src/lint/README.md
     pub depth: u32,
+    pub parent_statement_start_col: u32,
+    // pub get_parent_start_col: fn(T: dyn TreeElement) -> u32,
 }
 
 pub mod rules;

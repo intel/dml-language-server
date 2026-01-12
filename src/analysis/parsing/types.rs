@@ -56,7 +56,7 @@ impl TreeElement for StructTypeContent {
     }
     fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, aux: AuxParams) {
         rules.indent_code_block.check(IndentCodeBlockArgs::from_struct_type_content(self, aux.depth), acc);
-        rules.indent_closing_brace.check(IndentClosingBraceArgs::from_struct_type_content(self, aux.depth), acc);
+        rules.indent_closing_brace.check(IndentClosingBraceArgs::from_struct_type_content(self, self.structtok.range().col_start.0), acc);
         rules.sp_brace.check(SpBracesArgs::from_struct_type_content(self), acc);
     }
     fn should_increment_depth(&self) -> bool {
@@ -139,7 +139,7 @@ impl TreeElement for LayoutContent {
     }
     fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, aux: AuxParams) {
         rules.indent_code_block.check(IndentCodeBlockArgs::from_layout_content(self, aux.depth), acc);
-        rules.indent_closing_brace.check(IndentClosingBraceArgs::from_layout_content(self, aux.depth), acc);
+        rules.indent_closing_brace.check(IndentClosingBraceArgs::from_layout_content(self, self.layout.range().col_start.0), acc);
         rules.sp_brace.check(SpBracesArgs::from_layout_content(self), acc);
     }
     fn should_increment_depth(&self) -> bool {
@@ -317,9 +317,12 @@ impl TreeElement for BitfieldsContent {
     fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, aux: AuxParams) {
         rules.sp_brace.check(SpBracesArgs::from_bitfields_content(self), acc);
         rules.indent_code_block.check(IndentCodeBlockArgs::from_bitfields_content(self, aux.depth), acc);
-        rules.indent_closing_brace.check(IndentClosingBraceArgs::from_bitfields_content(self, aux.depth), acc);
+        rules.indent_closing_brace.check(IndentClosingBraceArgs::from_bitfields_content(self, self.bitfields.range().col_start.0), acc);
     }
     fn should_increment_depth(&self) -> bool {
+        true
+    }
+    fn should_save_outer_start_col(&self) -> bool {
         true
     }
 }
