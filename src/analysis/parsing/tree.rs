@@ -108,7 +108,7 @@ pub trait TreeElement {
 
     fn style_check(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, mut aux: AuxParams) {
         if self.should_increment_depth() {
-            aux.depth += 1;
+            aux.depth.increase_depth();
         }
         self.evaluate_rules(acc, rules, aux);
         for sub in self.subs() {
