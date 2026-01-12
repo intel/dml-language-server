@@ -222,37 +222,8 @@ fn fp_to_symbol_refs<O: Output>
             }
         },
     }
+    debug!("Resolved to symbols: {:?}", definitions);
     Ok(definitions)
-}
-
-fn handle_default_remapping<O: Output>
-    (ctx: &InitActionContext<O>,
-     symbols: &[SymbolRef],
-     fp: &ZeroFilePosition) -> Option<HashSet<ZeroSpan>>
-{
-    let analysis = ctx.analysis.lock().unwrap();
-    let refr_opt = analysis.reference_at_pos(fp);
-    // NOTE: Because the call to this is preceded by a symbol lookup,
-    // it is probably safe to discard an error here
-    if let Ok(Some(refr)) = refr_opt {
-        if refr.to_string().as_str() == "default" {
-            // If we are at a defaut reference,
-            // remap symbol references to methods
-            // to the correct decl site, leave others as-is
-            return Some(symbols.iter()
-                .flat_map(|d|'sym: {
-                    let sym = d.lock().unwrap();
-                    if sym.kind == DMLSymbolKind::Method {
-                        if let Some(loc) = sym.default_mappings
-                            .get(refr.loc_span()) {
-                                break 'sym vec![*loc];
-                            }
-                    }
-                    vec![]
-                }).collect());
-        }
-    }
-    None
 }
 
 /// The result of a deglob action for a single wildcard import.
@@ -614,12 +585,9 @@ impl RequestAction for GotoDeclaration {
         let mut limitations = HashSet::new();
         match fp_to_symbol_refs(&fp, &ctx, &mut limitations) {
             Ok(symbols) => {
-                let unique_locations = handle_default_remapping(&ctx,
-                                                                &symbols,
-                                                                &fp)
-                    .unwrap_or_else(||symbols.into_iter()
+                let unique_locations = symbols.into_iter()
                         .flat_map(|d|d.lock().unwrap().declarations.clone())
-                        .collect());
+                        .collect::<HashSet<_>>();
                 let lsp_locations = unique_locations.into_iter()
                     .map(|l|ls_util::dls_to_location(&l))
                     .collect();
@@ -677,13 +645,9 @@ impl RequestAction for GotoDefinition {
         let mut limitations = HashSet::new();
         match fp_to_symbol_refs(&fp, &ctx, &mut limitations) {
             Ok(symbols) => {
-                let unique_locations = handle_default_remapping(&ctx,
-                                                                &symbols,
-                                                                &fp)
-                    .unwrap_or_else(||symbols.into_iter()
+                let unique_locations = symbols.into_iter()
                         .flat_map(|d|d.lock().unwrap().definitions.clone())
-                        .collect()
-                        );
+                        .collect::<HashSet<_>>();
 
                 let lsp_locations: Vec<_> = unique_locations.into_iter()
                     .map(|l|ls_util::dls_to_location(&l))
@@ -704,7 +668,7 @@ impl RequestAction for GotoDefinition {
     }
 }
 
-fn filter_out_unpointed_defaults(fp: &ZeroFilePosition,
+/* fn filter_out_unpointed_defaults(fp: &ZeroFilePosition,
                                  symbols: &[SymbolRef])
                                  -> HashSet<ZeroSpan> {
     symbols
@@ -721,7 +685,7 @@ fn filter_out_unpointed_defaults(fp: &ZeroFilePosition,
             }).cloned().collect::<Vec<_>>()
         })
         .collect()
-}
+} */
 
 impl RequestAction for References {
     type Response = ResponseWithMessage<Vec<Location>>;
@@ -761,7 +725,9 @@ impl RequestAction for References {
         let mut limitations = HashSet::new();
         match fp_to_symbol_refs(&fp, &ctx, &mut limitations) {
             Ok(symbols) => {
-                let unique_locations = filter_out_unpointed_defaults(&fp, &symbols);
+                let unique_locations = symbols.into_iter()
+                        .flat_map(|d|d.lock().unwrap().references.clone())
+                        .collect::<HashSet<_>>();
                 let lsp_locations: Vec<_> = unique_locations.into_iter()
                     .map(|l|ls_util::dls_to_location(&l))
                     .collect();

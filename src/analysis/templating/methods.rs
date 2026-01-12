@@ -466,6 +466,14 @@ impl DefaultCallReference {
             DefaultCallReference::Ambiguous(_) => None,
         }
     }
+
+    pub fn flat_refs(&self) -> Vec<&Arc<DMLMethodRef>> {
+        match self {
+            DefaultCallReference::Valid(method) => vec![method],
+            DefaultCallReference::Ambiguous(methods) =>
+                methods.iter().collect()
+        }
+    }
 }
 
 // This is roughly equivalent with a non-codegenned method in DMLC

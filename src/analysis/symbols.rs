@@ -2,7 +2,7 @@
 //  SPDX-License-Identifier: Apache-2.0 and MIT
 use std::sync::Arc;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::Mutex;
 
 use crate::analysis::{Named, LocationSpan};
@@ -11,7 +11,7 @@ use crate::analysis::parsing::tree::ZeroSpan;
 use crate::analysis::structure::objects::{CompObjectKind};
 
 use crate::analysis::structure::expressions::DMLString;
-use crate::analysis::templating::objects::DMLObject;
+use crate::analysis::templating::objects::{DMLObject, DMLNamedMember, StructureKey};
 use crate::analysis::templating::methods::{DMLMethodRef};
 use crate::analysis::templating::types::DMLResolvedType;
 use crate::analysis::templating::traits::DMLTemplate;
@@ -112,6 +112,10 @@ impl SimpleSymbol {
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum SymbolSource {
     DMLObject(DMLObject),
+    // (key of containing object, method ref)
+    // TODO: same principle for shared methods? likely not, there is
+    // no object for the topmost method
+    Method(StructureKey, Arc<DMLMethodRef>),
     MethodArg(Arc<DMLMethodRef>, DMLString),
     MethodLocal(Arc<DMLMethodRef>, DMLString),
     // TODO: RC this if it's expensive
@@ -153,6 +157,17 @@ impl SymbolSource {
             (_, _) => self == other
         }
     }
+
+    pub fn maybe_name(&self) -> Option<&str> {
+        match self {
+            SymbolSource::DMLObject(obj) => obj.as_shallow().map(|o| o.identity()),
+            SymbolSource::Method(_, methref) => Some(methref.identity()),
+            SymbolSource::MethodArg(_, name) => Some(&name.val),
+            SymbolSource::MethodLocal(_, name) => Some(&name.val),
+            SymbolSource::Type(_) => None,
+            SymbolSource::Template(templ) => Some(&templ.name),
+        }
+    }
 }
 
 // Intentionally omitted implementation of clone, should not be done
@@ -162,22 +177,24 @@ pub struct Symbol {
     pub id: SymbolID,
     pub loc: ZeroSpan,
     pub kind: DMLSymbolKind,
+    // Bases are the topmost declarations of this symbol
+    pub bases: Vec<ZeroSpan>,
+    // Definitions are the sites which define at least part of this symbol
     pub definitions: Vec<ZeroSpan>,
+    // Declarations are the sites which declare this symbol
     pub declarations: Vec<ZeroSpan>,
+    // References are all locations that may refer to this symbol
     pub references: HashSet<ZeroSpan>,
     // NOTE: The meaning of 'implementation' varies with symbol kind
-    // For methods and interfaces, this is straightforward
-    // For templates, it will give all declarations for all objects that
-    // directly or indirectly implement the template
+    // - For interfaces this is straightforward
+    // - For templates it will give all direct instantiations of the template
+    // - For methods, it gives all methods that directly override this method,
+    //   note that when presented to the user, we give both direct and indirect overrides
     // TODO: For objects, we could give the locations of in-eachs that affect it
     // there is no way to go to these specs without finding definitions of
     // some param or method set in them
-    pub implementations: Vec<ZeroSpan>,
-    pub bases: Vec<ZeroSpan>,
+    pub implementations: HashSet<ZeroSpan>,
     pub source: SymbolSource,
-    // Used for method symbols only, maps default references
-    // to the method_decl they should resolve to
-    pub default_mappings: HashMap<ZeroSpan, ZeroSpan>,
     // TODO: RC or box this if it's expensive
     pub typed: Option<DMLResolvedType>,
 }
@@ -286,10 +303,21 @@ impl Symbol {
             definitions: Vec::default(),
             declarations: Vec::default(),
             references: HashSet::default(),
-            implementations: Vec::default(),
+            implementations: HashSet::default(),
             bases: Vec::default(),
-            default_mappings: HashMap::default(),
             typed: None,
         }
+    }
+
+    // Prints appropriate info about a method without clogging the output
+    // with minutiae for symbols that may contain lots of sub-data (methods)
+    pub fn medium_debug_info(&self) -> String {
+        format!(
+            "Symbol({}, {:?} at loc: {:?})",
+            self.source.maybe_name()
+                .map_or(format!("id={}", self.id),
+                        |name| format!("{} (id={})", name, self.id)),
+            self.kind,
+            self.loc)
     }
 }
