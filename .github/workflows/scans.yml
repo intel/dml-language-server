@@ -44,7 +44,7 @@ jobs:
           cargo install --locked cargo-outdated
           cargo outdated --version
           set -o pipefail
-          cargo outdated  --exit-code 1 2>&1 | tee -a ${{ inputs.log-dir }}/outdated-log
+          cargo outdated --ignore $(paste -sd "," Cargo_Outdated_Ignore)  --exit-code 1 2>&1 | tee -a ${{ inputs.log-dir }}/outdated-log
       - name: Upload logs
         if: ${{ success() || failure() }}
         uses: actions/upload-artifact@v4
