@@ -356,7 +356,9 @@ pub struct SymbolStorage {
     pub param_symbols: HashMap<(ZeroSpan, String),
                                HashMap<StructureKey, SymbolRef>>,
     pub object_symbols: HashMap<StructureKey, SymbolRef>,
-    pub method_symbols: HashMap<ZeroSpan, SymbolRef>,
+    // This is doubly-indexed, by decl location and then
+    // by parent object key
+    pub method_symbols: HashMap<ZeroSpan, HashMap<StructureKey, SymbolRef>>,
     // constants, sessions, saveds, hooks, method args
     pub variable_symbols: HashMap<ZeroSpan, SymbolRef>,
 }
@@ -366,7 +368,7 @@ impl SymbolStorage {
         self.template_symbols.values()
             .chain(self.param_symbols.values().flat_map(|h|h.values()))
             .chain(self.object_symbols.values())
-            .chain(self.method_symbols.values())
+            .chain(self.method_symbols.values().flat_map(|h|h.values()))
             .chain(self.variable_symbols.values())
     }
 }
@@ -467,6 +469,10 @@ impl ReferenceMatches {
         } else {
             None
         }
+    }
+
+    pub fn add_message(&mut self, message: DMLError) {
+        self.messages.push(message);
     }
 
     pub fn merge_with(&mut self, other: Self) {
@@ -840,7 +846,11 @@ impl DeviceAnalysis {
             DMLResolvedObject::ShallowObject(shallow) =>
                 match &shallow.variant {
                     DMLShallowObjectVariant::Method(m) =>
-                        self.symbol_info.method_symbols.get(m.location()),
+                    // For resolutions, a methods symbols is just the symbol
+                    // of the method we resolved to
+                        self.symbol_info.method_symbols
+                            .get(m.location())
+                            .and_then(|m|m.get(&parent.key)),
                     DMLShallowObjectVariant::Session(s) |
                     DMLShallowObjectVariant::Saved(s) =>
                         self.symbol_info.variable_symbols.get(s.loc_span()),
@@ -1117,7 +1127,10 @@ impl DeviceAnalysis {
                 self.resolve_noderef_in_obj(&obj_copy,
                                             node,
                                             method_structure,
-                                            ref_matches)
+                                            ref_matches);
+            },
+            SymbolSource::Method(key, method) => {
+                self.resolve_noderef_in_method(key, method, node, method_structure, ref_matches);
             },
             // TODO: Cannot be resolved without constant folding
             SymbolSource::MethodArg(_method, _name) => (),
@@ -1129,8 +1142,20 @@ impl DeviceAnalysis {
         }
     }
 
+    fn get_method_symbol(&self,
+                         method: &Arc<DMLMethodRef>,
+                         parent_obj_key: &StructureKey)
+                         -> Option<&SymbolRef> {
+        let to_ret = self.symbol_info.method_symbols.get(method.location())
+            .and_then(|m|m.get(parent_obj_key));
+        if to_ret.is_none() {
+            internal_error!("Missing method symbol for method ref {:?}", method);
+        }
+        to_ret
+    }
+
     fn resolve_simple_noderef_in_method<'c>(&'c self,
-                                            obj: &DMLShallowObject,
+                                            parent_key: &StructureKey,
                                             meth: &Arc<DMLMethodRef>,
                                             node: &DMLString,
                                             _type_hint: Option<()>,
@@ -1148,18 +1173,45 @@ impl DeviceAnalysis {
             "this" =>
                 ref_matches.add_match(Arc::clone(
                     self.symbol_info.object_symbols.get(
-                        &obj.parent).unwrap())),
+                        parent_key).unwrap())),
             "default" =>
-            // NOTE: This is part of the hack that maps default
-            // references in methods to the corret method decl.
-            // Here, we simply check if the method has any
-            // default call, and if so map the reference to the
-            // method symbol
-                if meth.get_default().is_some() {
-                    if let Some(s) = self.symbol_info.method_symbols
-                        .get(obj.location()) {
-                            ref_matches.add_match(Arc::clone(s))
+            // NOTE: Here we match a default ref to the symbol of the method decl
+            // that we directly overrode. Meaning that further lookups on that symbol
+            // will be specialized for that overriding chain
+                if let Some(defref) = meth.get_default() {
+                    match defref {
+                        DefaultCallReference::Valid(refr) =>  {
+                            if let Some(s) = self.get_method_symbol(&refr, parent_key) {
+                                ref_matches.add_match(Arc::clone(s));
+                            }
+                        },
+                        DefaultCallReference::Ambiguous(refs) => {
+                            // TODO/NOTE: These are currently unused, but since we want to mark a mismatch anyway may as well
+                            // pass all these references in
+                            for reference in &refs {
+                                if let Some(s) = self.get_method_symbol(reference, parent_key) {
+                                   ref_matches.set_mismatched(Arc::clone(s));
+                                }
+                            }
+                             let ambiguous_desc: &'static str 
+                            = "Ambiguous default call, you may need to clarify the template ordering or use a template-qualified-method-implementation-call";
+                            // TODO: curren
+                            ref_matches.add_message(DMLError {
+                                    span: *node.span(),
+                                    description: ambiguous_desc.to_string(),
+                                    severity: Some(DiagnosticSeverity::ERROR),
+                                    related: refs
+                                        .iter()
+                                        .map(|d|(*d.location(),
+                                            format!("Possible candidate for default call{}",
+                                            d.get_disambiguation_name()
+                                                .map_or_else(||"".to_string(),
+                                                             |n|format!(", can be explicitly called as 'this.{}'", n)))
+                                        ))
+                                        .collect(),
+                                });
                         }
+                    }
                 } else {
                     // fairly sure 'default' cannot be a
                     // reference otherwise
@@ -1184,6 +1236,43 @@ impl DeviceAnalysis {
         }
     }
 
+    fn resolve_noderef_in_method<'c>(&'c self,
+                                     parent_key: &StructureKey,
+                                     method: &Arc<DMLMethodRef>,
+                                     node: &NodeRef,
+                                     method_structure: &HashMap<ZeroSpan,
+                                                                RangeEntry>,
+                                     ref_matches: &mut ReferenceMatches) {
+        match node {
+            NodeRef::Simple(simple) => {
+                self.resolve_simple_noderef_in_method(parent_key, method, simple,
+                    None,
+                    method_structure,
+                    ref_matches);
+            },
+            NodeRef::Sub(subnode, simple, _) => {
+                let mut intermediate_matches = ReferenceMatches::new();
+                self.resolve_noderef_in_method(parent_key,
+                                               method,
+                                               subnode,
+                                               method_structure,
+                                               &mut intermediate_matches);
+                if let Some(syms) = intermediate_matches.as_matches() {
+                    let wrapped_simple = NodeRef::Simple(simple.clone());
+                    for sym in syms {
+                        self.resolve_noderef_in_symbol(
+                            &sym,
+                            &wrapped_simple,
+                            method_structure,
+                            ref_matches);
+                    }
+                } else {
+                    ref_matches.merge_with(intermediate_matches);
+                }
+            }
+        }
+    }
+
     fn resolve_noderef_in_obj<'c>(&'c self,
                                   obj: &DMLObject,
                                   node: &NodeRef,
@@ -1199,7 +1288,9 @@ impl DeviceAnalysis {
                         ..
                     }) = resolvedobj {
 
-                    self.resolve_simple_noderef_in_method(shallow, m, simple,
+                    self.resolve_simple_noderef_in_method(&shallow.parent,
+                                                          m,
+                                                          simple,
                                                           None,
                                                           method_structure,
                                                           ref_matches);
@@ -1361,48 +1452,9 @@ impl DeviceAnalysis {
     }
 
     fn handle_symbol_ref(symbol: &SymbolRef,
-                         reference: &Reference,
-                         report: &mut Vec<DMLError>) {
-        let ambiguous_desc: &'static str 
-            = "Ambiguous default call, you may need to clarify the template ordering or use a template-qualified-method-implementation-call";
-        
+                         reference: &Reference) {
         let mut sym = symbol.lock().unwrap();
         sym.references.insert(*reference.loc_span());
-        if let Some(meth) = sym.source
-            .as_object()
-            .and_then(DMLObject::as_shallow)
-            .and_then(|s|s.variant.as_method()) {
-            if let Some(var) = reference.as_variable_ref() {
-                if var.reference.to_string().as_str()
-                    == "default" {
-                    if let Some(default_decl_ref) = meth.get_default() {
-                        match default_decl_ref {
-                            DefaultCallReference::Valid(default_decl) =>
-                                {
-                                sym.default_mappings.insert(
-                                    *var.loc_span(),
-                                    *default_decl.location());
-                                },
-                            DefaultCallReference::Ambiguous(ambiguous_decls) =>
-                                report.push(DMLError {
-                                    span: *var.loc_span(),
-                                    description: ambiguous_desc.to_string(),
-                                    severity: Some(DiagnosticSeverity::ERROR),
-                                    related: ambiguous_decls
-                                        .iter()
-                                        .map(|d|(*d.location(),
-                                            format!("Possible candidate for default call{}",
-                                            d.get_disambiguation_name()
-                                                .map_or_else(||"".to_string(),
-                                                             |n|format!(", can be explicitly called as 'this.{}'", n)))
-                                        ))
-                                        .collect(),
-                                }),
-                        }
-                    }
-                }
-            }
-        }
     }
 
     #[allow(clippy::ptr_arg)]
@@ -1450,7 +1502,7 @@ impl DeviceAnalysis {
                     // (not done here because of ownership issues)
                     ReferenceMatchKind::Found =>
                         for symbol in &symbol_lookup.references {
-                            Self::handle_symbol_ref(symbol, reference, &mut local_reports);
+                            Self::handle_symbol_ref(symbol, reference);
                         },
                     ReferenceMatchKind::MismatchedFind =>
                     //TODO: report mismatch,
@@ -1748,6 +1800,7 @@ fn new_symbol_from_object(maker: &SymbolMaker,
         SymbolSource::DMLObject(DMLObject::CompObject(object.key)),
         definitions = all_decl_defs.clone(),
         declarations = all_decl_defs.clone(),
+        // TODO: this does not follow from the new definition of bases
         bases = all_decl_defs)
 }
 
@@ -1765,14 +1818,13 @@ fn new_symbol_from_arg(maker: &SymbolMaker,
         bases = bases,
         definitions = definitions,
         declarations = declarations
-
     )
 }
 
 fn log_non_same_insert<K>(map: &mut HashMap<K, SymbolRef>,
                           key: K,
                           val: SymbolRef) -> bool
-where K: std::hash::Hash + Eq + Clone,
+where K: std::hash::Hash + Eq + Clone + std::fmt::Debug,
 {
     // NOTE: We should not need to do these comparisons, when
     // object symbol creation is properly guided by structural AST
@@ -1786,12 +1838,47 @@ where K: std::hash::Hash + Eq + Clone,
         if !old.lock().unwrap().equivalent(
             &map.get(&key).unwrap().lock().unwrap()) {
             internal_error!(
-                "Overwrote previous symbol {:?} with non-similar symbol {:?}",
-                old, map.get(&key));
+                "Overwrote previous symbol {:?} at {:?} with non-similar symbol {:?}",
+                old, key, map.get(&key));
             return true;
         }
     }
     false
+}
+
+// The current strategy for method symbols is:
+// Create a symbol for each level of overriding for each object where the method
+// is actualized. We then end up with many symbols for the same decl location,
+// and leave it to requests to collect the aggregate information at the point
+fn add_new_symbol_from_method(maker: &SymbolMaker, parent_obj_key: &StructureKey, method_ref: &Arc<DMLMethodRef>, errors: &mut Vec<DMLError>, storage: &mut SymbolStorage, method_structure: &mut HashMap<ZeroSpan, RangeEntry>) {
+    let (bases, definitions, declarations) = (
+        method_ref.get_bases().iter().map(|b|*b.location()).collect(),
+        vec![*method_ref.get_decl().location()],
+        vec![*method_ref.get_decl().location()],
+    );
+    debug!("Made symbol for method {:?}", method_ref);
+    let new_sym = symbol_ref!(
+        maker,
+        *method_ref.location(),
+        DMLSymbolKind::Method,
+        SymbolSource::Method(*parent_obj_key, Arc::clone(method_ref)),
+        bases = bases,
+        definitions = definitions,
+        declarations = declarations);
+    let insert_at = storage.method_symbols.entry(*method_ref.location())
+        .or_default();
+    if !log_non_same_insert(insert_at, *parent_obj_key, new_sym) {
+        for arg in method_ref.args() {
+            let new_argsymbol = new_symbol_from_arg(maker, method_ref, arg);
+            log_non_same_insert(&mut storage.variable_symbols, *arg.loc_span(), new_argsymbol);
+        }
+        add_method_scope_symbols(maker, method_ref, method_structure, storage, errors);
+        if let Some(defaults) = method_ref.get_default() {
+            for default in defaults.flat_refs() {
+                add_new_symbol_from_method(maker, parent_obj_key, default, errors, storage, method_structure);
+            }
+        }
+    }   
 }
 
 #[allow(clippy::ptr_arg)]
@@ -1809,9 +1896,7 @@ fn add_new_symbol_from_shallow(maker: &SymbolMaker,
              param.declarations.iter()
              .map(|(_, def)|*def.loc_span()).collect()),
         DMLShallowObjectVariant::Method(method_ref) =>
-            (method_ref.get_bases().iter().map(|b|*b.location()).collect(),
-             method_ref.get_all_defs(),
-             method_ref.get_all_decls()),
+            return add_new_symbol_from_method(maker, &shallow.parent, method_ref, errors, storage, method_structure),
         DMLShallowObjectVariant::Constant(constant) =>
             (vec![*constant.loc_span()],
              vec![*constant.loc_span()],
@@ -1848,21 +1933,9 @@ fn add_new_symbol_from_shallow(maker: &SymbolMaker,
                                 shallow.parent,
                                 new_sym);
         },
-        DMLShallowObjectVariant::Method(method_ref) =>
-            if !log_non_same_insert(&mut storage.method_symbols,
-                                    *shallow.location(),
-                                    new_sym) {
-                for arg in method_ref.args() {
-                    let new_argsymbol = new_symbol_from_arg(maker,
-                                                            method_ref,
-                                                            arg);
-                    log_non_same_insert(&mut storage.variable_symbols,
-                                        *arg.loc_span(),
-                                        new_argsymbol);
-                }
-                add_method_scope_symbols(maker, method_ref, method_structure,
-                                         storage, errors);
-            },
+        DMLShallowObjectVariant::Method(method_ref) => {
+           internal_error!("Unreachable method_ref case reached, ignored. ({:?})", method_ref);
+        },
         DMLShallowObjectVariant::Constant(_) |
         DMLShallowObjectVariant::Session(_) |
         DMLShallowObjectVariant::Saved(_) |
@@ -2303,6 +2376,10 @@ impl DeviceAnalysis {
                                                  &container,
                                                  &mut errors,
                                                  &mut method_structure);
+        // This needs to be done after all symbols are created, because method
+        // symbol order is not correlted to the object iteration order
+        bind_method_implementations(&mut symbol_info.method_symbols);
+
         status.assert_alive();
         // TODO: how do we store type info?
         extend_with_templates(&maker, &mut symbol_info, &tt_info);
@@ -2406,4 +2483,36 @@ pub fn from_device_and_bases<'a>(_device: &'a IsolatedAnalysis,
         bases.iter().map(|ia|&ia.toplevel).collect();
     toplevels.iter().flat_map(
         |tl|&tl.templates).collect()
+}
+
+fn bind_method_implementations(method_symbols: &mut HashMap<ZeroSpan, HashMap<StructureKey, SymbolRef>>) {
+    debug!("Bind method implementations");
+    for method_symbol in method_symbols.values().flat_map(|m| m.values()) {
+        debug!("Binding for {}", method_symbol.lock().unwrap().medium_debug_info());
+        // Cloning the arc is not strictly necessary, but avoiding holding the lock is good practice
+        let method = match &method_symbol.lock().unwrap().source {
+            SymbolSource::Method(_, methref) => Arc::clone(methref),
+            _ => {
+                internal_error!("Method symbol {:?} did not have method symbol source", method_symbol);
+                continue;
+            }
+        };
+        let default_decls = method.get_default().into_iter()
+            .flat_map(|d|d.flat_refs().into_iter().cloned().collect::<Vec<_>>())
+            .collect::<Vec<_>>();
+        debug!("Default decls are {:?}", default_decls);
+        let parent_symbols = default_decls.into_iter()
+            .filter_map(|d|
+                if let Some(parent_syms) = method_symbols.get(d.location()) {
+                    Some(parent_syms)
+                } else {
+                    internal_error!("Method symbol {:?} did not have method symbol source", d);
+                    None
+                })
+            .flat_map(|ps|ps.values());
+        for parent in parent_symbols {
+            debug!("Inserted into parent {}", parent.lock().unwrap().medium_debug_info());
+            parent.lock().unwrap().implementations.insert(*method.location());
+        }
+    }
 }
