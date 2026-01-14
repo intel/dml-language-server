@@ -393,58 +393,98 @@ pub struct DeviceAnalysis {
     pub clientpath: PathBuf,
 }
 
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum ReferenceMatchKind {
+    Found,
+    MismatchedFind,
+    NotFound,
+}
+
 #[derive(Debug, Clone)]
-pub enum ReferenceMatches {
-    Found(HashSet<SymbolRef>),
-    WrongType(SymbolRef),
-    NotFound(HashSet<SymbolRef>),
+pub struct ReferenceMatches {
+    pub kind: ReferenceMatchKind,
+    // How these references are interpreted depends on 'kind',
+    // for NotFound and MismatchedFind they are generally suggestions
+    // whereas for Found they are actual matches
+    pub references: HashSet<SymbolRef>,
+    // These will be reported as-is, regardless of kind
+    pub messages: Vec<DMLError>,
 }
 
 impl Default for ReferenceMatches {
     fn default() -> Self {
-        Self::NotFound(HashSet::default())
+        ReferenceMatches {
+            kind: ReferenceMatchKind::NotFound,
+            references: HashSet::default(),
+            messages: vec![],
+        }
     }
 }
 
 impl ReferenceMatches {
     pub fn add_match(&mut self, reference: SymbolRef) {
-        if !matches!(self, Self::WrongType(_)) {
-            if let Self::Found(ref mut references) = self {
-                references.insert(reference);
-            } else {
-                *self = Self::Found(HashSet::from([reference]));
-            }
+        if self.kind != ReferenceMatchKind::MismatchedFind {
+            self.kind = ReferenceMatchKind::Found;
+            self.references.insert(reference);
         }
     }
 
     pub fn add_suggestion(&mut self, reference: SymbolRef) {
-        if let Self::NotFound(ref mut references) = self {
-            references.insert(reference);
+        if !matches!(self.kind, ReferenceMatchKind::Found
+                              | ReferenceMatchKind::MismatchedFind) {
+            self.references.insert(reference);
         }
     }
 
-    pub fn set_wrongtype(&mut self, reference: SymbolRef) {
-        *self = Self::WrongType(reference);
+    pub fn set_mismatched(&mut self, reference: SymbolRef) {
+        self.kind = ReferenceMatchKind::MismatchedFind;
+        self.references.insert(reference);
     }
 
     pub fn new() -> Self {
         Self::default()
     }
 
-    pub fn has_matches(&self) -> bool {
-        matches!(self, Self::Found(_))
+    pub fn as_matches(&self) -> Option<HashSet<SymbolRef>> {
+        if self.kind == ReferenceMatchKind::Found {
+            Some(self.references.clone())
+        } else {
+            None
+        }
+    }
+
+    pub fn as_suggestions(&self) -> Option<HashSet<SymbolRef>> {
+        if self.kind == ReferenceMatchKind::NotFound {
+            Some(self.references.clone())
+        } else {
+            None
+        }
+    }
+
+    pub fn as_mismatched(&self) -> Option<HashSet<SymbolRef>> {
+        if self.kind == ReferenceMatchKind::MismatchedFind {
+            Some(self.references.clone())
+        } else {
+            None
+        }
     }
 
     pub fn merge_with(&mut self, other: Self) {
-        match other {
-            Self::Found(syms) => for sym in syms {
-                self.add_match(sym);
-            },
-            Self::NotFound(syms) => for sym in syms {
-                self.add_suggestion(sym);
-            },
-            Self::WrongType(sym) => self.set_wrongtype(sym),
+        match other.kind {
+            ReferenceMatchKind::MismatchedFind =>
+                for sym in other.references {
+                    self.set_mismatched(sym);
+                },
+            ReferenceMatchKind::Found =>
+                for sym in other.references {
+                    self.add_match(sym);
+                },
+            ReferenceMatchKind::NotFound =>
+                for sym in other.references {
+                    self.add_suggestion(sym);
+                },
         }
+        self.messages.extend(other.messages);
     }
 }
 
@@ -1045,8 +1085,10 @@ impl DeviceAnalysis {
             let _: Vec<_> = objs.into_iter()
                 .map(|o|self.lookup_def_in_obj(&o, sym.symbol, &mut refs))
                 .collect();
-            if let ReferenceMatches::Found(syms) = refs {
-                syms.into_iter().collect()
+            // We can ignore messages from lookup defs here, as this lookup is
+            // live and reporting additional things from here makes no sense
+            if let Some(matches) = refs.as_matches() {
+                matches.into_iter().collect()
             } else {
                 vec![]
             }
@@ -1174,18 +1216,18 @@ impl DeviceAnalysis {
                                             subnode,
                                             method_structure,
                                             &mut intermediate_matches);
-                match intermediate_matches {
-                    ReferenceMatches::Found(syms) => {
-                        let wrapped_simple = NodeRef::Simple(simple.clone());
-                        for sym in syms {
-                            self.resolve_noderef_in_symbol(
-                                &sym,
-                                &wrapped_simple,
-                                method_structure,
-                                ref_matches);
-                        }
-                    },
-                    other => ref_matches.merge_with(other),
+                
+                if let Some(syms) = intermediate_matches.as_matches() {
+                    let wrapped_simple = NodeRef::Simple(simple.clone());
+                    for sym in syms {
+                        self.resolve_noderef_in_symbol(
+                            &sym,
+                            &wrapped_simple,
+                            method_structure,
+                            ref_matches);
+                    }
+                } else {
+                    ref_matches.merge_with(intermediate_matches);
                 }
             }
         }
@@ -1308,7 +1350,7 @@ impl DeviceAnalysis {
             reference,
             method_structure,
             reference_matches);
-        if !reference_matches.has_matches() {
+        if reference_matches.as_matches().is_none() {
             let (_, new_chain) = context_chain.split_last().unwrap();
             let sub_matches = self.find_target_for_reference(new_chain,
                                                              reference,
@@ -1390,8 +1432,8 @@ impl DeviceAnalysis {
                         self.lookup_global_from_ref(glob),
                 };
 
-                match symbol_lookup {
-                    ReferenceMatches::NotFound(_suggestions) =>
+                match symbol_lookup.kind {
+                    ReferenceMatchKind::NotFound =>
                     // TODO: report suggestions?
                     // TODO: Uncomment reporting of errors here when
                     // semantics are strong enough that they are rare
@@ -1406,14 +1448,15 @@ impl DeviceAnalysis {
                     // This maps symbols->references, this is later
                     // used to create the inverse map
                     // (not done here because of ownership issues)
-                    ReferenceMatches::Found(symbols) =>
-                        for symbol in &symbols {
+                    ReferenceMatchKind::Found =>
+                        for symbol in &symbol_lookup.references {
                             Self::handle_symbol_ref(symbol, reference, &mut local_reports);
                         },
-                    ReferenceMatches::WrongType(_) =>
+                    ReferenceMatchKind::MismatchedFind =>
                     //TODO: report mismatch,
                         (),
                 }
+                local_reports.extend(symbol_lookup.messages);
             }
             local_reports.into_par_iter()
         }).collect::<Vec<_>>());
