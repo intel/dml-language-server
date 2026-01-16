@@ -1183,10 +1183,10 @@ impl <O: Output> InitActionContext<O> {
                 response: sender,
             };
             if self.check_wait(&wait) {
-                debug!("Wait {:?} was immediately completed", wait);
+                trace!("Wait {:?} was immediately completed", wait);
                 Ok(self.check_wait_satisfied(&wait))
             } else {
-                debug!("Wait {:?} needs to wait", wait);
+                trace!("Wait {:?} needs to wait", wait);
                 self.add_state_wait(wait);
                 loop {
                     match receiver.recv() {
@@ -1198,7 +1198,7 @@ impl <O: Output> InitActionContext<O> {
         }
 
     fn check_wait(&self, wait: &AnalysisStateWaitDefinition) -> bool {
-        debug!("Checking wait {:?}", wait);
+        trace!("Checking wait {:?}", wait);
         let mut wait_done = true;
         let analysis = self.analysis.lock().unwrap();
         let queue = &self.analysis_queue;
@@ -1258,9 +1258,9 @@ impl <O: Output> InitActionContext<O> {
         }
 
         if wait_done {
-            debug!("{:?} was done", wait);
+            trace!("{:?} was done", wait);
         } else {
-            debug!("{:?} not done", wait);
+            trace!("{:?} not done", wait);
         }
         wait_done
     }

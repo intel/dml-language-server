@@ -138,7 +138,7 @@ impl PathResolver {
     fn try_path(path: PathBuf) -> Option<CanonPath> {
         if let Ok(info) = fs::metadata(&path) {
             if info.is_file() {
-                debug!("Resolved {:?} to {:?}", path,
+                trace!("Resolved {:?} to {:?}", path,
                         // Fairly sure this can never fail
                         fs::canonicalize(&path).unwrap());
                 return CanonPath::from_path_buf(path);

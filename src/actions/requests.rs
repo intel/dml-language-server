@@ -558,7 +558,7 @@ impl RequestAction for GotoImplementation {
                 let lsp_locations: Vec<_> = unique_locations.into_iter()
                     .map(|l|ls_util::dls_to_location(&l))
                     .collect();
-                trace!("Requested implementations are {:?}", lsp_locations);
+                debug!("Requested implementations are {:?}", lsp_locations);
                 Ok(response_maybe_with_limitations(
                     // NOTE: this ends up being the client-path, which is
                     // actually what we want

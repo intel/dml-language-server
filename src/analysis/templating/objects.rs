@@ -330,7 +330,7 @@ pub fn make_device<'t>(path: &str,
         container,
         report);
     let device_obj = container.get(obj_key).unwrap();
-    debug!("Device components are: {:?}", device_obj.components);
+    trace!("Device components are: {:?}", device_obj.components);
     export_invariants(toplevel, device_obj, container, report);
     device_obj
 }
@@ -1945,7 +1945,7 @@ fn check_trait_overrides(obj: &DMLCompositeObject,
                          container: &StructureContainer,
                          report: &mut Vec<DMLError>) {
     debug!("Checking traits overrides on {:?}", obj.identity);
-    debug!("all symbols are: {:?}",
+    trace!("all symbols are: {:?}",
            obj.components.keys().collect::<Vec<&String>>());
     fn report_collision(name: &str,
                         srcloc: ZeroSpan,
@@ -2188,7 +2188,7 @@ pub fn make_object(loc: ZeroSpan,
     add_template_specs(&mut obj_specs, &each_stmts);
     add_template_ineachs(&obj_specs, &mut each_stmts);
 
-    debug!("Has specs at {:?}", obj_specs.iter().map(|rc|rc.loc)
+    trace!("Has specs at {:?}", obj_specs.iter().map(|rc|rc.loc)
           .collect::<Vec<ZeroSpan>>());
 
     trace!("Complete specs are: {:?}",
@@ -2206,7 +2206,7 @@ pub fn make_object(loc: ZeroSpan,
          saveds, sessions,
          methods, hooks,
          subobjs) = collect_symbols(&parameters, &obj_specs, report);
-    debug!("All local symbols are: {:?}",
+    trace!("All local symbols are: {:?}",
            symbols.keys().map(|k|k.as_str()).collect::<Vec<&str>>());
 
     let new_obj_key = create_object_instance(Some(loc),
