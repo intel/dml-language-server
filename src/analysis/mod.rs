@@ -1201,14 +1201,14 @@ impl DeviceAnalysis {
                 if let Some(defref) = meth.get_default() {
                     match defref {
                         DefaultCallReference::Valid(refr) =>  {
-                            if let Some(s) = self.get_method_symbol(&refr, parent_key) {
+                            if let Some(s) = self.get_method_symbol(refr, parent_key) {
                                 ref_matches.add_match(Arc::clone(s));
                             }
                         },
                         DefaultCallReference::Ambiguous(refs) => {
                             // TODO/NOTE: These are currently unused, but since we want to mark a mismatch anyway may as well
                             // pass all these references in
-                            for reference in &refs {
+                            for reference in refs {
                                 if let Some(s) = self.get_method_symbol(reference, parent_key) {
                                    ref_matches.set_mismatched(Arc::clone(s));
                                 }
@@ -1230,6 +1230,9 @@ impl DeviceAnalysis {
                                         ))
                                         .collect(),
                                 });
+                        }
+                        _ => {
+                            // 'default' when overriding nothing is an error, similar to the else-case below
                         }
                     }
                 } else {
@@ -1978,15 +1981,14 @@ fn add_method_scope_symbols(maker: &SymbolMaker,
         symbols: HashMap::default(),
         sub_ranges: vec![],
     };
-    if !matches!(&*method.get_decl().body, StatementKind::Compound(_)) {
-        error!("Internal Error: Method body was not a compound statement");
+    if matches!(&*method.get_decl().body, StatementKind::Compound(_)) {
+        add_new_method_scope_symbols(maker,
+                                     method,
+                                     &method.get_decl().body,
+                                     errors,
+                                     storage,
+                                     &mut entry);
     }
-    add_new_method_scope_symbols(maker,
-                                 method,
-                                 &method.get_decl().body,
-                                 errors,
-                                 storage,
-                                 &mut entry);
     if !entry.is_empty() {
         method_structure.insert(
             *method.get_decl().location(),
