@@ -611,6 +611,26 @@ pub fn isolated_template_limitation(template_name: &str) -> DLSLimitation {
 }
 
 impl DeviceAnalysis {
+    pub fn lookup_symbols<'t>(&self, context_sym: &ContextedSymbol<'t>, limitations: &mut HashSet<DLSLimitation>) -> Vec<SymbolRef> {
+        trace!("Looking up symbols at {:?}", context_sym);
+
+        // Special handling for methods, since each method decl has its
+        // own symbol
+        if context_sym.kind() == DMLSymbolKind::Method {
+            let mut result = vec![];
+            for sym in self.symbol_info.method_symbols.values().flat_map(|m|m.values()) {
+                let sym_lock = sym.lock().unwrap();
+                if sym_lock.declarations.iter().any(
+                    |decl|decl == context_sym.loc_span()) {
+                    trace!("Found symbol {:?} at for {:?}", sym_lock, context_sym.loc_span());
+                    result.push(Arc::clone(sym));
+                }
+            }
+            return result;
+        }
+        self.lookup_symbols_by_contexted_symbol(context_sym, limitations)
+    }
+
     pub fn get_device_obj(&self) -> &DMLObject {
         &self.device_obj
     }
