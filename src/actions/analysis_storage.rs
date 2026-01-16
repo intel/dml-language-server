@@ -16,7 +16,7 @@ use std::time::{Duration, SystemTime};
 use crate::actions::ContextDefinition;
 use crate::analysis::scope::{ContextedSymbol, ContextKey};
 use crate::analysis::structure::objects::Import;
-use crate::analysis::{IsolatedAnalysis, DeviceAnalysis, DMLError};
+use crate::analysis::{DMLError, DeviceAnalysis, IsolatedAnalysis};
 
 use crate::lsp_data::*;
 use crate::analysis::parsing::tree::{ZeroSpan, ZeroFilePosition};

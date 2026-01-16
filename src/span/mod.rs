@@ -528,7 +528,7 @@ impl<I: Indexed> Span<I> {
 
 impl <I: Indexed> Span<I> {
     pub fn contains_pos(&self, pos: &FilePosition<I>) -> bool {
-        self.range.contains_pos(pos.position)
+        self.file == pos.file && self.range.contains_pos(pos.position)
     }
 }
 

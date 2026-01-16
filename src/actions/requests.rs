@@ -149,39 +149,41 @@ fn fp_to_symbol_refs<O: Output>
     // returns different information for "no symbols found" and
     // "no info at pos"
     debug!("Looking up symbols/references at {:?}", fp);
-    let (context_sym, reference) = (analysis.context_symbol_at_pos(fp)?,
-                                    analysis.reference_at_pos(fp)?);
-    debug!("Got {:?} and {:?}", context_sym, reference);
+    let reference = analysis.reference_at_pos(fp)?;
+    debug!("Got reference {:?}", reference);
+
     let canon_path = CanonPath::from_path_buf(fp.path())
         .ok_or(AnalysisLookupError::NoFile)?;
+
+    let analysises = analysis.all_device_analysises_containing_file(&canon_path);
+    if analysises.is_empty() {
+        return Err(AnalysisLookupError::NoDeviceAnalysis);
+    }
+    let context_sym = analysis.context_symbol_at_pos(fp)?;
+    let symbols = context_sym.map(|cs| {
+        analysises.into_iter().flat_map(|a|a.lookup_symbols(&cs, relevant_limitations)).collect::<Vec<_>>()
+    });
+    if let Some(syms) = &symbols {
+        debug!("Got symbols {:?}", syms.iter().map(|s|s.lock().unwrap().medium_debug_info()).collect::<Vec<_>>());
+    }
+
     // Rather than holding the lock throughout the request, clone
     // the filter
     let filter = Some(ctx.device_active_contexts.lock().unwrap().clone());
     let mut definitions = vec![];
-    let analysises = analysis.all_device_analysises_containing_file(
-        &canon_path);
-    if analysises.is_empty() {
-        return Err(AnalysisLookupError::NoDeviceAnalysis);
-    }
-    match (context_sym, reference) {
+
+    match (symbols, reference) {
         (None,  None) => {
             debug!("No symbol or reference at point");
             return Ok(vec![]);
         },
-        (Some(sym), refer) => {
+        (Some(syms), refer) => {
             if refer.is_some() {
                 error!("Obtained both symbol and reference at {:?}\
                         (reference is {:?}), defaulted to symbol",
                        &fp, refer);
             }
-            for device in analysis.filtered_device_analysises_containing_file(
-                &canon_path,
-                filter.as_ref()) {
-                definitions.extend(
-                    device.lookup_symbols_by_contexted_symbol(
-                        &sym, relevant_limitations)
-                        .into_iter());
-            }
+            definitions.extend(syms);
         },
         (None, Some(refr)) => {
             debug!("Mapping {:?} to symbols", refr.loc_span());
