@@ -163,6 +163,7 @@ impl DeclarationSpan for MethodDecl {
 
 pub trait MethodDeclaration : DMLNamedMember + MaybeAbstract {
     fn is_shared(&self) -> bool;
+    fn is_default(&self) -> bool;
     fn throws(&self) -> bool;
     fn fully_typed(&self) -> bool {
         for arg in self.args() {
@@ -175,12 +176,27 @@ pub trait MethodDeclaration : DMLNamedMember + MaybeAbstract {
     fn args(&self) -> &Vec<DMLMethodArg>;
     fn returns(&self) -> &Vec<DMLResolvedType>;
 
+    // TODO: Let this take multiple overridden methods, as there are allowed cases
+    // of that and we can provide better (fewer, more compact) reports, bundling
+    // together similar ones
     fn check_override<T>(&self,
                          overridden: &T,
                          report: &mut Vec<DMLError>)
     where
         T : MethodDeclaration,
     {
+        if self.is_shared() && !overridden.is_shared() {
+            report.push(DMLError {
+                span: *self.location(),
+                description:
+                    "Shared method cannot override non-shared method".to_string(),
+                related: vec![(
+                    *overridden.location(),
+                    "Overridden method declared here".to_string())],
+                severity: Some(DiagnosticSeverity::ERROR),
+            });
+        }
+
         if self.throws() && !overridden.throws() {
             report.push(DMLError {
                 span: *self.location(),
@@ -257,6 +273,10 @@ impl MethodDeclaration for MethodDecl {
         matches!(self.modifier, MethodModifier::Shared)
     }
 
+    fn is_default(&self) -> bool {
+        self.default
+    }
+
     fn throws(&self) -> bool {
         self.throws
     }
@@ -287,71 +307,41 @@ impl MethodDecl {
     }
 }
 
+// Note: A method can have a template ref even if not shared, it just means
+// it was declared top-level within a template
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum DMLMethodRef {
-    TraitMethod(Arc<DMLTrait>, MethodDecl),
-    ConcreteMethod(DMLConcreteMethod),
+pub struct DMLMethodRef {
+    pub template_ref: Option<Arc<DMLTrait>>,
+    pub concrete_decl: DMLConcreteMethod,
 }
 
 impl DMLMethodRef {
     pub fn get_disambiguation_name(&self) -> Option<String> {
-        match self {
-            DMLMethodRef::TraitMethod(trt, _) =>
-                Some(format!("templates.{}.{}",
-                             trt.name,
-                             self.identity())),
-            DMLMethodRef::ConcreteMethod(_) => None,
-        }
+        self.template_ref.as_ref().map(
+            |trt|format!("templates.{}.{}",
+                         trt.name, self.identity()))
     }
 
     pub fn get_decl(&self) -> &MethodDecl {
-        match self {
-            Self::TraitMethod(_, decl) => decl,
-            Self::ConcreteMethod(conc) => &conc.decl,
-        }
+        &self.concrete_decl.decl
     }
 
-    pub fn get_default(&self) -> Option<DefaultCallReference> {
-        match self {
-            Self::TraitMethod(_, _) => None,
-            Self::ConcreteMethod(decl) => decl.default_call
-                .as_ref().cloned(),
-        }
+    pub fn get_default(&self) -> Option<&DefaultCallReference> {
+        self.concrete_decl.default_call.as_ref()
     }
 
     pub fn get_all_defs(&self) -> Vec<ZeroSpan> {
-        match self {
-            DMLMethodRef::TraitMethod(_, decl) => if !decl.is_abstract() {
-                vec![*decl.location()]
-            } else {
-                vec![]
-            },
-            DMLMethodRef::ConcreteMethod(concmeth) => concmeth.get_all_defs(),
-        }
+        self.concrete_decl.get_all_defs()
     }
     pub fn get_all_decls(&self) -> Vec<ZeroSpan> {
-        match self {
-            DMLMethodRef::TraitMethod(_, decl) => if decl.is_abstract() {
-                vec![*decl.location()]
-            } else {
-                vec![]
-            },
-            DMLMethodRef::ConcreteMethod(concmeth) => concmeth.get_all_defs(),
-        }
+        self.concrete_decl.get_all_decls()
     }
     // Invariant: Return is non-empty
     pub fn get_bases(&self) -> Vec<MethodDecl> {
-        let to_return = match self {
-            DMLMethodRef::TraitMethod(_, decl) => {
-                vec![decl.clone()]
-            },
-            DMLMethodRef::ConcreteMethod(meth) => {
-                if let Some(default_ref) = &meth.default_call {
-                    default_ref.get_bases()
-                } else {
-                    vec![meth.decl.clone()]
-                }
-            }
+        let to_return = if let Some(default_refs) = &self.concrete_decl.default_call {
+            default_refs.flat_refs().into_iter().flat_map(|m|m.get_bases()).collect()
+        } else {
+            vec![self.concrete_decl.decl.clone()]
         };
         assert!(!to_return.is_empty());
         to_return
@@ -360,77 +350,55 @@ impl DMLMethodRef {
 
 impl MaybeAbstract for DMLMethodRef {
     fn is_abstract(&self) -> bool {
-        match self {
-            DMLMethodRef::TraitMethod(_, decl) => decl.is_abstract(),
-            DMLMethodRef::ConcreteMethod(decl) => decl.is_abstract(),
-        }
+        self.concrete_decl.is_abstract()
     }
 }
 
 impl MethodDeclaration for DMLMethodRef {
     fn is_shared(&self) -> bool {
-        match self {
-            DMLMethodRef::TraitMethod(_, decl) => decl.is_shared(),
-            DMLMethodRef::ConcreteMethod(decl) => decl.is_shared(),
-        }
+        self.concrete_decl.is_shared()
+    }
+
+    fn is_default(&self) -> bool {
+        self.concrete_decl.is_default()
     }
 
     fn throws(&self) -> bool {
-        match self {
-            DMLMethodRef::TraitMethod(_, decl) => decl.throws(),
-            DMLMethodRef::ConcreteMethod(decl) => decl.throws(),
-        }
+        self.concrete_decl.throws()
     }
 
     fn args(&self) -> &Vec<DMLMethodArg> {
-        match self {
-            DMLMethodRef::TraitMethod(_, decl) => decl.args(),
-            DMLMethodRef::ConcreteMethod(decl) => decl.args(),
-        }
+        self.concrete_decl.args()
     }
 
     fn returns(&self) -> &Vec<DMLResolvedType> {
-        match self {
-            DMLMethodRef::TraitMethod(_, decl) => decl.returns(),
-            DMLMethodRef::ConcreteMethod(decl) => decl.returns(),
-        }
+        self.concrete_decl.returns()
     }
 }
 
 impl DMLNamedMember for DMLMethodRef {
     fn identity(&self) -> &str {
-        match self {
-            DMLMethodRef::TraitMethod(_, decl) => decl.identity(),
-            DMLMethodRef::ConcreteMethod(decl) => decl.identity(),
-        }
+        self.concrete_decl.identity()
     }
 
     fn kind_name(&self) -> &'static str {
-        match self {
-            DMLMethodRef::TraitMethod(_, _) => "shared method",
-            DMLMethodRef::ConcreteMethod(_) => "method",
-        }
+        self.concrete_decl.kind_name()
     }
 
     fn location(&self) -> &ZeroSpan {
-        match self {
-            DMLMethodRef::TraitMethod(_, decl) => decl.location(),
-            DMLMethodRef::ConcreteMethod(decl) => decl.location(),
-        }
+        self.concrete_decl.location()
     }
 }
 
 impl DeclarationSpan for DMLMethodRef {
     fn span(&self) -> &ZeroSpan {
-        match self {
-            DMLMethodRef::TraitMethod(_, decl) => decl.span(),
-            DMLMethodRef::ConcreteMethod(decl) => decl.span(),
-        }
+        self.concrete_decl.span()
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DefaultCallReference {
+    Abstract(MethodDecl),
     Valid(Arc<DMLMethodRef>),
     Ambiguous(Vec<Arc<DMLMethodRef>>),
 }
@@ -438,6 +406,7 @@ pub enum DefaultCallReference {
 impl DefaultCallReference {
     pub fn get_bases(&self) -> Vec<MethodDecl> {
         match self {
+            DefaultCallReference::Abstract(method) => vec![method.clone()],
             DefaultCallReference::Valid(method) => method.get_bases(),
             DefaultCallReference::Ambiguous(methods) => 
                 methods.iter().flat_map(|m|m.get_bases()).collect(),
@@ -446,6 +415,7 @@ impl DefaultCallReference {
 
     pub fn get_all_decls(&self) -> Vec<ZeroSpan> {
         match self {
+            DefaultCallReference::Abstract(method) => vec![*method.location()],
             DefaultCallReference::Valid(method) => method.get_all_decls(),
             DefaultCallReference::Ambiguous(methods) =>
                 methods.iter().flat_map(|m|m.get_all_decls()).collect(),
@@ -454,6 +424,7 @@ impl DefaultCallReference {
 
     pub fn get_all_defs(&self) -> Vec<ZeroSpan> {
         match self {
+            DefaultCallReference::Abstract(_) => vec![],
             DefaultCallReference::Valid(method) => method.get_all_defs(),
             DefaultCallReference::Ambiguous(methods) =>
                 methods.iter().flat_map(|m|m.get_all_defs()).collect(),
@@ -464,11 +435,13 @@ impl DefaultCallReference {
         match self {
             DefaultCallReference::Valid(method) => Some(method),
             DefaultCallReference::Ambiguous(_) => None,
+            DefaultCallReference::Abstract(_) => None,
         }
     }
 
     pub fn flat_refs(&self) -> Vec<&Arc<DMLMethodRef>> {
         match self {
+            DefaultCallReference::Abstract(_) => vec![],
             DefaultCallReference::Valid(method) => vec![method],
             DefaultCallReference::Ambiguous(methods) =>
                 methods.iter().collect()
@@ -480,7 +453,7 @@ impl DefaultCallReference {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DMLConcreteMethod {
     pub decl: MethodDecl,
-    // where the default call goes (None if invalid)
+    // where the default call goes (None if nothing was overriding)
     pub default_call: Option<DefaultCallReference>,
 }
 
@@ -522,6 +495,10 @@ impl DMLNamedMember for DMLConcreteMethod {
 impl MethodDeclaration for DMLConcreteMethod {
     fn is_shared(&self) -> bool {
         self.decl.is_shared()
+    }
+
+    fn is_default(&self) -> bool {
+        self.decl.default
     }
 
     fn throws(&self) -> bool {

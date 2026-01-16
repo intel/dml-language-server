@@ -1769,22 +1769,17 @@ fn merge_composite_subobjs<'c>(parent_each_stmts: &InEachSpec,
 fn sort_method_decls<'t>(decls: &[(&Rank, &'t MethodDecl)]) ->
     (HashMap<&'t MethodDecl, HashSet<&'t MethodDecl>>, Vec<&'t MethodDecl>) {
         trace!("Sorting method declarations: {:?}", decls);
-        let mut rank_to_method: HashMap<&Rank, &MethodDecl>
+        let mut rank_to_method: HashMap<&Rank, (Vec<&MethodDecl>, Vec<&MethodDecl>)>
             = HashMap::default();
-        let mut conflicting_decls: HashMap<&MethodDecl, Vec<&MethodDecl>>
-            = HashMap::default();
+
         for (rank, decl) in decls {
-            if let Some(conflict) = rank_to_method.get(rank) {
-                // Conflicting declarations within one block
-                conflicting_decls.entry(conflict)
-                    .and_modify(|e|e.push(decl))
-                    .or_insert_with(||vec![decl]);
+            let (ref mut defs, ref mut decls) = rank_to_method.entry(rank).or_default();
+            if decl.is_abstract() {
+                decls.push(*decl);
             } else {
-                rank_to_method.insert(rank, *decl);
+                defs.push(*decl);
             }
         }
-
-        trace!("Conflicting declarations are: {:?}", conflicting_decls);
 
         let ranks: HashSet<&Rank> = rank_to_method.keys()
             .cloned().collect();
@@ -1810,19 +1805,31 @@ fn sort_method_decls<'t>(decls: &[(&Rank, &'t MethodDecl)]) ->
 
         trace!("Minimal ancestors are {:?}", minimal_ancestry);
 
-        // TODO: there is an error that is missed here,
-        // see L463 of traits.py in dmlc source
-        // (or, if it has moved, the EAMBINH report in the
-        // sort_method_implementations function in the same
-        // file)
-
-        let method_map: HashMap<&'t MethodDecl, HashSet<&'t MethodDecl>>
-            = rank_to_method.iter()
-            .map(|(r, m)|(*m,
-                          minimal_ancestry[r].iter()
-                          .map(|subrank|&rank_to_method[*subrank])
-                          .cloned().collect()))
-            .collect();
+        // Map method declaration to those that they directly override
+        let mut method_map: HashMap<&'t MethodDecl, HashSet<&'t MethodDecl>>
+            = HashMap::default();
+        for (r, (defs, decls)) in &rank_to_method {
+            for def in defs {
+                // Ensure the entry exists for later unwraps
+                method_map.entry(def).or_default();
+                for subrank in &minimal_ancestry[r] {
+                    let (subdefs, subdecls) = rank_to_method.get(subrank).unwrap();
+                    if subdefs.is_empty() {
+                        method_map.get_mut(def).unwrap()
+                            .extend(subdecls.clone());
+                    } else {
+                        method_map.get_mut(def).unwrap()
+                            .extend(subdefs.clone());
+                    }
+                }
+                method_map.get_mut(def).unwrap()
+                    .extend(decls.iter().cloned());
+            }
+            for decl in decls {
+                method_map.entry(decl).or_default();
+            }
+        }
+            
         trace!("Default map is {:?}", method_map);
         let method_order = topsort(&method_map).unwrap_sorted();
         trace!("Method order is {:?}", method_order);
@@ -1831,10 +1838,10 @@ fn sort_method_decls<'t>(decls: &[(&Rank, &'t MethodDecl)]) ->
 
 fn add_methods(obj: &mut DMLCompositeObject,
                methods: MethodMapping,
-               method_map: &HashMap<String, Arc<DMLTrait>>,
+               name_to_trait_map: &HashMap<String, Arc<DMLTrait>>,
                report: &mut Vec<DMLError>) {
     debug!("Adding methods to {}", obj.identity());
-    trace!("Shared methods are {:?}", method_map);
+
     for (name, (used, regular_decls)) in methods {
         if !used {
             trace!("Skipped {} name, declaration unused", name);
@@ -1844,12 +1851,11 @@ fn add_methods(obj: &mut DMLCompositeObject,
                name, regular_decls);
         let mut all_decls: Vec<(&Rank, &MethodDecl)>
             = regular_decls.iter().map(|(a, b)|(a, b)).collect();
-        // TODO: If we obtain a shared method that is not in a trait
-        // does this mean it was declared in a non-shared context,
-        // and if so, do we need to report it?
-        if let Some(trait_impl) = method_map.get(&name) {
-            if let Some(trait_decl) = trait_impl.get_method(&name) {
-                all_decls.push((&trait_impl.rank, trait_decl));
+        // Note: Sorting and overrides between methods is sorted (hah) already
+        // find the topmost relevant method decl
+        if let Some(trait_ref) = name_to_trait_map.get(&name) {
+            if let Some(trait_decl) = trait_ref.get_method(&name) {
+                all_decls.push((&trait_ref.rank, trait_decl));
             }
         }
         trace!("All possible declarations are: {:?}", all_decls);
@@ -1858,50 +1864,26 @@ fn add_methods(obj: &mut DMLCompositeObject,
         let mut decl_to_method: HashMap<MethodDecl, Arc<DMLMethodRef>>
             = HashMap::default();
         for method in method_order.iter().rev() {
-            debug!("Handling overrides of {:?}", method);
-            // Guaranteed, every val in method order is a key in default_map
-            let default_decls = default_map.get(method).unwrap();
-            if method.is_shared() {
-                trace!("Was a shared method, deferred");
-                let conflicting_decls : Vec<&MethodDecl> = default_decls.iter()
-                    .filter(|d|!d.is_shared()).cloned().collect();
-                if !conflicting_decls.is_empty() {
-                    report.push(DMLError {
-                        span: method.name.span,
-                        description:
-                        "Shared method cannot override non-shared method"
-                            .to_string(),
-                        related: conflicting_decls.iter().map(
-                            |d|(d.name.span,
-                                "Overrides this non-shared method".to_string()))
-                            .collect(),
-                        severity: Some(DiagnosticSeverity::ERROR),
-                    });
-                }
-                // The actual shared method "codegenning" is done later
-                // since it is not stored with the containing object
-                let new_method = Arc::new(
-                    DMLMethodRef::TraitMethod(
-                        Arc::clone(method_map.get(method.identity()).unwrap()),
-                        (*method).clone()));
-                trace!("Inserted dependent methoddecl {:?}", new_method);
-                decl_to_method.insert((*method).clone(), new_method);
-                continue;
-            }
+            trace!("Handling overrides of {:?}", method);
+            // Guaranteed by topsort
             let defaults = default_map.get(method).unwrap();
             let default = match defaults.len() {
                 1 => {
                     let decl = defaults.iter().next().unwrap();
                     trace!("Default call decl is {:?}", decl);
                     trace!("And the current map is {:?}", decl_to_method);
-                    Some(DefaultCallReference::Valid(Arc::clone(decl_to_method.get(decl).unwrap())))
+                    if let Some(m) = decl_to_method.get(decl) {
+                        Some(DefaultCallReference::Valid(Arc::clone(m)))
+                    } else {
+                        Some(DefaultCallReference::Abstract((*decl).clone()))
+                    }
                 },
                 0 => None,
                 _ => Some(DefaultCallReference::Ambiguous(
                     defaults.iter().map(|d| Arc::clone(decl_to_method.get(d).unwrap())).collect())),
             };
             trace!("Default call would be {:?}", default);
-            for decl in default_map.get(method).unwrap() {
+            for decl in defaults {
                 // TODO: I suspect we could improve this error message in cases
                 // where several similar incorrect overrides are made over one
                 // method
@@ -1920,16 +1902,21 @@ fn add_methods(obj: &mut DMLCompositeObject,
                     });
                 }
 
-                if !decl.is_shared() {
-                    method.check_override(*decl, report);
-                }
+                 method.check_override(*decl, report);
             }
 
-            let new_method = Arc::new(DMLMethodRef::ConcreteMethod(
-                DMLConcreteMethod {
-                    decl: (*method).clone(),
-                    default_call: default,
-                }));
+            let template_ref = name_to_trait_map.get(&name)
+                .map(Arc::clone);
+
+            let new_method = Arc::new(
+                DMLMethodRef {
+                    template_ref,
+                    concrete_decl: DMLConcreteMethod {
+                        decl: (*method).clone(),
+                        default_call: default,
+                    },
+                }
+            );
             trace!("Inserted dependent methoddecl {:?}", new_method);
             decl_to_method.insert((*method).clone(), new_method);
         }
