@@ -24,6 +24,6 @@ pub fn tooltip<O: Output>(
     let hover_span = ctx.convert_pos_to_span(hover_file_path, params.position);
     // TODO: sort out how to handle hovers, and what info they should provide
     let contents = vec![];
-    debug!("tooltip: contents.len: {}", contents.len());
+    trace!("tooltip: contents.len: {}", contents.len());
     Ok(Tooltip { contents, range: hover_span.range })
 }

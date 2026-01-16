@@ -1421,7 +1421,7 @@ impl DeviceAnalysis {
             status.assert_alive();
             let mut local_reports = vec![];
             for reference in references {
-                debug!("In {:?}, Matching {:?}", context_chain, reference);
+                trace!("In {:?}, Matching {:?}", context_chain, reference);
                 let symbol_lookup = match &reference {
                     Reference::Variable(var) => self.find_target_for_reference(
                         context_chain.as_slice(),
@@ -1689,7 +1689,7 @@ fn objects_to_symbols(maker: &SymbolMaker,
 
     for obj in objects.values() {
         let new_symbol: SymbolRef = new_symbol_from_object(maker, obj);
-        debug!("Comp obj symbol is: {:?}", new_symbol);
+        debug!("Created comp obj symbol: {:?}", new_symbol);
         storage.object_symbols.insert(obj.key, new_symbol);
         for subobj in obj.components.values() {
             // Non-shallow objects will be handled by the iteration
@@ -1826,7 +1826,7 @@ fn add_new_symbol_from_shallow(maker: &SymbolMaker,
              vec![*hook.loc_span()],
              vec![*hook.loc_span()]),
     };
-    debug!("Made symbol for {:?}", shallow);
+    debug!("Made shallow symbol for {:?}", shallow);
     let new_sym = symbol_ref!(
         maker,
         *shallow.location(),

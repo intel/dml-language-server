@@ -330,7 +330,7 @@ impl<O: Output> LsService<O> {
             let output = client_reader_output;
             let send = client_reader_send;
             loop {
-                debug!("Awaiting message");
+                trace!("Awaiting message");
                 let msg_string = match msg_reader.read_message() {
                     Some(m) => m,
                     None => {
@@ -346,11 +346,11 @@ impl<O: Output> LsService<O> {
                 trace!("Read a message `{}`", msg_string);
                 match RawMessageOrResponse::try_parse(&msg_string) {
                     Ok(RawMessageOrResponse::Message(rm)) => {
-                        debug!("Parsed a message: {}", rm.method);
+                        trace!("Parsed a message: {}", rm.method);
                         send.send(ServerToHandle::ClientMessage(rm)).ok();
                     },
                     Ok(RawMessageOrResponse::Response(rr)) => {
-                        debug!("Parsed a response: {}", rr.id);
+                        trace!("Parsed a response: {}", rr.id);
                         send.send(ServerToHandle::ClientResponse(rr)).ok();
                     },
                     Err(e) => {
@@ -394,7 +394,7 @@ impl<O: Output> LsService<O> {
                 ServerToHandle::ExitCode(code) => return code,
                 ServerToHandle::IsolatedAnalysisDone(path, context,
                                                      requests) => {
-                    debug!("Received isolated analysis of {:?}", path);
+                    trace!("Received isolated analysis of {:?}", path);
                     if let ActionContext::Init(ctx) = &mut self.ctx {
                         // hack where we try to activate a device context
                         // as early as we possibly can, unless device context
@@ -445,14 +445,14 @@ impl<O: Output> LsService<O> {
                     }
                 },
                 ServerToHandle::DeviceAnalysisDone(path) => {
-                    debug!("Received device analysis of {:?}", path);
+                    trace!("Received device analysis of {:?}", path);
                     if let ActionContext::Init(ctx) = &mut self.ctx {
                         ctx.report_errors(&self.output);
                         ctx.check_state_waits();
                     }
                 },
                 ServerToHandle::LinterDone(path) => {
-                    debug!("Received linter analysis of {:?}", path);
+                    trace!("Received linter analysis of {:?}", path);
                     if let ActionContext::Init(ctx) = &mut self.ctx {
                         ctx.report_errors(&self.output);
                     }
@@ -460,7 +460,7 @@ impl<O: Output> LsService<O> {
                 ServerToHandle::AnalysisRequest(importpath, context, source) => {
                     if let ActionContext::Init(ctx) = &mut self.ctx {
                         if !ctx.config.lock().unwrap().to_owned().suppress_imports {
-                            debug!("Analysing imported file {}",
+                            trace!("Analysing imported file {}",
                                &importpath.to_str().unwrap());
                             ctx.isolated_analyze(
                                 &importpath, Some(source), context, &self.output);
@@ -479,14 +479,14 @@ impl<O: Output> LsService<O> {
                 blocking_requests: $($br_action: ty),*;
                 requests: $($request: ty),*;
             ) => {
-                debug!("Handling `{}`", $method);
+                trace!("Handling `{}`", $method);
 
                 match $method.as_str() {
                 $(
                     <$n_action as LSPNotification>::METHOD => {
                         let notification: Notification<$n_action> = msg.parse_as_notification()?;
                         if let Ok(mut ctx) = self.ctx.inited() {
-                            debug!("Notified: {}", $method);
+                            trace!("Notified: {}", $method);
                             if notification.dispatch(&mut ctx, self.output.clone()).is_err() {
                                 debug!("Error handling notification: {:?}", msg);
                             }
@@ -531,7 +531,7 @@ impl<O: Output> LsService<O> {
                     <$request as LSPRequest>::METHOD => {
                         let request: Request<$request> = msg.parse_as_request()?;
                         if let Ok(ctx) = self.ctx.inited() {
-                            debug!("Unblockingly Requested: {}", $method);
+                            trace!("Unblockingly Requested: {}", $method);
                             self.dispatcher.dispatch(request, ctx);
                         }
                         else {
