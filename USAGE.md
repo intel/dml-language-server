@@ -12,6 +12,78 @@ details consult the documentation of the client.
 As this file is currently a work in progress, relevant details may be
 missing or incomplete.
 
+## Clarification of semantics of Symbol Lookups
+DML is at its core a _declarative_ language centered around a Device,
+and declarations are merged together according to the hierarchical
+structure. Thus, the meaning of `goto-definiton`, `goto-declaration`,
+`goto-implementations`, and `goto-references` may not be similar to how
+they behave in other languages.
+Here is a clarification of what each operation means for each object
+kind in DML. It is worth noting that unless otherwise specified, a goto-
+operation on a reference is equivalent to the same operation on each symbol
+that it could refer to.
+
+*NOTE:* Due to limitations in the DLS, a matching from references to
+declarations is not always possible. `goto-references` may provide incomplete
+info and `goto-definition` and similar on a reference may fail in some cases.
+See issues [#13](https://github.com/intel/dml-language-server/issues/13),
+[#23](https://github.com/intel/dml-language-server/issues/23),
+[#26](https://github.com/intel/dml-language-server/issues/26),
+[#30](https://github.com/intel/dml-language-server/issues/30), and
+[#65](https://github.com/intel/dml-language-server/issues/65).
+
+### On Composite Objects (banks, registers, implements, etc.)
+`goto-declaration` and `goto-definition` on an composite object are equivalent.
+They will pointreturn the locations of all object declarations that may be
+merged with the one at the name.
+
+`goto-implementations` on objects is currently unused.
+
+`goto-references` will go to any location where the object is referred to
+directly.
+
+### On Methods
+`goto-declaration` on a method will find the most-overridden declaration
+for this method, this will usually be a 'default' or abstract declaration.
+TODO: this is wrong currently
+
+`goto-definition` on a method reference will find all defintions of that method
+that could be called from that reference. Note that this will NOT point to
+method declarations that are entirely overridden. `goto-definition` on a method
+name is a no-op and will just point back to that same method.
+TODO: does not work correctly on default in overridden method body
+
+`goto-implementations` on a method will find all method declarations that
+could override it.
+TODO: only finds next-level
+
+`goto-references` will go to any location where the method is referred to
+directly(including call sites).
+
+### On Parameters
+`goto-declaration` on a parameter will find the most-overridden declaration of
+this parameter, usually a 'default' or abstract declaration.
+
+`goto-definition` on a parameter will find all definitions that are used within
+a method.
+
+`goto-implementations` on a parameter is currently unused.
+
+`goto-references` will go to any location where the parameter is referred to
+directly.
+
+### On Templates
+`goto-declaration` and `goto-definition` are equivalent, and will both give the
+template declaration site.
+
+`goto-implementations` will give each location where the template is directly
+instantiated.
+TODO: does not actually work
+
+`goto-references` will go to any location where the template is referred to,
+including direct instantiation sites (so this is a super-set of
+goto-implementations`)
+
 ## In-Line Linting Configuration
 It may be desireable to control linting on a per-file basis, rather than
 relying on the linting configuration. This can be done with in-line
