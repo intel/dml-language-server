@@ -130,6 +130,13 @@ impl SymbolSource {
             _ => None
         }
     }
+    pub fn as_method(&self) -> Option<(&StructureKey, &Arc<DMLMethodRef>)> {
+        match self {
+            Self::Method(key, methref) => Some((key, methref)),
+            _ => None
+        }
+    }
+
     pub fn as_metharg(&self) -> Option<(&Arc<DMLMethodRef>, &DMLString)> {
         match self {
             Self::MethodArg(arg, name) => Some((arg, name)),

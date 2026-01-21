@@ -55,7 +55,6 @@ TODO: does not work correctly on default in overridden method body
 
 `goto-implementations` on a method will find all method declarations that
 could override it.
-TODO: only finds next-level
 
 `goto-references` will go to any location where the method is referred to
 directly(including call sites).

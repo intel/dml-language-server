@@ -26,6 +26,7 @@ use rayon::prelude::*;
 
 use crate::actions::SourcedDMLError;
 use crate::actions::analysis_storage::TimestampedStorage;
+use crate::actions::semantic_lookup::{DLSLimitation, isolated_template_limitation};
 use crate::analysis::symbols::{DMLSymbolKind, SimpleSymbol, StructureSymbol, SymbolContainer, SymbolMaker, SymbolSource};
 pub use crate::analysis::symbols::SymbolRef;
 use crate::analysis::reference::{Reference,
@@ -77,26 +78,6 @@ pub struct FileSpec<'a> {
 
 pub const IMPLICIT_IMPORTS: [&str; 2] = ["dml-builtins.dml",
                                          "simics/device-api.dml"];
-// The issue number is used as the _unique identifier_ for this
-// limitation, and should be the number of an open GITHUB
-// issue.
-// Example:
-// DLSLimitation {
-//         issue_num: 42,
-//         description: "Example of a DLS limitation".to_string(),
-//     };
-
-#[derive(Clone, Debug, Eq, PartialEq, Hash,)]
-pub struct DLSLimitation {
-    pub issue_num: u64,
-    pub description: String,
-}
-
-impl fmt::Display for DLSLimitation {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} (issue#{})", self.description, self.issue_num)
-    }
-}
 
 // For things whose names are in one spot as a dmlstring
 pub trait DMLNamed {
@@ -371,6 +352,28 @@ impl SymbolStorage {
             .chain(self.method_symbols.values().flat_map(|h|h.values()))
             .chain(self.variable_symbols.values())
     }
+
+    pub fn all_symbols_at_lock<'a>(&'a self, loc: &ZeroSpan)
+        -> Vec<&'a SymbolRef> {
+        let mut result = vec![];
+        if let Some(sym) = self.template_symbols.get(loc) {
+            result.push(sym);
+        }
+        if let Some(param_map) = self.param_symbols.get(&(*loc, "".to_string())) {
+            for sym in param_map.values() {
+                result.push(sym);
+            }
+        }
+        if let Some(var_sym) = self.variable_symbols.get(loc) {
+            result.push(var_sym);
+        }
+        if let Some(method_map) = self.method_symbols.get(loc) {
+            for sym in method_map.values() {
+                result.push(sym);
+            }
+        }
+        result
+    }
 }
 
 // This maps references to the symbol they reference, made as a lock
@@ -598,20 +601,9 @@ fn gather_scopes<'c>(next_scopes: Vec<&'c dyn Scope>,
     }
 }
 
-pub fn isolated_template_limitation(template_name: &str) -> DLSLimitation {
-    DLSLimitation {
-        issue_num: 31,
-        description:
-        format!("References from, and definitions inside, a template \
-                 cannot be evaluated \
-                 without an instantiating object. Open a device file \
-                 that uses the template '{}' to obtain such information.",
-                 template_name),
-    }
-}
-
 impl DeviceAnalysis {
-    pub fn lookup_symbols<'t>(&self, context_sym: &ContextedSymbol<'t>, limitations: &mut HashSet<DLSLimitation>) -> Vec<SymbolRef> {
+    pub fn lookup_symbols<'t>(&self, context_sym: &ContextedSymbol<'t>, limitations: &mut HashSet<DLSLimitation>)
+        -> Vec<SymbolRef> {
         trace!("Looking up symbols at {:?}", context_sym);
 
         // Special handling for methods, since each method decl has its
@@ -1086,10 +1078,11 @@ impl DeviceAnalysis {
         }
     }
 
-    pub fn lookup_symbols_by_contexted_symbol<'t>(
-        &self,
-        sym: &ContextedSymbol<'t>,
-        limitations: &mut HashSet<DLSLimitation>) -> Vec<SymbolRef> {
+    // TODO/NOTE: This method seems slightly misplaced, consider moving to analysis storage
+    pub fn lookup_symbols_by_contexted_symbol<'t>(&self,
+                                                  sym: &ContextedSymbol<'t>,
+                                                  limitations: &mut HashSet<DLSLimitation>)
+        -> Vec<SymbolRef> {
         if matches!(sym.symbol.kind, DMLSymbolKind::Template |
                     DMLSymbolKind::Typedef | DMLSymbolKind::Extern)
         {
