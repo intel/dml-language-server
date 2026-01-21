@@ -92,6 +92,7 @@ pub mod notifications;
 pub mod requests;
 pub mod progress;
 pub mod work_pool;
+pub mod semantic_lookup;
 
 /// Persistent context shared across all requests and notifications.
 pub enum ActionContext<O: Output> {

@@ -15,10 +15,8 @@ use crate::actions::{AnalysisProgressKind, AnalysisWaitKind,
                      ContextDefinition, InitActionContext,
                      rpc_error_code};
 use crate::actions::notifications::ContextDefinitionKindParam;
-use crate::analysis::{Named, DeclarationSpan, LocationSpan, DLSLimitation,
-                      SymbolRef, ZeroFilePosition, ZeroSpan,
-                      isolated_template_limitation};
-use crate::analysis::reference::ReferenceKind;
+use crate::actions::semantic_lookup::{DLSLimitation, declarations_at_fp, definitions_at_fp, implementations_at_fp, references_at_fp};
+use crate::analysis::{Named, DeclarationSpan, LocationSpan};
 use crate::analysis::symbols::SimpleSymbol;
 use crate::config::Config;
 
@@ -125,107 +123,6 @@ where
             response,
             format!("{}\n- {}", formatted, collect))
     }
-}
-
-
-pub fn type_semantic_limitation() -> DLSLimitation {
-    DLSLimitation {
-        issue_num: 65,
-        description: "The DLS does not currently support semantic analysis of \
-                      types, including reference finding".to_string(),
-    }
-}
-
-// TODO: This function is getting bloated, refactor into several smaller ones
-fn fp_to_symbol_refs<O: Output>
-    (fp: &ZeroFilePosition,
-     ctx: &InitActionContext<O>,
-     relevant_limitations: &mut HashSet<DLSLimitation>)
-     -> Result<Vec<SymbolRef>, AnalysisLookupError>
-{
-    let analysis = ctx.analysis.lock().unwrap();
-    // This step-by-step approach could be folded into analysis_storage,
-    // but I keep it as separate here so that we could, perhaps,
-    // returns different information for "no symbols found" and
-    // "no info at pos"
-    debug!("Looking up symbols/references at {:?}", fp);
-    let reference = analysis.reference_at_pos(fp)?;
-    debug!("Got reference {:?}", reference);
-
-    let canon_path = CanonPath::from_path_buf(fp.path())
-        .ok_or(AnalysisLookupError::NoFile)?;
-
-    let analysises = analysis.all_device_analysises_containing_file(&canon_path);
-    if analysises.is_empty() {
-        return Err(AnalysisLookupError::NoDeviceAnalysis);
-    }
-    let context_sym = analysis.context_symbol_at_pos(fp)?;
-    let symbols = context_sym.map(|cs| {
-        analysises.into_iter().flat_map(|a|a.lookup_symbols(&cs, relevant_limitations)).collect::<Vec<_>>()
-    });
-    if let Some(syms) = &symbols {
-        debug!("Got symbols {:?}", syms.iter().map(|s|s.lock().unwrap().medium_debug_info()).collect::<Vec<_>>());
-    }
-
-    // Rather than holding the lock throughout the request, clone
-    // the filter
-    let filter = Some(ctx.device_active_contexts.lock().unwrap().clone());
-    let mut definitions = vec![];
-
-    match (symbols, reference) {
-        (None,  None) => {
-            debug!("No symbol or reference at point");
-            return Ok(vec![]);
-        },
-        (Some(syms), refer) => {
-            if refer.is_some() {
-                error!("Obtained both symbol and reference at {:?}\
-                        (reference is {:?}), defaulted to symbol",
-                       &fp, refer);
-            }
-            definitions.extend(syms);
-        },
-        (None, Some(refr)) => {
-            debug!("Mapping {:?} to symbols", refr.loc_span());
-            // Should be guaranteed by the context reference lookup above
-            // (isolated analysis does exist)
-            if refr.reference_kind() == ReferenceKind::Type {
-                relevant_limitations.insert(type_semantic_limitation());
-            }
-
-            let first_context = analysis.first_context_at_pos(fp).unwrap();
-            let mut any_template_used = false;
-            for device in analysis.filtered_device_analysises_containing_file(
-                &canon_path,
-                filter.as_ref()) {
-                // NOTE: This ends up being the correct place to warn users
-                // about references inside uninstantiated templates,
-                // but we have to perform some extra work to find out we are
-                // in that case
-                if let Some(ContextKey::Template(ref sym)) = first_context {
-                    if device.templates.templates.get(sym.name_ref())
-                        .and_then(|t|t.location.as_ref())
-                        .and_then(
-                            |loc|device.template_object_implementation_map.get(loc))
-                        .map_or(false, |impls|!impls.is_empty()) {
-                            any_template_used = true;
-                        }
-                }
-
-                definitions.append(
-                    &mut device.symbols_of_ref(*refr.loc_span()));
-            }
-            if let Some(ContextKey::Template(templ)) = first_context {
-                if !any_template_used {
-                    relevant_limitations.insert(
-                        isolated_template_limitation(templ.name.as_str())
-                    );
-                }
-            }
-        },
-    }
-    debug!("Resolved to symbols: {:?}", definitions);
-    Ok(definitions)
 }
 
 /// The result of a deglob action for a single wildcard import.
@@ -519,16 +416,10 @@ impl RequestAction for GotoImplementation {
         wait_for_device_path!(ctx, canon_path);
 
         let mut limitations = HashSet::new();
-        match fp_to_symbol_refs(&fp, &ctx, &mut limitations) {
-            Ok(symbols) => {
-                let mut unique_locations: HashSet<ZeroSpan>
-                    = HashSet::default();
-                for symbol in symbols {
-                    for implementation in &symbol.lock().unwrap().implementations {
-                        unique_locations.insert(*implementation);
-                    }
-                }
-                let lsp_locations: Vec<_> = unique_locations.into_iter()
+        
+        match implementations_at_fp(&ctx, &fp, &mut limitations) {
+            Ok(locs) => {
+                let lsp_locations: Vec<_> = locs.into_iter()
                     .map(|l|ls_util::dls_to_location(&l))
                     .collect();
                 debug!("Requested implementations are {:?}", lsp_locations);
@@ -542,8 +433,7 @@ impl RequestAction for GotoImplementation {
             },
             Err(lookuperror) => {
                 let main_file_name = fp.path();
-                warn_miss_lookup(lookuperror,
-                                 main_file_name.to_str());
+                warn_miss_lookup(lookuperror, main_file_name.to_str());
                 Self::fallback_response()
             },
         }
@@ -585,12 +475,9 @@ impl RequestAction for GotoDeclaration {
         wait_for_device_path!(ctx, canon_path);
 
         let mut limitations = HashSet::new();
-        match fp_to_symbol_refs(&fp, &ctx, &mut limitations) {
-            Ok(symbols) => {
-                let unique_locations = symbols.into_iter()
-                        .flat_map(|d|d.lock().unwrap().declarations.clone())
-                        .collect::<HashSet<_>>();
-                let lsp_locations = unique_locations.into_iter()
+        match declarations_at_fp(&ctx, &fp, &mut limitations) {
+            Ok(locs) => {
+                let lsp_locations = locs.into_iter()
                     .map(|l|ls_util::dls_to_location(&l))
                     .collect();
                 trace!("Requested declarations are {:?}", lsp_locations);
@@ -645,13 +532,9 @@ impl RequestAction for GotoDefinition {
         wait_for_device_path!(ctx, canon_path);
 
         let mut limitations = HashSet::new();
-        match fp_to_symbol_refs(&fp, &ctx, &mut limitations) {
-            Ok(symbols) => {
-                let unique_locations = symbols.into_iter()
-                        .flat_map(|d|d.lock().unwrap().definitions.clone())
-                        .collect::<HashSet<_>>();
-
-                let lsp_locations: Vec<_> = unique_locations.into_iter()
+        match definitions_at_fp(&ctx, &fp, &mut limitations) {
+            Ok(locs) => {
+                let lsp_locations: Vec<_> = locs.into_iter()
                     .map(|l|ls_util::dls_to_location(&l))
                     .collect();
                 Ok(response_maybe_with_limitations(
@@ -669,25 +552,6 @@ impl RequestAction for GotoDefinition {
         }
     }
 }
-
-/* fn filter_out_unpointed_defaults(fp: &ZeroFilePosition,
-                                 symbols: &[SymbolRef])
-                                 -> HashSet<ZeroSpan> {
-    symbols
-        .iter()
-        .flat_map(|d|{
-            let sym = d.lock().unwrap();
-            let ignored_defaults = sym.default_mappings
-                .iter()
-                .filter(|(_, ref_loc)|!ref_loc.contains_pos(fp))
-                .map(|(decl_loc, _)|*decl_loc)
-                .collect::<HashSet<_>>();
-            sym.references.iter().filter(|loc| {
-                !ignored_defaults.contains(loc)
-            }).cloned().collect::<Vec<_>>()
-        })
-        .collect()
-} */
 
 impl RequestAction for References {
     type Response = ResponseWithMessage<Vec<Location>>;
@@ -725,12 +589,9 @@ impl RequestAction for References {
         wait_for_device_path!(ctx, canon_path);
 
         let mut limitations = HashSet::new();
-        match fp_to_symbol_refs(&fp, &ctx, &mut limitations) {
-            Ok(symbols) => {
-                let unique_locations = symbols.into_iter()
-                        .flat_map(|d|d.lock().unwrap().references.clone())
-                        .collect::<HashSet<_>>();
-                let lsp_locations: Vec<_> = unique_locations.into_iter()
+        match references_at_fp(&ctx, &fp, &mut limitations) {
+            Ok(locs) => {
+                let lsp_locations: Vec<_> = locs.into_iter()
                     .map(|l|ls_util::dls_to_location(&l))
                     .collect();
                 trace!("Requested references are {:?}", lsp_locations);

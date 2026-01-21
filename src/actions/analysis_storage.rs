@@ -2,7 +2,7 @@
 //  SPDX-License-Identifier: Apache-2.0 and MIT
 //! Stores currently completed analysis.
 
-use log::{debug, trace, info};
+use log::{debug, info, trace};
 
 use crossbeam::channel;
 
@@ -14,13 +14,12 @@ use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
 
 use crate::actions::ContextDefinition;
-use crate::analysis::scope::{ContextedSymbol, ContextKey};
+use crate::analysis::scope::ContextKey;
 use crate::analysis::structure::objects::Import;
 use crate::analysis::{DMLError, DeviceAnalysis, IsolatedAnalysis};
 
 use crate::lsp_data::*;
 use crate::analysis::parsing::tree::{ZeroSpan, ZeroFilePosition};
-use crate::analysis::reference::Reference;
 use crate::server::ServerToHandle;
 
 use crate::lint::LinterAnalysis;
@@ -210,27 +209,6 @@ impl AnalysisStorage {
             last_use: HashMap::default(),
         }
     }
-
-    pub fn context_symbol_at_pos<'t>(&'t self, pos: &ZeroFilePosition) ->
-        Result<Option<ContextedSymbol<'t>>, AnalysisLookupError> {
-            let canon_path = CanonPath::from_path_buf(pos.path())
-                .ok_or(AnalysisLookupError::NoFile)?;
-            let analysis = self.get_isolated_analysis(&canon_path)?;
-            let mut context = analysis.lookup_context_symbol(pos);
-            // Patch out leading 'device' context, unneeded
-            if let Some(ref mut ic) = context {
-                ic.remove_head_context();
-            }
-            Ok(context)
-        }
-
-    pub fn reference_at_pos(&self, pos: &ZeroFilePosition) ->
-        Result<Option<&Reference>, AnalysisLookupError> {
-            let canon_path = CanonPath::from_path_buf(pos.path())
-                .ok_or(AnalysisLookupError::NoFile)?;
-            let analysis = self.get_isolated_analysis(&canon_path)?;
-            Ok(analysis.lookup_reference(pos))
-        }
 
     pub fn first_context_at_pos(&self, pos: &ZeroFilePosition) ->
         Result<Option<ContextKey>, AnalysisLookupError> {
