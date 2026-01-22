@@ -286,7 +286,7 @@ pub struct IndentClosingBraceArgs {
 impl IndentClosingBraceArgs {
     pub fn from_compound_content(node: &CompoundContent, depth: u32) -> Option<IndentClosingBraceArgs> {
         Some(IndentClosingBraceArgs {
-            expected_depth: depth.saturating_sub(1),
+            expected_depth: depth,
             lbrace: node.lbrace.range(),
             last_member: node.statements.last()?.range(),
             rbrace: node.rbrace.range(),
@@ -296,7 +296,7 @@ impl IndentClosingBraceArgs {
     pub fn from_obj_stmts_content(node: &ObjectStatementsContent, depth: u32) -> Option<IndentClosingBraceArgs> {
         if let ObjectStatementsContent::List(lbrace, stmnts, rbrace) = node {
             Some(IndentClosingBraceArgs {
-                expected_depth: depth.saturating_sub(1),
+                expected_depth: depth,
                 lbrace: lbrace.range(),
                 last_member: stmnts.last()?.range(),
                 rbrace: rbrace.range(),
@@ -319,7 +319,7 @@ impl IndentClosingBraceArgs {
 
     pub fn from_struct_type_content(node: &StructTypeContent, depth: u32) -> Option<IndentClosingBraceArgs> {
         Some(IndentClosingBraceArgs {
-            expected_depth: depth.saturating_sub(1),
+            expected_depth: depth,
             lbrace: node.lbrace.range(),
             last_member: node.members.last()?.range(),
             rbrace: node.rbrace.range(),
@@ -328,7 +328,7 @@ impl IndentClosingBraceArgs {
 
     pub fn from_layout_content(node: &LayoutContent, depth: u32) -> Option<IndentClosingBraceArgs> {
         Some(IndentClosingBraceArgs {
-            expected_depth: depth.saturating_sub(1),
+            expected_depth: depth,
             lbrace: node.lbrace.range(),
             last_member: node.fields.last()?.range(),
             rbrace: node.rbrace.range(),
@@ -337,7 +337,7 @@ impl IndentClosingBraceArgs {
 
     pub fn from_bitfields_content(node: &BitfieldsContent, depth: u32) -> Option<IndentClosingBraceArgs> {
         Some(IndentClosingBraceArgs {
-            expected_depth: depth.saturating_sub(1),
+            expected_depth: depth,
             lbrace: node.lbrace.range(),
             last_member: node.fields.last()?.range(),
             rbrace: node.rbrace.range(),
@@ -377,9 +377,9 @@ impl IndentClosingBraceRule {
             return;
         }
 
-        let rbrace_on_same_ind_level_than_switchtok:bool = args.rbrace.col_start.0
-            == args.expected_depth * self.indentation_spaces;
-        if !rbrace_on_same_ind_level_than_switchtok {
+        let rbrace_on_same_col_as_outer_statement_start:bool = args.rbrace.col_start.0
+            == args.expected_depth;
+        if !rbrace_on_same_col_as_outer_statement_start {
             acc.push(self.create_err(args.rbrace));
         }
     }
