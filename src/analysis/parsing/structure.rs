@@ -244,7 +244,7 @@ impl TreeElement for MethodContent {
         rules.nsp_inparen.check(NspInparenArgs::from_method(self), acc);
         rules.sp_punct.check(SpPunctArgs::from_method(self), acc);
         rules.indent_paren_expr.check(IndentParenExprArgs::from_method(self), acc);
-        rules.break_func_call_open_paren.check(BreakFuncCallOpenParenArgs::from_method(self, aux.depth), acc);
+        rules.break_func_call_open_paren.check(BreakFuncCallOpenParenArgs::from_method(self, aux.depth.depth()), acc);
         rules.break_method_output.check(BreakMethodOutputArgs::from_method(self), acc);
     }
 }
@@ -730,8 +730,8 @@ impl TreeElement for ObjectStatementsContent {
     }
     fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, aux: AuxParams) {
         rules.sp_brace.check(SpBracesArgs::from_obj_stmts(self), acc);
-        rules.indent_code_block.check(IndentCodeBlockArgs::from_obj_stmts_content(self, aux.depth), acc);
-        rules.indent_closing_brace.check(IndentClosingBraceArgs::from_obj_stmts_content(self, aux.depth), acc);
+        rules.indent_code_block.check(IndentCodeBlockArgs::from_obj_stmts_content(self, aux.depth.depth()), acc);
+        rules.indent_closing_brace.check(IndentClosingBraceArgs::from_obj_stmts_content(self, aux.depth.depth()), acc);
     }
     fn should_increment_depth(&self) -> bool {
         matches!(self, ObjectStatementsContent::List(lbrace, list, rbrace)
@@ -1938,7 +1938,7 @@ impl TreeElement for DMLObjectContent {
         }
     }
     fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, aux: AuxParams) {
-        rules.indent_continuation_line.check(acc, IndentContinuationLineArgs::from_dml_object_content(self, aux.depth));
+        rules.indent_continuation_line.check(acc, IndentContinuationLineArgs::from_dml_object_content(self, aux.depth.depth()));
     }
 }
 
