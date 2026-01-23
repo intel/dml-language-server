@@ -45,19 +45,17 @@ directly.
 ### On Methods
 `goto-declaration` on a method will find the most-overridden declaration
 for this method, this will usually be a 'default' or abstract declaration.
-TODO: this is wrong currently
 
 `goto-definition` on a method reference will find all defintions of that method
 that could be called from that reference. Note that this will NOT point to
 method declarations that are entirely overridden. `goto-definition` on a method
 name is a no-op and will just point back to that same method.
-TODO: does not work correctly on default in overridden method body
 
 `goto-implementations` on a method will find all method declarations that
 could override it.
 
 `goto-references` will go to any location where the method is referred to
-directly(including call sites).
+directly (including call sites).
 
 ### On Parameters
 `goto-declaration` on a parameter will find the most-overridden declaration of
