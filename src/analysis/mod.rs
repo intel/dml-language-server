@@ -1078,7 +1078,7 @@ impl DeviceAnalysis {
         }
     }
 
-    // TODO/NOTE: This method seems slightly misplaced, consider moving to analysis storage
+    // TODO/NOTE: This method seems slightly misplaced, consider moving to semantic_lookup
     pub fn lookup_symbols_by_contexted_symbol<'t>(&self,
                                                   sym: &ContextedSymbol<'t>,
                                                   limitations: &mut HashSet<DLSLimitation>)
@@ -1103,7 +1103,7 @@ impl DeviceAnalysis {
         };
 
         if let Some(objs) = mb_objs {
-            debug!("Found {:?}", objs);
+            trace!("Found {:?}", objs);
             let mut refs = ReferenceMatches::new();
             let _: Vec<_> = objs.into_iter()
                 .map(|o|self.lookup_def_in_obj(&o, sym.symbol, &mut refs))
@@ -1175,13 +1175,43 @@ impl DeviceAnalysis {
                                             method_structure: &HashMap
                                             <ZeroSpan, RangeEntry>,
                                             ref_matches: &mut ReferenceMatches) {
-        // TODO: is this 100% true?
-        // We cannot lookup things from within a method without
-        // the reference being contained within the span of the method
+        // When resolving a noderef from an overridden method, meth here will be
+        // a bottom-most overriding method. So instead find the correct method
+        // by recursing to parent
         if !meth.span().contains_pos(&node.span.start_position()) {
+            match meth.get_default() {
+                Some(DefaultCallReference::Valid(defmeth)) => {
+                    if let Some(defmeth_sym) = self.get_method_symbol(defmeth,
+                                                                     parent_key) {
+                        self.resolve_noderef_in_symbol(
+                            defmeth_sym,
+                            &NodeRef::Simple(node.clone()),
+                            method_structure,
+                            ref_matches);
+                    }
+                },
+                Some(DefaultCallReference::Ambiguous(defmeths)) => {
+                    for defmeth in defmeths {
+                        if let Some(defmeth_sym) = self.get_method_symbol(defmeth,
+                                                                         parent_key) {
+                            self.resolve_noderef_in_symbol(
+                                defmeth_sym,
+                                &NodeRef::Simple(node.clone()),
+                                method_structure,
+                                ref_matches);
+                        }
+                    }
+                },
+                _ => {
+                    internal_error!("Wanted to look up a reference {:?} within method {:?}, \
+                                    but the ref is not in the method span {:?} and there are \
+                                    no overridden methods",
+                                    node, meth.identity(), meth.span());
+                }
+            }
             return;
         }
-
+        trace!("Resolving simple noderef {:?} in method {:?}", node, meth);
         match node.val.as_str() {
             "this" =>
                 ref_matches.add_match(Arc::clone(
@@ -1295,6 +1325,7 @@ impl DeviceAnalysis {
                                   method_structure: &HashMap<ZeroSpan,
                                                              RangeEntry>,
                                   ref_matches: &mut ReferenceMatches) {
+        trace!("Resolving noderef {:?} in obj {:?}", node, obj);
         match node {
             NodeRef::Simple(simple) => {
                 let resolvedobj = obj.resolve(&self.objects);
@@ -1381,6 +1412,8 @@ impl DeviceAnalysis {
                                        method_structure,
                                        ref_matches);
             }
+        } else {
+            debug!("Failed to obtain obj from context {:?}", context_chain);
         }
     }
 
@@ -2242,6 +2275,8 @@ impl DeviceAnalysis {
         info!("Match references");
         let reference_cache: Mutex<ReferenceCache> = Mutex::default();
         for scope_chain in all_scopes(bases) {
+            debug!("Got scope at {:?}", scope_chain.last()
+                   .map(|s|s.span().start_position()));
             self.match_references_in_scope(scope_chain,
                                            errors,
                                            method_structure,

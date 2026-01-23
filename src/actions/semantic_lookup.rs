@@ -186,14 +186,15 @@ fn get_symbols_of_ref<'t>(reference: &Reference,
     // (isolated analysis does exist)
     let mut symbols = vec![];
     let first_context = analysis_info.isolated_analysis
-    .lookup_first_context(&reference.loc_span().start_position()).unwrap();
+        .lookup_first_context(&reference.loc_span()
+        .start_position());
     let mut any_template_used = false;
     for device in &analysis_info.device_analysises {
         // NOTE: This ends up being the correct place to warn users
         // about references inside uninstantiated templates,
         // but we have to perform some extra work to find out we are
         // in that case
-        if let ContextKey::Template(ref sym) = first_context {
+        if let Some(ContextKey::Template(ref sym)) = first_context {
             if device.templates.templates.get(sym.name_ref())
             .and_then(|t|t.location.as_ref())
             .and_then(|loc|device.template_object_implementation_map.get(loc))
@@ -203,7 +204,7 @@ fn get_symbols_of_ref<'t>(reference: &Reference,
         }
         symbols.append(&mut device.symbols_of_ref(*reference.loc_span()));
     }
-    if let ContextKey::Template(templ) = first_context {
+    if let Some(ContextKey::Template(templ)) = first_context {
         if !any_template_used {
             relevant_limitations.insert(
                 isolated_template_limitation(templ.name.as_str())
@@ -279,16 +280,20 @@ fn symbol_implementations_of_symbol<'t>(symbol: &'t SymbolRef,
     }
 }
 
-fn extend_with_implementations_of_symbols<'t>(semantic_lookup: &mut SemanticLookup<'t>) {
-    for (_device_analysis, symbols) in &mut semantic_lookup.stored_symbols {
-        #[allow(clippy::mutable_key_type)]
-        let mut symbol_collection: HashSet<_> = HashSet::default();
-        for symbol in symbols.iter() {
-            symbol_collection.extend(symbol_implementations_of_symbol(symbol, _device_analysis));
+// NOTE: It'd be nice for some of these methods to return hashsets of symbolrefs.
+// however, SymbolRefs can in fact be modified while these requests are running,
+// due to symbol->reference caching, so it would break hashset invariance
+// Instead, we will rely on actions.rs to make locations unique before passing to client
+fn extra_implementations_of_method_symbols<'t>(semantic_lookup: &SemanticLookup<'t>)
+    -> Vec<SymbolRef> {
+    let mut full_method_symbol_set: Vec<SymbolRef> = vec![];
+    for (_device_analysis, symbols) in &semantic_lookup.stored_symbols {
+        for symbol in symbols {
+            full_method_symbol_set.extend(
+                symbol_implementations_of_symbol(symbol, _device_analysis).into_iter());
         }
-        symbol_collection.extend(symbols.drain(..));
-        symbols.extend(symbol_collection.into_iter());
     }
+    full_method_symbol_set
 }
 
 pub fn implementations_at_fp(context: &InitActionContext<impl Output>,
@@ -300,11 +305,14 @@ pub fn implementations_at_fp(context: &InitActionContext<impl Output>,
         fp,
         &analysis_lock,
         context)?;
-    extend_with_implementations_of_symbols(&mut semantic_lookup);
+    let method_symbols = extra_implementations_of_method_symbols(&semantic_lookup);
     mem::swap(relevant_limitations, &mut semantic_lookup.recognized_limitations);
     Ok(semantic_lookup.symbols()
        .into_iter()
-       .map(|s|s.lock().unwrap().loc)
+       .filter(|s|s.lock().unwrap().kind != DMLSymbolKind::Method)
+       .flat_map(|s|s.lock().unwrap().implementations.clone())
+       .chain(method_symbols.into_iter()
+              .map(|s|s.lock().unwrap().loc))
        .collect())
 }
 
@@ -336,7 +344,13 @@ pub fn declarations_at_fp(context: &InitActionContext<impl Output>,
     mem::swap(relevant_limitations, &mut semantic_lookup.recognized_limitations);
     Ok(semantic_lookup.symbols()
        .into_iter()
-       .flat_map(|s|s.lock().unwrap().declarations.clone())
+       .flat_map(|s|{
+        let symlock = s.lock().unwrap();
+        if symlock.kind == DMLSymbolKind::Method {
+            symlock.bases.clone()
+        } else {
+            symlock.declarations.clone()
+        }})
        .collect())
 }
 
