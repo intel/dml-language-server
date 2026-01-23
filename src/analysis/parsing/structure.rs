@@ -628,9 +628,10 @@ impl TreeElement for Instantiation {
                 |(tok,_)|tok).collect(),
         };
 
-        let refs = toks.into_iter().filter_map(
-            |tok|Reference::global_from_token(
-                tok, file, ReferenceKind::Template));
+        let refs = toks.into_iter()
+            .filter_map(|tok|Reference::global_from_token(
+                         tok, file, ReferenceKind::Template))
+            .map(|mut r|{r.extra_info.was_instantiation = true; r});
         accumulator.extend(refs);
     }
 }
