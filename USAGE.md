@@ -75,7 +75,6 @@ template declaration site.
 
 `goto-implementations` will give each location where the template is directly
 instantiated.
-TODO: does not actually work
 
 `goto-references` will go to any location where the template is referred to,
 including direct instantiation sites (so this is a super-set of

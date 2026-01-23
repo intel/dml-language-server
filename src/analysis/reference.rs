@@ -107,7 +107,13 @@ pub enum ReferenceVariant {
     Global(GlobalReference),
 }
 
-pub type ReferenceInfo = ();
+// NOTE: Since this information is likely to be sparse, use
+// boxes for any non-trivially small fields. If fields get to be more
+// than a few, the entire info should probably be boxed instead
+#[derive(Debug, Default, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ReferenceInfo {
+    pub was_instantiation: bool,
+}
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Reference {

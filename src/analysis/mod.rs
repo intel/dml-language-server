@@ -1502,6 +1502,9 @@ impl DeviceAnalysis {
                          reference: &Reference) {
         let mut sym = symbol.lock().unwrap();
         sym.references.insert(*reference.loc_span());
+        if sym.kind == DMLSymbolKind::Template && reference.extra_info.was_instantiation {
+            sym.implementations.insert(*reference.loc_span());
+        }
     }
 
     #[allow(clippy::ptr_arg)]
