@@ -29,9 +29,7 @@ use crate::actions::analysis_storage::TimestampedStorage;
 use crate::actions::semantic_lookup::{DLSLimitation, isolated_template_limitation};
 use crate::analysis::symbols::{DMLSymbolKind, SimpleSymbol, StructureSymbol, SymbolContainer, SymbolMaker, SymbolSource};
 pub use crate::analysis::symbols::SymbolRef;
-use crate::analysis::reference::{Reference,
-                                 GlobalReference, VariableReference,
-                                 ReferenceKind, NodeRef};
+use crate::analysis::reference::{GlobalReference, NodeRef, Reference, ReferenceKind, ReferenceVariant, VariableReference};
 use crate::analysis::scope::{Scope, SymbolContext,
                              ContextKey, ContextedSymbol};
 use crate::analysis::parsing::parser::{FileInfo, FileParser};
@@ -1523,13 +1521,13 @@ impl DeviceAnalysis {
             let mut local_reports = vec![];
             for reference in references {
                 trace!("In {:?}, Matching {:?}", context_chain, reference);
-                let symbol_lookup = match &reference {
-                    Reference::Variable(var) => self.find_target_for_reference(
+                let symbol_lookup = match &reference.variant {
+                    ReferenceVariant::Variable(var) => self.find_target_for_reference(
                         context_chain.as_slice(),
                         var,
                         method_structure,
                         reference_cache),
-                    Reference::Global(glob) =>
+                    ReferenceVariant::Global(glob) =>
                         self.lookup_global_from_ref(glob),
                 };
 
@@ -1612,7 +1610,7 @@ impl fmt::Display for IsolatedAnalysis {
                        |mut s, path|{
                            write!(s, "\t\t{:?}\n, ", path)
                                .expect("write string error");
-                           s
+                            s
                        }))?;
         writeln!(f, "\ttoplevel: {}\n}}", self.toplevel)?;
         Ok(())
