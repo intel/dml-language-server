@@ -102,9 +102,17 @@ pub enum ReferenceKind {
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Reference {
+pub enum ReferenceVariant {
     Variable(VariableReference),
     Global(GlobalReference),
+}
+
+pub type ReferenceInfo = ();
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Reference {
+    pub variant: ReferenceVariant,
+    pub extra_info: ReferenceInfo,
 }
 
 // NOTE: The locationspan of a reference is the actual source range its
@@ -116,17 +124,17 @@ pub enum Reference {
 // and the declarationspan covering the full reference
 impl LocationSpan for Reference {
     fn loc_span(&self) -> &ZeroSpan {
-        match self {
-            Reference::Variable(var) => var.loc_span(),
-            Reference::Global(glob) => glob.loc_span(),
+        match &self.variant {
+            ReferenceVariant::Variable(var) => var.loc_span(),
+            ReferenceVariant::Global(glob) => glob.loc_span(),
         }
     }
 }
 impl DeclarationSpan for Reference {
     fn span(&self) -> &ZeroSpan {
-        match self {
-            Reference::Variable(var) => var.span(),
-            Reference::Global(glob) => glob.span(),
+        match &self.variant {
+            ReferenceVariant::Variable(var) => var.span(),
+            ReferenceVariant::Global(glob) => glob.span(),
         }
     }
 }
@@ -134,35 +142,41 @@ impl DeclarationSpan for Reference {
 impl std::fmt::Display for Reference {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>)
            -> Result<(), std::fmt::Error> {
-        match self {
-            Reference::Variable(var) => var.fmt(f),
-            Reference::Global(glob) => glob.fmt(f),
+        match &self.variant {
+            ReferenceVariant::Variable(var) => var.fmt(f),
+            ReferenceVariant::Global(glob) => glob.fmt(f),
         }
     }
 }
 
 impl Reference {
     pub fn as_variable_ref(&self) -> Option<&VariableReference> {
-        match self {
-            Reference::Variable(var) => Some(var),
+        match &self.variant {
+            ReferenceVariant::Variable(var) => Some(var),
             _ => None,
         }
     }
 
     pub fn from_noderef(node: NodeRef, kind: ReferenceKind) -> Reference {
-        Reference::Variable(VariableReference {
-            reference: node,
-            kind,
-        })
+        Reference {
+            variant: ReferenceVariant::Variable(VariableReference {
+                reference: node,
+                kind,
+            }),
+            extra_info: ReferenceInfo::default(),
+        }
     }
     pub fn global_from_string(name: String,
                               loc: ZeroSpan,
                               kind: ReferenceKind) -> Reference {
-        Reference::Global(GlobalReference {
-            name,
-            loc,
-            kind,
-        })
+        Reference {
+            variant: ReferenceVariant::Global(GlobalReference {
+                name,
+                loc,
+                kind,
+            }),
+            extra_info: ReferenceInfo::default(),
+        }
     }
     pub fn global_from_token<'a>(token: &LeafToken,
                                  file: FileSpec<'a>,
@@ -175,9 +189,9 @@ impl Reference {
                 kind))
     }
     pub fn reference_kind(&self) -> ReferenceKind {
-        match self {
-            Reference::Variable(r) => r.kind,
-            Reference::Global(r) => r.kind,
+        match &self.variant {
+            ReferenceVariant::Variable(r) => r.kind,
+            ReferenceVariant::Global(r) => r.kind,
         }
     }
 }
