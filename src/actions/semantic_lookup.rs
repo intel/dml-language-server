@@ -11,6 +11,7 @@ use std::sync::Arc;
 use crate::actions::analysis_storage::{AnalysisLookupError, AnalysisStorage};
 use crate::actions::{ContextDefinition, InitActionContext};
 use crate::analysis::scope::{ContextedSymbol, ContextKey};
+use crate::analysis::structure::objects::MaybeAbstract;
 use crate::analysis::symbols::DMLSymbolKind;
 use crate::analysis::{DeviceAnalysis, IsolatedAnalysis, LocationSpan, SymbolRef};
 
@@ -316,6 +317,26 @@ pub fn implementations_at_fp(context: &InitActionContext<impl Output>,
        .collect())
 }
 
+fn definitions_of_symbol<'t>(symbol: &'t SymbolRef)
+    -> Vec<ZeroSpan> {
+    let symbol_lock = symbol.lock().unwrap();
+    if symbol_lock.kind == DMLSymbolKind::Method {
+        if let Some((_, methsrc)) = symbol_lock.source.as_method() {
+            if methsrc.is_abstract() {
+                symbol_lock.implementations.iter()
+                    .cloned().collect()
+            } else {
+                symbol_lock.definitions.clone()
+            }
+        } else {
+             internal_error!("Expected method symbol source for method symbol {:?}", symbol_lock);
+             vec![]
+        }
+    } else {
+        symbol_lock.definitions.clone()
+    }
+}
+
 pub fn definitions_at_fp(context: &InitActionContext<impl Output>,
                          fp: &ZeroFilePosition,
                          relevant_limitations: &mut HashSet<DLSLimitation>)
@@ -328,7 +349,7 @@ pub fn definitions_at_fp(context: &InitActionContext<impl Output>,
     mem::swap(relevant_limitations, &mut semantic_lookup.recognized_limitations);
     Ok(semantic_lookup.symbols()
        .into_iter()
-       .flat_map(|s|s.lock().unwrap().definitions.clone())
+       .flat_map(|s|definitions_of_symbol(&s))
        .collect())
 }
 

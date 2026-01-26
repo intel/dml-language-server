@@ -49,7 +49,8 @@ for this method, this will usually be a 'default' or abstract declaration.
 `goto-definition` on a method reference will find all defintions of that method
 that could be called from that reference. Note that this will NOT point to
 method declarations that are entirely overridden. `goto-definition` on a method
-name is a no-op and will just point back to that same method.
+name will go to the nearest definition of the method. For non-abstract methods
+this is a no-op.
 
 `goto-implementations` on a method will find all method declarations that
 could override it.
