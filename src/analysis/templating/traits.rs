@@ -630,7 +630,7 @@ where
                 // Methods can override each other on trait level,
                 // other declarations cannot
                 match (decl, edecl) {
-                    (TraitMemberKind::Method(_), TraitMemberKind::Method(_))
+                    (TraitMemberKind::Method(m1), TraitMemberKind::Method(m2))
                         => match relation {
                             ImplementRelation::Implements => {
                                 map.insert(name, implr);
@@ -643,14 +643,20 @@ where
                             // analysis.
                             // A minor improvement would be to pick both
                             ImplementRelation::Unrelated => {
-                                map.insert(name.clone(), Arc::clone(&mimplr));
-                                if let Some(ambdef) =
-                                    ambiguous_defs.get_mut(&name) {
-                                        ambdef.push(implr);
-                                    }
-                                else {
-                                    ambiguous_defs.insert(name,
-                                                          vec![mimplr, implr]);
+                                // This conflict is allowed as long as exactly 1
+                                // is abstract
+                                if m1.is_abstract() && !m2.is_abstract() {
+                                    map.insert(name, mimplr);
+                                    
+                                } else if !m1.is_abstract() && m2.is_abstract() {
+                                    map.insert(name, implr);
+                                } else {
+                                    // Both abstract or both non-abstract
+                                    // ambiguous
+                                    map.insert(name.clone(), Arc::clone(&mimplr));
+                                    ambiguous_defs.entry(name)
+                                        .or_default()
+                                        .push(mimplr);
                                 }
                             },
                             _ => unreachable!("should be covered by if clause"),

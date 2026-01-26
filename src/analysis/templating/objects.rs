@@ -33,8 +33,7 @@ use crate::analysis::templating::topology::{InEachStruct, InferiorVariant,
                                             Rank, RankDesc, RankDescKind,
                                             RankMaker, topsort};
 use crate::analysis::templating::traits::{DMLTemplate, DMLTrait,
-                                          get_impls, merge_impl_maps,
-                                          TraitMemberKind, TemplateTraitInfo};
+                                          get_impls, TraitMemberKind, TemplateTraitInfo};
 use crate::analysis::{LocationSpan, DeclarationSpan, combine_vec_of_decls};
 
 type InEachSpec = HashMap<String, Vec<(Vec<String>, Arc<ObjectSpec>)>>;
@@ -1768,7 +1767,7 @@ fn merge_composite_subobjs<'c>(parent_each_stmts: &InEachSpec,
 // and 'order' is a order of methods, with lowest rank being last
 fn sort_method_decls<'t>(decls: &[(&Rank, &'t MethodDecl)]) ->
     (HashMap<&'t MethodDecl, HashSet<&'t MethodDecl>>, Vec<&'t MethodDecl>) {
-        trace!("Sorting method declarations: {:?}", decls);
+        debug!("Sorting method decls {:?}", decls);
         let mut rank_to_method: HashMap<&Rank, (Vec<&MethodDecl>, Vec<&MethodDecl>)>
             = HashMap::default();
 
@@ -1780,15 +1779,55 @@ fn sort_method_decls<'t>(decls: &[(&Rank, &'t MethodDecl)]) ->
                 defs.push(*decl);
             }
         }
-
+        trace!("rank-to-method is: {:?}", rank_to_method);
         let ranks: HashSet<&Rank> = rank_to_method.keys()
             .cloned().collect();
-
-        let ancestry: HashMap<&Rank, Vec<&Rank>> = ranks.iter()
+        let mut ancestry: HashMap<&Rank, Vec<&Rank>> = ranks.iter()
             .map(|r|(*r, ranks.iter().filter(
                 |r2|r.inferior.contains(&r2.id)).cloned().collect()))
             .collect();
 
+        // Insert implicit special ancestry ordering to resolve unrelated ranks
+        // where a non-abstract method can override an abstract method
+        trace!("Initial ancestry is {:?}", ancestry);
+        let top_ancestry: HashSet<&Rank> = ranks.iter()
+            .filter(|a|!ancestry.values().any(|ra|ra.contains(*a)))
+            .cloned()
+            .collect();
+        trace!("Top ancestry ranks are {:?}", top_ancestry);
+        let new_edges = {
+            let mut top_defs = vec![];
+            let mut top_decls = vec![];
+            for r in top_ancestry {
+                let (defs, decls) = rank_to_method.get(r).unwrap();
+                top_defs.extend(defs.iter().map(|d|(r, *d)));
+                top_decls.extend(decls.iter().map(|d|(r, *d)));
+            }
+            if top_defs.len() == 1 {
+                let (top_rank, top_def) = &top_defs[0];
+                if !top_def.is_abstract() {
+                    top_decls.iter().filter_map(|(subrank, subdecl)|
+                        // In-rank case is handled in method sorting
+                        if subdecl.is_abstract() && top_rank != subrank {
+                            Some((top_rank, subrank))
+                        } else {
+                            None
+                        })
+                        .map(|(from, to)|(*from, *to))
+                        .collect()
+                } else {
+                    vec![]
+                }
+            } else {
+                vec![]
+            }
+        };
+
+        for (from, to) in new_edges {
+            trace!("Inserted implicit ancestry edge from {:?} to {:?}", from, to);
+            ancestry.entry(from).or_default().push(to);
+        }
+        trace!("Ancestry is {:?}", ancestry);
         let mut minimal_ancestry: HashMap<&Rank, Vec<&Rank>>
             = HashMap::default();
         // Get ancestors that are not the ancestor of any ancestor
@@ -1802,8 +1841,6 @@ fn sort_method_decls<'t>(decls: &[(&Rank, &'t MethodDecl)]) ->
             }
             minimal_ancestry.insert(rank, minimal_ancestors);
         }
-
-        trace!("Minimal ancestors are {:?}", minimal_ancestry);
 
         // Map method declaration to those that they directly override
         let mut method_map: HashMap<&'t MethodDecl, HashSet<&'t MethodDecl>>
@@ -1838,7 +1875,7 @@ fn sort_method_decls<'t>(decls: &[(&Rank, &'t MethodDecl)]) ->
 
 fn add_methods(obj: &mut DMLCompositeObject,
                methods: MethodMapping,
-               name_to_trait_map: &HashMap<String, Arc<DMLTrait>>,
+               decl_to_trait_map: &HashMap<MethodDecl, Arc<DMLTrait>>,
                report: &mut Vec<DMLError>) {
     debug!("Adding methods to {}", obj.identity());
 
@@ -1849,18 +1886,10 @@ fn add_methods(obj: &mut DMLCompositeObject,
         }
         trace!("Handling method {}, which is declared by {:?}",
                name, regular_decls);
-        let mut all_decls: Vec<(&Rank, &MethodDecl)>
+        let all_decls: Vec<(&Rank, &MethodDecl)>
             = regular_decls.iter().map(|(a, b)|(a, b)).collect();
-        // Note: Sorting and overrides between methods is sorted (hah) already
-        // find the topmost relevant method decl
-        if let Some(trait_ref) = name_to_trait_map.get(&name) {
-            if let Some(trait_decl) = trait_ref.get_method(&name) {
-                all_decls.push((&trait_ref.rank, trait_decl));
-            }
-        }
-        trace!("All possible declarations are: {:?}", all_decls);
+
         let (default_map, method_order) = sort_method_decls(&all_decls);
-        trace!("Method order is: {:?}", method_order);
         let mut decl_to_method: HashMap<MethodDecl, Arc<DMLMethodRef>>
             = HashMap::default();
         for method in method_order.iter().rev() {
@@ -1905,7 +1934,8 @@ fn add_methods(obj: &mut DMLCompositeObject,
                  method.check_override(*decl, report);
             }
 
-            let template_ref = name_to_trait_map.get(&name)
+            let template_ref = decl_to_trait_map
+                .get(method)
                 .map(Arc::clone);
 
             let new_method = Arc::new(
@@ -2002,7 +2032,13 @@ fn check_trait_overrides(obj: &DMLCompositeObject,
                                 variant: DMLShallowObjectVariant::Method(m),
                                 ..
                             }) = collision {
-                                m.check_override(meth, report);
+                                // Special case, we are allowed conflict with
+                                // an abstract method if we can override it
+                                if m.is_abstract() {
+                                    meth.check_override(m.get_decl(), report);
+                                } else {
+                                    m.check_override(meth, report);
+                                }
                             }
                     }
                 } else if let TraitMemberKind::Method(meth) = member {
@@ -2220,10 +2256,12 @@ pub fn make_object(loc: ZeroSpan,
     add_subobjs(new_obj_key, subobj_keys, container);
     {
         let new_obj = container.get_mut(new_obj_key).unwrap();
-        let trait_method_map = merge_impl_maps(&identity.val, &loc,
-                                               new_obj.templates.values().map(
-                                                   |t|&t.traitspec),
-                                               report);
+        let trait_method_map = new_obj.templates.values()
+            .flat_map(|t|t.traitspec.methods.values()
+                      .map(|m|(m.decl.clone(), Arc::clone(&t.traitspec)))
+                      .collect::<Vec<_>>())
+            .collect();
+
         add_methods(new_obj, methods, &trait_method_map, report);
     }
     check_trait_overrides(container.get(new_obj_key).unwrap(),
