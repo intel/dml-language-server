@@ -260,13 +260,12 @@ impl DMLTrait {
                    traits: &HashMap<String, Arc<DMLTrait>>,
                    report: &mut Vec<DMLError>)
                    -> Arc<DMLTrait> {
-        debug!("Processing trait for {}",
-               traits.keys().fold(
+        debug!("Processing trait for {}", name);
+        trace!("other traits are {:?}", traits.keys().fold(
                    "".to_string(),
                    |mut s,k|{write!(s, "{}, ", k)
                              .expect("write string error");
                              s}));
-        trace!("other traits are {:?}", name,);
         // Skip analysis for dummy trait
         if maybeloc.is_none() {
             trace!("Dummy trait, skipped");
