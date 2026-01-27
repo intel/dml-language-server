@@ -151,6 +151,7 @@ fn get_refs_and_syms_at_fp<'t>(
     analysis_info: &AnalysisInfo<'t>,
     relevant_limitations: &mut HashSet<DLSLimitation>)
     -> Result<SymbolsOrReference<'t>, AnalysisLookupError> {
+    debug!("Looking up references and symbols at position {:?}", fp);
     let ref_at_pos = analysis_info.isolated_analysis.lookup_reference(fp);
     
     let context_sym_at_pos = context_symbol_at_pos(analysis_info.isolated_analysis, fp);
@@ -317,17 +318,25 @@ pub fn implementations_at_fp(context: &InitActionContext<impl Output>,
        .collect())
 }
 
-fn definitions_of_symbol<'t>(symbol: &'t SymbolRef)
+fn definitions_of_symbol<'t>(symbol: &'t SymbolRef, refr: Option<&Reference>)
     -> Vec<ZeroSpan> {
     let symbol_lock = symbol.lock().unwrap();
     if symbol_lock.kind == DMLSymbolKind::Method {
         if let Some((_, methsrc)) = symbol_lock.source.as_method() {
-            if methsrc.is_abstract() {
-                symbol_lock.implementations.iter()
-                    .cloned().collect()
-            } else {
-                symbol_lock.definitions.clone()
+            let mut to_return = vec![];
+            // If we goto-def directly on an abstract method,
+            // give its first-level overrides
+            if methsrc.is_abstract() && refr.is_none() {
+                to_return = symbol_lock.implementations.iter()
+                    .cloned().collect();
             }
+            if to_return.is_empty() {
+                to_return = symbol_lock.definitions.clone();
+            }
+            if to_return.is_empty() {
+                to_return = symbol_lock.declarations.clone();
+            }
+            to_return
         } else {
              internal_error!("Expected method symbol source for method symbol {:?}", symbol_lock);
              vec![]
@@ -349,7 +358,7 @@ pub fn definitions_at_fp(context: &InitActionContext<impl Output>,
     mem::swap(relevant_limitations, &mut semantic_lookup.recognized_limitations);
     Ok(semantic_lookup.symbols()
        .into_iter()
-       .flat_map(|s|definitions_of_symbol(&s))
+       .flat_map(|s|definitions_of_symbol(&s, semantic_lookup.found_ref.as_ref()))
        .collect())
 }
 

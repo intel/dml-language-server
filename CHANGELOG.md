@@ -11,10 +11,13 @@
 - The DLS will no longer fail to parse files with unicode characters in cblock
   header or footers, or in multiline comments
 - The DLS will now report when an ambiguous default call is made
-- Improved how definitions and references from/to methods and default calls are resolved,
-  goto-definition on a default call will now only go to the method it will call,
-  and goto-references on a method definition will no longer go to default declarations
-  that cannot call it
+- Improvements and clarifications to connections between symbols and references,
+  for details, see [USAGE.md](USAGE.md).
+-- Method declared in unrelated templates in an allowed way will now have their
+   references correctly resolved.
+-- Goto-reference on default calls will now go to the methods that may be called.
+-- Goto-implementation on templates will now go to all places where they are
+   instantiated.
 
 ## 0.9.17
 - Fixed linter wrongly throwing an error on space after `defined` keyword
