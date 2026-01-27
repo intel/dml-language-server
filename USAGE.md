@@ -34,20 +34,22 @@ See issues [#13](https://github.com/intel/dml-language-server/issues/13),
 
 ### On Composite Objects (banks, registers, implements, etc.)
 `goto-declaration` and `goto-definition` on an composite object are equivalent.
-They will pointreturn the locations of all object declarations that may be
+They will find the locations of all object declarations that may be
 merged with the one at the name.
 
 `goto-implementations` on objects is currently unused.
 
-`goto-references` will go to any location where the object is referred to
+`goto-references` will go to any location where the symbol is referred to
 directly.
 
 ### On Methods
 `goto-declaration` on a method will find the most-overridden declaration
-for this method, this will usually be a 'default' or abstract declaration.
+or definition of the method, this will usually be a 'default' or
+abstract declaration.
 
-`goto-definition` on a method reference will find all defintions of that method
-that could be called from that reference. Note that this will NOT point to
+`goto-definition` on a method reference will find all definitions of that method
+that could be called from that reference, or the declaration of the method if it
+has no non-abstract definitions. Note that this will NOT point to
 method declarations that are entirely overridden. `goto-definition` on a method
 name will go to the nearest definition of the method. For non-abstract methods
 this is a no-op.
