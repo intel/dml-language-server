@@ -1,0 +1,41 @@
+//  © 2024 Intel Corporation
+//  SPDX-License-Identifier: Apache-2.0 and MIT
+dml 1.4;
+
+// This file defines types and templates to be imported by cross_file_main.dml
+
+// Template to be imported and used
+// @loc[10]=imported_template
+template imported_template { // @goto-impl[10]->cross_file_main.dml:imported_template_is
+    // @loc[11]=imported_param
+    param imported_param default 42; // @goto-ref[11]->imported_param_self_ref,cross_file_main.dml:imported_param_ref
+    
+    // @loc[12]=imported_method
+    method imported_method() {
+        // @loc[27]=imported_method_self_ref
+        // @loc[64]=imported_param_self_ref
+        log info: "Called imported_method with param=%d", this.imported_param;
+    }
+    
+    // Method that references a parameter defined in the importing file
+    // @loc[12]=use_bank_param
+    method use_bank_param() {
+        // This will reference bank_specific_param from cross_file_main.dml
+        // @loc[28]=bank_specific_param_ref
+        local int y = this.bank_specific_param; // @goto-def[28]->cross_file_main.dml:bank_specific_param
+    }
+}
+
+// Another template with shared method declaration
+// @loc[10]=shared_method_template
+template shared_method_template { // @goto-impl[10]->cross_file_main.dml:shared_method_template_is @goto-ref[10]->cross_file_main.dml:shared_method_template_is
+    // Abstract method declaration
+    // @loc[19]=abstract_shared_decl
+    shared method abstract_shared(); // @goto-impl[19]->cross_file_main.dml:abstract_shared_def //@goto-ref[19]->!cross_file_main.dml:abstract_shared_def
+}
+
+// === Expected-failure tests (nonexistent symbols) ===
+
+template phantom_imported is no_such_template { // @goto-def[30]->
+    param phantom_imp_val default 0;
+}

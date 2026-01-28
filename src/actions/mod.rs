@@ -400,6 +400,44 @@ impl <O: Output> InitActionContext<O> {
         }
     }
 
+    /// Create an InitActionContext for testing purposes
+    /// 
+    /// This constructor is only available in test builds and provides a minimal
+    /// but functional InitActionContext for testing LSP operations.
+    #[cfg(test)]
+    pub fn new_for_testing(
+        analysis: Arc<Mutex<AnalysisStorage>>,
+        vfs: Arc<Vfs>,
+    ) -> InitActionContext<O> {
+        let shut_down = Arc::new(AtomicBool::new(false));
+        let config = Arc::new(Mutex::new(Config::default()));
+        
+        InitActionContext {
+            analysis,
+            vfs,
+            analysis_queue: Arc::new(AnalysisQueue::init(Arc::clone(&shut_down))),
+            current_notifier: Arc::new(Mutex::new(None)),
+            quiescent: Arc::new(AtomicBool::new(false)),
+            workspace_roots: Arc::new(Mutex::new(Vec::new())),
+            cached_path_resolver: Arc::new(Mutex::new(None)),
+            direct_opens: Arc::new(Mutex::new(HashSet::new())),
+            compilation_info: Arc::new(Mutex::new(HashMap::new())),
+            device_active_contexts: Arc::new(Mutex::new(HashSet::new())),
+            previously_checked_contexts: Arc::new(Mutex::new(HashSet::new())),
+            prev_changes: Arc::new(Mutex::new(HashMap::new())),
+            active_waits: Arc::new(Mutex::new(Vec::new())),
+            outstanding_requests: Arc::new(Mutex::new(HashMap::new())),
+            config,
+            lint_config: Arc::new(Mutex::new(LintCfg::default())),
+            sent_warnings: Arc::new(Mutex::new(HashSet::new())),
+            jobs: Arc::new(Mutex::new(Jobs::default())),
+            client_capabilities: Arc::new(ClientCapabilities::default()),
+            has_notified_missing_builtins: false,
+            shut_down,
+            pid: std::process::id(),
+        }
+    }
+
     fn add_direct_open(&self, path: PathBuf) {
         // NOTE: from_path_buf already logs the error, no need to do it here
         let Some(canon_path) = CanonPath::from_path_buf(path) else { return };
