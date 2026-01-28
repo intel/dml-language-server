@@ -18,6 +18,7 @@
 -- Goto-reference on default calls will now go to the methods that may be called.
 -- Goto-implementation on templates will now go to all places where they are
    instantiated.
+- Added parser support for provisional 'explicit\_method\_decls'
 
 ## 0.9.17
 - Fixed linter wrongly throwing an error on space after `defined` keyword
@@ -29,7 +30,7 @@
 
 ## 0.9.15
 - Added support for line length and breaking rules regarding line-breaks after opening parentheses, method output arguments, conditional expressions and binary operands.
-- Added support for indendation rule indent_continuation_line.
+- Added support for indendation rule indent\_continuation\_line.
 - Optimizations in how the server resolves file paths, should reduce
   time-to-ready for the server when first starting by about 50%, depending
   on the complexity of the include tree.
