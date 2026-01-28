@@ -309,7 +309,7 @@ pub fn dependencies<'t>(statements: &'t StatementSpec,
             InferiorVariant::Import(imp) => {
                 let name = imp_map.get(&imp.obj)
                     .map_or_else(||imp.obj.imported_name(), |s|s.as_str());
-                debug!("Mapped {:?} to {:?}", imp.obj, name);
+                debug!("Mapped import {:?} to {:?}", imp.obj, name);
                 inferior.insert(name,
                                 InferiorVariant::Import(imp));
                 if imp.cond == ExistCondition::Always {

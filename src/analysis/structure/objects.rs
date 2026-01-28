@@ -1014,6 +1014,12 @@ impl StructureSymbol for Method {
     }
 }
 
+impl MaybeAbstract for Method {
+    fn is_abstract(&self) -> bool {
+        matches!(self.body.as_ref(), StatementKind::Empty(_))
+    }
+}
+
 impl Scope for Method {
     fn create_context(&self) -> ContextKey {
         ContextKey::Method(SimpleSymbol::make(self, self.kind()))

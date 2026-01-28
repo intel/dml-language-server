@@ -8,7 +8,7 @@ use crate::analysis::reference::{Reference};
 
 use crate::analysis::structure::objects::Method;
 
-use log::{debug};
+use log::{debug, trace};
 
 pub trait Scope : DeclarationSpan + Named {
     // Need this to create default mappings
@@ -24,17 +24,17 @@ pub trait Scope : DeclarationSpan + Named {
 
     fn reference_at_pos_inside(&self, pos: ZeroPosition) -> Option<&Reference> {
         self.defined_references().iter()
-            .find(|r|{debug!("Considering {:?}", r);
+            .find(|r|{trace!("Considering {:?}", r);
                       r.loc_span().range.contains_pos(pos)})
     }
 
     fn reference_at_pos(&self, pos: &ZeroFilePosition) -> Option<&Reference> {
-        debug!("Searching for references inside {:?}", self.create_context());
+        trace!("Searching for references inside {:?}", self.create_context());
         if let Some(our_ref) = self.reference_at_pos_inside(pos.position) {
-            debug!("Got {:?}", our_ref);
+            trace!("Got {:?}", our_ref);
             Some(our_ref)
         } else {
-            debug!("Recursed");
+            trace!("Recursed");
             for scope in &self.defined_scopes() {
                 if scope.span().contains_pos(pos) {
                     return scope.reference_at_pos(pos);
@@ -219,7 +219,7 @@ impl <'t> ContextedSymbol<'t> {
 impl SymbolContext {
     pub fn lookup_symbol<'t>(&'t self, pos: &ZeroFilePosition)
                              -> Option<ContextedSymbol<'t>> {
-        debug!("Starting lookup in {:?}", self.get_name());
+        debug!("Starting file-position lookup in {:?}", self.get_name());
         let mut acc = vec![];
         self.lookup_symbol_aux(pos, &mut acc).map(
             |sub|ContextedSymbol {
@@ -234,7 +234,7 @@ impl SymbolContext {
                              -> Option<&'t SimpleSymbol> {
         acc.push(&self.context);
         self.subsymbols.iter()
-            .find(|sub|{debug!("Considering {:?}, contains pos? {:?}",
+            .find(|sub|{trace!("Considering {:?}, contains pos? {:?}",
                                sub,
                                sub.contains_pos(pos));
                         sub.contains_pos(pos)})

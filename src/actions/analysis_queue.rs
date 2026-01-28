@@ -257,7 +257,7 @@ impl AnalysisQueue {
             || !device_lock.is_empty()
             || !isolated_lock.is_empty();
         if has_work {
-            debug!("Queue still has work ({:?}, {:?}, {:?})",
+            trace!("Queue still has work ({:?}, {:?}, {:?})",
                    queue_lock, device_lock, isolated_lock);
         }
         has_work
@@ -296,7 +296,7 @@ impl AnalysisQueue {
             for job in queue_lock.iter() {
                 if let QueuedJob::IsolatedAnalysisJob(ijob) = job {
                     if paths.contains(&ijob.path) {
-                        debug!("Detected there is still isolated \
+                        trace!("Detected there is still isolated \
                                 work in queue on {:?}",
                                &ijob.path);
                         return true;
@@ -308,7 +308,7 @@ impl AnalysisQueue {
             let isolated_lock = self.isolated_tracker.lock().unwrap();
             for (_, path) in isolated_lock.iter() {
                 if paths.contains(path) {
-                    debug!("Detected there is still isolated \
+                    trace!("Detected there is still isolated \
                             work in-flight on {:?}",
                            path);
                     return true;
@@ -326,7 +326,7 @@ impl AnalysisQueue {
             for job in queue_lock.iter() {
                 if let QueuedJob::DeviceAnalysisJob(ijob) = job {
                     if paths.contains(&ijob.root.path) {
-                        debug!("Detected there is still device \
+                        trace!("Detected there is still device \
                                 work in queue on {:?}",
                                &ijob.root.path);
                         return true;
@@ -338,7 +338,7 @@ impl AnalysisQueue {
             let device_lock = self.device_tracker.lock().unwrap();
             for (path, _) in device_lock.values() {
                 if paths.contains(path) {
-                    debug!("Detected there is still device \
+                    trace!("Detected there is still device \
                             work in-flight on {:?}",
                            path);
                     return true;
@@ -613,7 +613,7 @@ impl LinterJob {
                     self.file.clone())).ok();
             },
             Err(e) => {
-                trace!("Failed to create isolated linter analysis: {}", e);
+                debug!("Failed to create isolated linter analysis: {}", e);
             }
         }
     }

@@ -26,12 +26,10 @@ use rayon::prelude::*;
 
 use crate::actions::SourcedDMLError;
 use crate::actions::analysis_storage::TimestampedStorage;
-use crate::analysis::symbols::{SimpleSymbol, DMLSymbolKind, SymbolMaker,
-                               SymbolContainer, StructureSymbol, SymbolSource};
+use crate::actions::semantic_lookup::{DLSLimitation, isolated_template_limitation};
+use crate::analysis::symbols::{DMLSymbolKind, SimpleSymbol, StructureSymbol, SymbolContainer, SymbolMaker, SymbolSource};
 pub use crate::analysis::symbols::SymbolRef;
-use crate::analysis::reference::{Reference,
-                                 GlobalReference, VariableReference,
-                                 ReferenceKind, NodeRef};
+use crate::analysis::reference::{GlobalReference, NodeRef, Reference, ReferenceKind, ReferenceVariant, VariableReference};
 use crate::analysis::scope::{Scope, SymbolContext,
                              ContextKey, ContextedSymbol};
 use crate::analysis::parsing::parser::{FileInfo, FileParser};
@@ -60,8 +58,7 @@ use crate::analysis::templating::objects::{make_device, DMLObject,
 use crate::analysis::templating::topology::{RankMaker,
                                             rank_templates,
                                             create_templates_traits};
-use crate::analysis::templating::methods::{MethodDeclaration, DMLMethodRef,
-                                           DMLMethodArg};
+use crate::analysis::templating::methods::{DMLMethodArg, DMLMethodRef, DefaultCallReference, MethodDeclaration};
 use crate::analysis::templating::traits::{DMLTemplate,
                                           TemplateTraitInfo};
 use crate::analysis::templating::types::DMLResolvedType;
@@ -79,26 +76,6 @@ pub struct FileSpec<'a> {
 
 pub const IMPLICIT_IMPORTS: [&str; 2] = ["dml-builtins.dml",
                                          "simics/device-api.dml"];
-// The issue number is used as the _unique identifier_ for this
-// limitation, and should be the number of an open GITHUB
-// issue.
-// Example:
-// DLSLimitation {
-//         issue_num: 42,
-//         description: "Example of a DLS limitation".to_string(),
-//     };
-
-#[derive(Clone, Debug, Eq, PartialEq, Hash,)]
-pub struct DLSLimitation {
-    pub issue_num: u64,
-    pub description: String,
-}
-
-impl fmt::Display for DLSLimitation {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} (issue#{})", self.description, self.issue_num)
-    }
-}
 
 // For things whose names are in one spot as a dmlstring
 pub trait DMLNamed {
@@ -358,7 +335,9 @@ pub struct SymbolStorage {
     pub param_symbols: HashMap<(ZeroSpan, String),
                                HashMap<StructureKey, SymbolRef>>,
     pub object_symbols: HashMap<StructureKey, SymbolRef>,
-    pub method_symbols: HashMap<ZeroSpan, SymbolRef>,
+    // This is doubly-indexed, by decl location and then
+    // by parent object key
+    pub method_symbols: HashMap<ZeroSpan, HashMap<StructureKey, SymbolRef>>,
     // constants, sessions, saveds, hooks, method args
     pub variable_symbols: HashMap<ZeroSpan, SymbolRef>,
 }
@@ -368,8 +347,30 @@ impl SymbolStorage {
         self.template_symbols.values()
             .chain(self.param_symbols.values().flat_map(|h|h.values()))
             .chain(self.object_symbols.values())
-            .chain(self.method_symbols.values())
+            .chain(self.method_symbols.values().flat_map(|h|h.values()))
             .chain(self.variable_symbols.values())
+    }
+
+    pub fn all_symbols_at_lock<'a>(&'a self, loc: &ZeroSpan)
+        -> Vec<&'a SymbolRef> {
+        let mut result = vec![];
+        if let Some(sym) = self.template_symbols.get(loc) {
+            result.push(sym);
+        }
+        if let Some(param_map) = self.param_symbols.get(&(*loc, "".to_string())) {
+            for sym in param_map.values() {
+                result.push(sym);
+            }
+        }
+        if let Some(var_sym) = self.variable_symbols.get(loc) {
+            result.push(var_sym);
+        }
+        if let Some(method_map) = self.method_symbols.get(loc) {
+            for sym in method_map.values() {
+                result.push(sym);
+            }
+        }
+        result
     }
 }
 
@@ -395,58 +396,102 @@ pub struct DeviceAnalysis {
     pub clientpath: PathBuf,
 }
 
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum ReferenceMatchKind {
+    Found,
+    MismatchedFind,
+    NotFound,
+}
+
 #[derive(Debug, Clone)]
-pub enum ReferenceMatches {
-    Found(HashSet<SymbolRef>),
-    WrongType(SymbolRef),
-    NotFound(HashSet<SymbolRef>),
+pub struct ReferenceMatches {
+    pub kind: ReferenceMatchKind,
+    // How these references are interpreted depends on 'kind',
+    // for NotFound and MismatchedFind they are generally suggestions
+    // whereas for Found they are actual matches
+    pub references: HashSet<SymbolRef>,
+    // These will be reported as-is, regardless of kind
+    pub messages: Vec<DMLError>,
 }
 
 impl Default for ReferenceMatches {
     fn default() -> Self {
-        Self::NotFound(HashSet::default())
+        ReferenceMatches {
+            kind: ReferenceMatchKind::NotFound,
+            references: HashSet::default(),
+            messages: vec![],
+        }
     }
 }
 
 impl ReferenceMatches {
     pub fn add_match(&mut self, reference: SymbolRef) {
-        if !matches!(self, Self::WrongType(_)) {
-            if let Self::Found(ref mut references) = self {
-                references.insert(reference);
-            } else {
-                *self = Self::Found(HashSet::from([reference]));
-            }
+        if self.kind != ReferenceMatchKind::MismatchedFind {
+            self.kind = ReferenceMatchKind::Found;
+            self.references.insert(reference);
         }
     }
 
     pub fn add_suggestion(&mut self, reference: SymbolRef) {
-        if let Self::NotFound(ref mut references) = self {
-            references.insert(reference);
+        if !matches!(self.kind, ReferenceMatchKind::Found
+                              | ReferenceMatchKind::MismatchedFind) {
+            self.references.insert(reference);
         }
     }
 
-    pub fn set_wrongtype(&mut self, reference: SymbolRef) {
-        *self = Self::WrongType(reference);
+    pub fn set_mismatched(&mut self, reference: SymbolRef) {
+        self.kind = ReferenceMatchKind::MismatchedFind;
+        self.references.insert(reference);
     }
 
     pub fn new() -> Self {
         Self::default()
     }
 
-    pub fn has_matches(&self) -> bool {
-        matches!(self, Self::Found(_))
+    pub fn as_matches(&self) -> Option<HashSet<SymbolRef>> {
+        if self.kind == ReferenceMatchKind::Found {
+            Some(self.references.clone())
+        } else {
+            None
+        }
+    }
+
+    pub fn as_suggestions(&self) -> Option<HashSet<SymbolRef>> {
+        if self.kind == ReferenceMatchKind::NotFound {
+            Some(self.references.clone())
+        } else {
+            None
+        }
+    }
+
+    pub fn as_mismatched(&self) -> Option<HashSet<SymbolRef>> {
+        if self.kind == ReferenceMatchKind::MismatchedFind {
+            Some(self.references.clone())
+        } else {
+            None
+        }
+    }
+
+    pub fn add_message(&mut self, message: DMLError) {
+        self.messages.push(message);
     }
 
     pub fn merge_with(&mut self, other: Self) {
-        match other {
-            Self::Found(syms) => for sym in syms {
-                self.add_match(sym);
-            },
-            Self::NotFound(syms) => for sym in syms {
-                self.add_suggestion(sym);
-            },
-            Self::WrongType(sym) => self.set_wrongtype(sym),
+        match other.kind {
+            ReferenceMatchKind::MismatchedFind =>
+                for sym in other.references {
+                    self.set_mismatched(sym);
+                },
+            ReferenceMatchKind::Found =>
+                for sym in other.references {
+                    self.add_match(sym);
+                },
+            ReferenceMatchKind::NotFound =>
+                for sym in other.references {
+                    self.add_suggestion(sym);
+                },
         }
+        self.messages.extend(other.messages);
     }
 }
 
@@ -554,19 +599,28 @@ fn gather_scopes<'c>(next_scopes: Vec<&'c dyn Scope>,
     }
 }
 
-pub fn isolated_template_limitation(template_name: &str) -> DLSLimitation {
-    DLSLimitation {
-        issue_num: 31,
-        description:
-        format!("References from, and definitions inside, a template \
-                 cannot be evaluated \
-                 without an instantiating object. Open a device file \
-                 that uses the template '{}' to obtain such information.",
-                 template_name),
-    }
-}
-
 impl DeviceAnalysis {
+    pub fn lookup_symbols<'t>(&self, context_sym: &ContextedSymbol<'t>, limitations: &mut HashSet<DLSLimitation>)
+        -> Vec<SymbolRef> {
+        trace!("Looking up symbols at {:?}", context_sym);
+
+        // Special handling for methods, since each method decl has its
+        // own symbol
+        if context_sym.kind() == DMLSymbolKind::Method {
+            let mut result = vec![];
+            for sym in self.symbol_info.method_symbols.values().flat_map(|m|m.values()) {
+                let sym_lock = sym.lock().unwrap();
+                if sym_lock.declarations.iter().any(
+                    |decl|decl == context_sym.loc_span()) {
+                    trace!("Found symbol {:?} at for {:?}", sym_lock, context_sym.loc_span());
+                    result.push(Arc::clone(sym));
+                }
+            }
+            return result;
+        }
+        self.lookup_symbols_by_contexted_symbol(context_sym, limitations)
+    }
+
     pub fn get_device_obj(&self) -> &DMLObject {
         &self.device_obj
     }
@@ -802,7 +856,11 @@ impl DeviceAnalysis {
             DMLResolvedObject::ShallowObject(shallow) =>
                 match &shallow.variant {
                     DMLShallowObjectVariant::Method(m) =>
-                        self.symbol_info.method_symbols.get(m.location()),
+                    // For resolutions, a methods symbols is just the symbol
+                    // of the method we resolved to
+                        self.symbol_info.method_symbols
+                            .get(m.location())
+                            .and_then(|m|m.get(&parent.key)),
                     DMLShallowObjectVariant::Session(s) |
                     DMLShallowObjectVariant::Saved(s) =>
                         self.symbol_info.variable_symbols.get(s.loc_span()),
@@ -1018,10 +1076,11 @@ impl DeviceAnalysis {
         }
     }
 
-    pub fn lookup_symbols_by_contexted_symbol<'t>(
-        &self,
-        sym: &ContextedSymbol<'t>,
-        limitations: &mut HashSet<DLSLimitation>) -> Vec<SymbolRef> {
+    // TODO/NOTE: This method seems slightly misplaced, consider moving to semantic_lookup
+    pub fn lookup_symbols_by_contexted_symbol<'t>(&self,
+                                                  sym: &ContextedSymbol<'t>,
+                                                  limitations: &mut HashSet<DLSLimitation>)
+        -> Vec<SymbolRef> {
         if matches!(sym.symbol.kind, DMLSymbolKind::Template |
                     DMLSymbolKind::Typedef | DMLSymbolKind::Extern)
         {
@@ -1042,13 +1101,15 @@ impl DeviceAnalysis {
         };
 
         if let Some(objs) = mb_objs {
-            debug!("Found {:?}", objs);
+            trace!("Found {:?}", objs);
             let mut refs = ReferenceMatches::new();
             let _: Vec<_> = objs.into_iter()
                 .map(|o|self.lookup_def_in_obj(&o, sym.symbol, &mut refs))
                 .collect();
-            if let ReferenceMatches::Found(syms) = refs {
-                syms.into_iter().collect()
+            // We can ignore messages from lookup defs here, as this lookup is
+            // live and reporting additional things from here makes no sense
+            if let Some(matches) = refs.as_matches() {
+                matches.into_iter().collect()
             } else {
                 vec![]
             }
@@ -1077,7 +1138,10 @@ impl DeviceAnalysis {
                 self.resolve_noderef_in_obj(&obj_copy,
                                             node,
                                             method_structure,
-                                            ref_matches)
+                                            ref_matches);
+            },
+            SymbolSource::Method(key, method) => {
+                self.resolve_noderef_in_method(key, method, node, method_structure, ref_matches);
             },
             // TODO: Cannot be resolved without constant folding
             SymbolSource::MethodArg(_method, _name) => (),
@@ -1089,37 +1153,109 @@ impl DeviceAnalysis {
         }
     }
 
+    fn get_method_symbol(&self,
+                         method: &Arc<DMLMethodRef>,
+                         parent_obj_key: &StructureKey)
+                         -> Option<&SymbolRef> {
+        let to_ret = self.symbol_info.method_symbols.get(method.location())
+            .and_then(|m|m.get(parent_obj_key));
+        if to_ret.is_none() {
+            internal_error!("Missing method symbol for method ref {:?}", method);
+        }
+        to_ret
+    }
+
     fn resolve_simple_noderef_in_method<'c>(&'c self,
-                                            obj: &DMLShallowObject,
+                                            parent_key: &StructureKey,
                                             meth: &Arc<DMLMethodRef>,
                                             node: &DMLString,
                                             _type_hint: Option<()>,
                                             method_structure: &HashMap
                                             <ZeroSpan, RangeEntry>,
                                             ref_matches: &mut ReferenceMatches) {
-        // TODO: is this 100% true?
-        // We cannot lookup things from within a method without
-        // the reference being contained within the span of the method
+        // When resolving a noderef from an overridden method, meth here will be
+        // a bottom-most overriding method. So instead find the correct method
+        // by recursing to parent
         if !meth.span().contains_pos(&node.span.start_position()) {
+            match meth.get_default() {
+                Some(DefaultCallReference::Valid(defmeth)) => {
+                    if let Some(defmeth_sym) = self.get_method_symbol(defmeth,
+                                                                     parent_key) {
+                        self.resolve_noderef_in_symbol(
+                            defmeth_sym,
+                            &NodeRef::Simple(node.clone()),
+                            method_structure,
+                            ref_matches);
+                    }
+                },
+                Some(DefaultCallReference::Ambiguous(defmeths)) => {
+                    for defmeth in defmeths {
+                        if let Some(defmeth_sym) = self.get_method_symbol(defmeth,
+                                                                         parent_key) {
+                            self.resolve_noderef_in_symbol(
+                                defmeth_sym,
+                                &NodeRef::Simple(node.clone()),
+                                method_structure,
+                                ref_matches);
+                        }
+                    }
+                },
+                _ => {
+                    internal_error!("Wanted to look up a reference {:?} within method {:?}, \
+                                    but the ref is not in the method span {:?} and there are \
+                                    no overridden methods",
+                                    node, meth.identity(), meth.span());
+                }
+            }
             return;
         }
-
+        trace!("Resolving simple noderef {:?} in method {:?}", node, meth);
         match node.val.as_str() {
             "this" =>
                 ref_matches.add_match(Arc::clone(
                     self.symbol_info.object_symbols.get(
-                        &obj.parent).unwrap())),
+                        parent_key).unwrap())),
             "default" =>
-            // NOTE: This is part of the hack that maps default
-            // references in methods to the corret method decl.
-            // Here, we simply check if the method has any
-            // default call, and if so map the reference to the
-            // method symbol
-                if meth.get_default().is_some() {
-                    if let Some(s) = self.symbol_info.method_symbols
-                        .get(obj.location()) {
-                            ref_matches.add_match(Arc::clone(s))
+            // NOTE: Here we match a default ref to the symbol of the method decl
+            // that we directly overrode. Meaning that further lookups on that symbol
+            // will be specialized for that overriding chain
+                if let Some(defref) = meth.get_default() {
+                    match defref {
+                        DefaultCallReference::Valid(refr) =>  {
+                            if let Some(s) = self.get_method_symbol(refr, parent_key) {
+                                ref_matches.add_match(Arc::clone(s));
+                            }
+                        },
+                        DefaultCallReference::Ambiguous(refs) => {
+                            // TODO/NOTE: These are currently unused, but since we want to mark a mismatch anyway may as well
+                            // pass all these references in
+                            for reference in refs {
+                                if let Some(s) = self.get_method_symbol(reference, parent_key) {
+                                   ref_matches.set_mismatched(Arc::clone(s));
+                                }
+                            }
+                             let ambiguous_desc: &'static str 
+                            = "Ambiguous default call, you may need to clarify the template ordering or use a template-qualified-method-implementation-call";
+                            // TODO: curren
+                            ref_matches.add_message(DMLError {
+                                    span: *node.span(),
+                                    description: ambiguous_desc.to_string(),
+                                    severity: Some(DiagnosticSeverity::ERROR),
+                                    related: refs
+                                        .iter()
+                                        .map(|d|(*d.location(),
+                                            format!("Possible candidate for default call{}",
+                                            d.get_disambiguation_name()
+                                                .map_or_else(||"".to_string(),
+                                                             |n|format!(", can be explicitly called as 'this.{}'", n)))
+                                        ))
+                                        .collect(),
+                                });
                         }
+                        _ => {
+                            // 'default' when overriding nothing is an error, similar to the else-case below
+                        }
+                    }
                 } else {
                     // fairly sure 'default' cannot be a
                     // reference otherwise
@@ -1144,12 +1280,50 @@ impl DeviceAnalysis {
         }
     }
 
+    fn resolve_noderef_in_method<'c>(&'c self,
+                                     parent_key: &StructureKey,
+                                     method: &Arc<DMLMethodRef>,
+                                     node: &NodeRef,
+                                     method_structure: &HashMap<ZeroSpan,
+                                                                RangeEntry>,
+                                     ref_matches: &mut ReferenceMatches) {
+        match node {
+            NodeRef::Simple(simple) => {
+                self.resolve_simple_noderef_in_method(parent_key, method, simple,
+                    None,
+                    method_structure,
+                    ref_matches);
+            },
+            NodeRef::Sub(subnode, simple, _) => {
+                let mut intermediate_matches = ReferenceMatches::new();
+                self.resolve_noderef_in_method(parent_key,
+                                               method,
+                                               subnode,
+                                               method_structure,
+                                               &mut intermediate_matches);
+                if let Some(syms) = intermediate_matches.as_matches() {
+                    let wrapped_simple = NodeRef::Simple(simple.clone());
+                    for sym in syms {
+                        self.resolve_noderef_in_symbol(
+                            &sym,
+                            &wrapped_simple,
+                            method_structure,
+                            ref_matches);
+                    }
+                } else {
+                    ref_matches.merge_with(intermediate_matches);
+                }
+            }
+        }
+    }
+
     fn resolve_noderef_in_obj<'c>(&'c self,
                                   obj: &DMLObject,
                                   node: &NodeRef,
                                   method_structure: &HashMap<ZeroSpan,
                                                              RangeEntry>,
                                   ref_matches: &mut ReferenceMatches) {
+        trace!("Resolving noderef {:?} in obj {:?}", node, obj);
         match node {
             NodeRef::Simple(simple) => {
                 let resolvedobj = obj.resolve(&self.objects);
@@ -1159,7 +1333,9 @@ impl DeviceAnalysis {
                         ..
                     }) = resolvedobj {
 
-                    self.resolve_simple_noderef_in_method(shallow, m, simple,
+                    self.resolve_simple_noderef_in_method(&shallow.parent,
+                                                          m,
+                                                          simple,
                                                           None,
                                                           method_structure,
                                                           ref_matches);
@@ -1176,18 +1352,18 @@ impl DeviceAnalysis {
                                             subnode,
                                             method_structure,
                                             &mut intermediate_matches);
-                match intermediate_matches {
-                    ReferenceMatches::Found(syms) => {
-                        let wrapped_simple = NodeRef::Simple(simple.clone());
-                        for sym in syms {
-                            self.resolve_noderef_in_symbol(
-                                &sym,
-                                &wrapped_simple,
-                                method_structure,
-                                ref_matches);
-                        }
-                    },
-                    other => ref_matches.merge_with(other),
+                
+                if let Some(syms) = intermediate_matches.as_matches() {
+                    let wrapped_simple = NodeRef::Simple(simple.clone());
+                    for sym in syms {
+                        self.resolve_noderef_in_symbol(
+                            &sym,
+                            &wrapped_simple,
+                            method_structure,
+                            ref_matches);
+                    }
+                } else {
+                    ref_matches.merge_with(intermediate_matches);
                 }
             }
         }
@@ -1234,6 +1410,8 @@ impl DeviceAnalysis {
                                        method_structure,
                                        ref_matches);
             }
+        } else {
+            debug!("Failed to obtain obj from context {:?}", context_chain);
         }
     }
 
@@ -1310,7 +1488,7 @@ impl DeviceAnalysis {
             reference,
             method_structure,
             reference_matches);
-        if !reference_matches.has_matches() {
+        if reference_matches.as_matches().is_none() {
             let (_, new_chain) = context_chain.split_last().unwrap();
             let sub_matches = self.find_target_for_reference(new_chain,
                                                              reference,
@@ -1320,11 +1498,20 @@ impl DeviceAnalysis {
         }
     }
 
+    fn handle_symbol_ref(symbol: &SymbolRef,
+                         reference: &Reference) {
+        let mut sym = symbol.lock().unwrap();
+        sym.references.insert(*reference.loc_span());
+        if sym.kind == DMLSymbolKind::Template && reference.extra_info.was_instantiation {
+            sym.implementations.insert(*reference.loc_span());
+        }
+    }
+
     #[allow(clippy::ptr_arg)]
     fn match_references_in_scope<'c>(
         &'c self,
         scope_chain: Vec<&'c dyn Scope>,
-        _report: &mut Vec<DMLError>,
+        report: &mut Vec<DMLError>,
         method_structure: &HashMap<ZeroSpan, RangeEntry>,
         reference_cache: &Mutex<ReferenceCache>,
         status: &AliveStatus) {
@@ -1332,22 +1519,23 @@ impl DeviceAnalysis {
         let context_chain: Vec<ContextKey> = scope_chain
             .iter().map(|s|s.create_context()).collect();
         // NOTE: chunk number is arbitrarily picked that benches well
-        current_scope.defined_references().par_chunks(25).for_each(|references|{
+        report.extend(current_scope.defined_references().par_chunks(25).flat_map(|references|{
             status.assert_alive();
+            let mut local_reports = vec![];
             for reference in references {
-                debug!("In {:?}, Matching {:?}", context_chain, reference);
-                let symbol_lookup = match &reference {
-                    Reference::Variable(var) => self.find_target_for_reference(
+                trace!("In {:?}, Matching {:?}", context_chain, reference);
+                let symbol_lookup = match &reference.variant {
+                    ReferenceVariant::Variable(var) => self.find_target_for_reference(
                         context_chain.as_slice(),
                         var,
                         method_structure,
                         reference_cache),
-                    Reference::Global(glob) =>
+                    ReferenceVariant::Global(glob) =>
                         self.lookup_global_from_ref(glob),
                 };
 
-                match symbol_lookup {
-                    ReferenceMatches::NotFound(_suggestions) =>
+                match symbol_lookup.kind {
+                    ReferenceMatchKind::NotFound =>
                     // TODO: report suggestions?
                     // TODO: Uncomment reporting of errors here when
                     // semantics are strong enough that they are rare
@@ -1362,32 +1550,18 @@ impl DeviceAnalysis {
                     // This maps symbols->references, this is later
                     // used to create the inverse map
                     // (not done here because of ownership issues)
-                    ReferenceMatches::Found(symbols) =>
-                        for symbol in &symbols {
-                            let mut sym = symbol.lock().unwrap();
-                            sym.references.insert(*reference.loc_span());
-                            if let Some(meth) = sym.source
-                                .as_object()
-                                .and_then(DMLObject::as_shallow)
-                                .and_then(|s|s.variant.as_method()) {
-                                    if let Some(default_decl) = meth.get_default() {
-                                        if let Some(var) = reference.as_variable_ref() {
-                                            if var.reference.to_string().as_str()
-                                                == "default" {
-                                                    sym.default_mappings.insert(
-                                                        *var.loc_span(),
-                                                        *default_decl.location());
-                                                }
-                                        }
-                                    }
-                                }
+                    ReferenceMatchKind::Found =>
+                        for symbol in &symbol_lookup.references {
+                            Self::handle_symbol_ref(symbol, reference);
                         },
-                    ReferenceMatches::WrongType(_) =>
+                    ReferenceMatchKind::MismatchedFind =>
                     //TODO: report mismatch,
                         (),
                 }
+                local_reports.extend(symbol_lookup.messages);
             }
-        })
+            local_reports.into_par_iter()
+        }).collect::<Vec<_>>());
     }
 }
 
@@ -1439,7 +1613,7 @@ impl fmt::Display for IsolatedAnalysis {
                        |mut s, path|{
                            write!(s, "\t\t{:?}\n, ", path)
                                .expect("write string error");
-                           s
+                            s
                        }))?;
         writeln!(f, "\ttoplevel: {}\n}}", self.toplevel)?;
         Ok(())
@@ -1617,7 +1791,7 @@ fn objects_to_symbols(maker: &SymbolMaker,
 
     for obj in objects.values() {
         let new_symbol: SymbolRef = new_symbol_from_object(maker, obj);
-        debug!("Comp obj symbol is: {:?}", new_symbol);
+        debug!("Created comp obj symbol: {:?}", new_symbol);
         storage.object_symbols.insert(obj.key, new_symbol);
         for subobj in obj.components.values() {
             // Non-shallow objects will be handled by the iteration
@@ -1676,6 +1850,7 @@ fn new_symbol_from_object(maker: &SymbolMaker,
         SymbolSource::DMLObject(DMLObject::CompObject(object.key)),
         definitions = all_decl_defs.clone(),
         declarations = all_decl_defs.clone(),
+        // TODO: this does not follow from the new definition of bases
         bases = all_decl_defs)
 }
 
@@ -1693,14 +1868,13 @@ fn new_symbol_from_arg(maker: &SymbolMaker,
         bases = bases,
         definitions = definitions,
         declarations = declarations
-
     )
 }
 
 fn log_non_same_insert<K>(map: &mut HashMap<K, SymbolRef>,
                           key: K,
                           val: SymbolRef) -> bool
-where K: std::hash::Hash + Eq + Clone,
+where K: std::hash::Hash + Eq + Clone + std::fmt::Debug,
 {
     // NOTE: We should not need to do these comparisons, when
     // object symbol creation is properly guided by structural AST
@@ -1714,12 +1888,47 @@ where K: std::hash::Hash + Eq + Clone,
         if !old.lock().unwrap().equivalent(
             &map.get(&key).unwrap().lock().unwrap()) {
             internal_error!(
-                "Overwrote previous symbol {:?} with non-similar symbol {:?}",
-                old, map.get(&key));
+                "Overwrote previous symbol {:?} at {:?} with non-similar symbol {:?}",
+                old, key, map.get(&key));
             return true;
         }
     }
     false
+}
+
+// The current strategy for method symbols is:
+// Create a symbol for each level of overriding for each object where the method
+// is actualized. We then end up with many symbols for the same decl location,
+// and leave it to requests to collect the aggregate information at the point
+fn add_new_symbol_from_method(maker: &SymbolMaker, parent_obj_key: &StructureKey, method_ref: &Arc<DMLMethodRef>, errors: &mut Vec<DMLError>, storage: &mut SymbolStorage, method_structure: &mut HashMap<ZeroSpan, RangeEntry>) {
+    let (bases, definitions, declarations) = (
+        method_ref.get_bases().iter().map(|b|*b.location()).collect(),
+        vec![*method_ref.get_decl().location()],
+        vec![*method_ref.get_decl().location()],
+    );
+    debug!("Made symbol for method {:?}", method_ref);
+    let new_sym = symbol_ref!(
+        maker,
+        *method_ref.location(),
+        DMLSymbolKind::Method,
+        SymbolSource::Method(*parent_obj_key, Arc::clone(method_ref)),
+        bases = bases,
+        definitions = definitions,
+        declarations = declarations);
+    let insert_at = storage.method_symbols.entry(*method_ref.location())
+        .or_default();
+    if !log_non_same_insert(insert_at, *parent_obj_key, new_sym) {
+        for arg in method_ref.args() {
+            let new_argsymbol = new_symbol_from_arg(maker, method_ref, arg);
+            log_non_same_insert(&mut storage.variable_symbols, *arg.loc_span(), new_argsymbol);
+        }
+        add_method_scope_symbols(maker, method_ref, method_structure, storage, errors);
+        if let Some(defaults) = method_ref.get_default() {
+            for default in defaults.flat_refs() {
+                add_new_symbol_from_method(maker, parent_obj_key, default, errors, storage, method_structure);
+            }
+        }
+    }   
 }
 
 #[allow(clippy::ptr_arg)]
@@ -1737,9 +1946,7 @@ fn add_new_symbol_from_shallow(maker: &SymbolMaker,
              param.declarations.iter()
              .map(|(_, def)|*def.loc_span()).collect()),
         DMLShallowObjectVariant::Method(method_ref) =>
-            (vec![*method_ref.get_base().location()],
-             method_ref.get_all_defs(),
-             method_ref.get_all_decls()),
+            return add_new_symbol_from_method(maker, &shallow.parent, method_ref, errors, storage, method_structure),
         DMLShallowObjectVariant::Constant(constant) =>
             (vec![*constant.loc_span()],
              vec![*constant.loc_span()],
@@ -1754,7 +1961,7 @@ fn add_new_symbol_from_shallow(maker: &SymbolMaker,
              vec![*hook.loc_span()],
              vec![*hook.loc_span()]),
     };
-    debug!("Made symbol for {:?}", shallow);
+    debug!("Made shallow symbol for {:?}", shallow);
     let new_sym = symbol_ref!(
         maker,
         *shallow.location(),
@@ -1776,21 +1983,9 @@ fn add_new_symbol_from_shallow(maker: &SymbolMaker,
                                 shallow.parent,
                                 new_sym);
         },
-        DMLShallowObjectVariant::Method(method_ref) =>
-            if !log_non_same_insert(&mut storage.method_symbols,
-                                    *shallow.location(),
-                                    new_sym) {
-                for arg in method_ref.args() {
-                    let new_argsymbol = new_symbol_from_arg(maker,
-                                                            method_ref,
-                                                            arg);
-                    log_non_same_insert(&mut storage.variable_symbols,
-                                        *arg.loc_span(),
-                                        new_argsymbol);
-                }
-                add_method_scope_symbols(maker, method_ref, method_structure,
-                                         storage, errors);
-            },
+        DMLShallowObjectVariant::Method(method_ref) => {
+           internal_error!("Unreachable method_ref case reached, ignored. ({:?})", method_ref);
+        },
         DMLShallowObjectVariant::Constant(_) |
         DMLShallowObjectVariant::Session(_) |
         DMLShallowObjectVariant::Saved(_) |
@@ -1813,15 +2008,14 @@ fn add_method_scope_symbols(maker: &SymbolMaker,
         symbols: HashMap::default(),
         sub_ranges: vec![],
     };
-    if !matches!(&*method.get_decl().body, StatementKind::Compound(_)) {
-        error!("Internal Error: Method body was not a compound statement");
+    if matches!(&*method.get_decl().body, StatementKind::Compound(_)) {
+        add_new_method_scope_symbols(maker,
+                                     method,
+                                     &method.get_decl().body,
+                                     errors,
+                                     storage,
+                                     &mut entry);
     }
-    add_new_method_scope_symbols(maker,
-                                 method,
-                                 &method.get_decl().body,
-                                 errors,
-                                 storage,
-                                 &mut entry);
     if !entry.is_empty() {
         method_structure.insert(
             *method.get_decl().location(),
@@ -2082,6 +2276,8 @@ impl DeviceAnalysis {
         info!("Match references");
         let reference_cache: Mutex<ReferenceCache> = Mutex::default();
         for scope_chain in all_scopes(bases) {
+            debug!("Got scope at {:?}", scope_chain.last()
+                   .map(|s|s.span().start_position()));
             self.match_references_in_scope(scope_chain,
                                            errors,
                                            method_structure,
@@ -2231,6 +2427,10 @@ impl DeviceAnalysis {
                                                  &container,
                                                  &mut errors,
                                                  &mut method_structure);
+        // This needs to be done after all symbols are created, because method
+        // symbol order is not correlted to the object iteration order
+        bind_method_implementations(&mut symbol_info.method_symbols);
+
         status.assert_alive();
         // TODO: how do we store type info?
         extend_with_templates(&maker, &mut symbol_info, &tt_info);
@@ -2334,4 +2534,36 @@ pub fn from_device_and_bases<'a>(_device: &'a IsolatedAnalysis,
         bases.iter().map(|ia|&ia.toplevel).collect();
     toplevels.iter().flat_map(
         |tl|&tl.templates).collect()
+}
+
+fn bind_method_implementations(method_symbols: &mut HashMap<ZeroSpan, HashMap<StructureKey, SymbolRef>>) {
+    debug!("Bind method implementations");
+    for method_symbol in method_symbols.values().flat_map(|m| m.values()) {
+        debug!("Binding for {}", method_symbol.lock().unwrap().medium_debug_info());
+        // Cloning the arc is not strictly necessary, but avoiding holding the lock is good practice
+        let method = match &method_symbol.lock().unwrap().source {
+            SymbolSource::Method(_, methref) => Arc::clone(methref),
+            _ => {
+                internal_error!("Method symbol {:?} did not have method symbol source", method_symbol);
+                continue;
+            }
+        };
+        let default_decls = method.get_default().into_iter()
+            .flat_map(|d|d.flat_refs().into_iter().cloned().collect::<Vec<_>>())
+            .collect::<Vec<_>>();
+        debug!("Default decls are {:?}", default_decls);
+        let parent_symbols = default_decls.into_iter()
+            .filter_map(|d|
+                if let Some(parent_syms) = method_symbols.get(d.location()) {
+                    Some(parent_syms)
+                } else {
+                    internal_error!("Method symbol {:?} did not have method symbol source", d);
+                    None
+                })
+            .flat_map(|ps|ps.values());
+        for parent in parent_symbols {
+            debug!("Inserted into parent {}", parent.lock().unwrap().medium_debug_info());
+            parent.lock().unwrap().implementations.insert(*method.location());
+        }
+    }
 }
