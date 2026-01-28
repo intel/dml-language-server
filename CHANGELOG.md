@@ -19,6 +19,7 @@
 -- Goto-implementation on templates will now go to all places where they are
    instantiated.
 - Added parser support for provisional 'explicit\_method\_decls'
+- The DLS will now correctly report missing template names in 'in each' constructs
 
 ## 0.9.17
 - Fixed linter wrongly throwing an error on space after `defined` keyword
