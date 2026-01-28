@@ -97,6 +97,7 @@ pub struct MethodContent {
     pub returns: Option<ReturnContent>,
     pub throws: Option<LeafToken>,
     pub default: Option<LeafToken>,
+    pub colon: Option<LeafToken>,
     pub statements: Statement,
 }
 
@@ -327,12 +328,14 @@ fn parse_method(modifier: Option<LeafToken>,
     };
     let throws = pre_statements_context.next_if_kind(
         stream, TokenKind::Throws);
+    let colon = pre_statements_context.next_if_kind(
+        stream, TokenKind::Colon);
     let default = pre_statements_context.next_if_kind(
         stream, TokenKind::Default);
     let statements = Statement::parse(&outer, stream, file_info);
     DMLObjectContent::Method(MethodContent {
         modifier, independent, startup, memoized, method, name, lparen,
-        arguments, rparen, returns, throws, default, statements
+        arguments, rparen, returns, throws, colon, default, statements
     }).into()
 }
 
