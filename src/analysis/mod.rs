@@ -1201,10 +1201,7 @@ impl DeviceAnalysis {
                     }
                 },
                 _ => {
-                    internal_error!("Wanted to look up a reference {:?} within method {:?}, \
-                                    but the ref is not in the method span {:?} and there are \
-                                    no overridden methods",
-                                    node, meth.identity(), meth.span());
+                    trace!("Fell through recursive method noderef resolution for {:?} in method {:?}", node, meth);
                 }
             }
             return;
