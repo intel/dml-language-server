@@ -2535,8 +2535,9 @@ pub fn from_device_and_bases<'a>(_device: &'a IsolatedAnalysis,
 
 fn bind_method_implementations(method_symbols: &mut HashMap<ZeroSpan, HashMap<StructureKey, SymbolRef>>) {
     debug!("Bind method implementations");
-    for method_symbol in method_symbols.values().flat_map(|m| m.values()) {
-        debug!("Binding for {}", method_symbol.lock().unwrap().medium_debug_info());
+    for (parent, method_symbol) in method_symbols.values().flat_map(|m|m.iter()) {
+        debug!("Binding for method {} under {:?}", method_symbol.lock().unwrap().medium_debug_info(), parent);
+        
         // Cloning the arc is not strictly necessary, but avoiding holding the lock is good practice
         let method = match &method_symbol.lock().unwrap().source {
             SymbolSource::Method(_, methref) => Arc::clone(methref),
@@ -2549,7 +2550,7 @@ fn bind_method_implementations(method_symbols: &mut HashMap<ZeroSpan, HashMap<St
             .flat_map(|d|d.flat_refs().into_iter().cloned().collect::<Vec<_>>())
             .collect::<Vec<_>>();
         debug!("Default decls are {:?}", default_decls);
-        let parent_symbols = default_decls.into_iter()
+        let overridden_methods = default_decls.into_iter()
             .filter_map(|d|
                 if let Some(parent_syms) = method_symbols.get(d.location()) {
                     Some(parent_syms)
@@ -2557,10 +2558,10 @@ fn bind_method_implementations(method_symbols: &mut HashMap<ZeroSpan, HashMap<St
                     internal_error!("Method symbol {:?} did not have method symbol source", d);
                     None
                 })
-            .flat_map(|ps|ps.values());
-        for parent in parent_symbols {
-            debug!("Inserted into parent {}", parent.lock().unwrap().medium_debug_info());
-            parent.lock().unwrap().implementations.insert(*method.location());
+            .filter_map(|ps|ps.get(parent));
+        for overridden_method in overridden_methods {
+            debug!("Inserted into parent {}", overridden_method.lock().unwrap().medium_debug_info());
+            overridden_method.lock().unwrap().implementations.insert(*method.location());
         }
     }
 }
