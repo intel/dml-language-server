@@ -36,7 +36,7 @@ use crate::analysis::templating::traits::{DMLTemplate, DMLTrait,
                                           get_impls, TraitMemberKind, TemplateTraitInfo};
 use crate::analysis::{LocationSpan, DeclarationSpan, combine_vec_of_decls};
 
-type InEachSpec = HashMap<String, Vec<(Vec<String>, Arc<ObjectSpec>)>>;
+type InEachSpec = HashMap<String, Vec<(Vec<String>, (ZeroSpan, Arc<ObjectSpec>))>>;
 pub type StructureKey = DefaultKey;
 pub type StructureContainer = SlotMap<StructureKey, DMLCompositeObject>;
 
@@ -181,7 +181,7 @@ fn create_spec<'t>(loc: ZeroSpan,
         if let Some((first, rest)) = ineach.obj.spec.split_first() {
             if let Some(in_each_spec) = in_each_specs.get(ineach) {
                 let to_add = (rest.iter().map(|t|t.val.clone()).collect(),
-                              Arc::clone(in_each_spec));
+                              (ineach.obj.loc, Arc::clone(in_each_spec)));
                 if let Some(e) = in_eachs.get_mut(&first.val) {
                     e.push(to_add);
                 } else {
@@ -819,6 +819,8 @@ pub struct DMLCompositeObject {
     // None: 'none' for size in arraydim here means an _unknown_ size
     pub arraydimvars: Vec<ArrayDim>,
     pub components: HashMap<String, DMLObject>,
+    // Used for goto-implementation on composite objects
+    pub used_ineach_locs: Vec<ZeroSpan>,
 }
 
 impl DMLCompositeObject {
@@ -917,8 +919,10 @@ impl DMLCompositeObject {
 // we need to add)
 // NOTE: new objectspecs are pathed with the full condition chain required
 // to instantiate them
+// Returns all spans of final actually used ineachspecs, needed for
+// implementations tracking for composite objects
 fn add_template_specs(obj_specs: &mut Vec<Arc<ObjectSpec>>,
-                      source_each_stmts: &InEachSpec) {
+                      source_each_stmts: &InEachSpec) -> Vec<ZeroSpan>{
     let mut each_stmts = source_each_stmts.clone();
     // TODO: We need to handle conditional imports and is-es here, as these are
     // allowed in _some_ cases. For now, we merely pretend the conditions do not
@@ -945,6 +949,8 @@ fn add_template_specs(obj_specs: &mut Vec<Arc<ObjectSpec>>,
     // true in whatever context it would work in
     let mut used_templates = HashSet::<String>::default();
 
+    let mut used_ineach_spans = vec![];
+
     while let Some((_, tpl)) = queue.pop() {
         // TODO: here we would have to consider cond when conditional
         // is/imports exist
@@ -955,31 +961,35 @@ fn add_template_specs(obj_specs: &mut Vec<Arc<ObjectSpec>>,
                tpl.name);
         used_templates.insert(tpl.name.to_string());
         let mut modifications = vec![];
-        if let Some(templ_specs) = each_stmts.get(&tpl.name) {
-            for (needed_templates, spec) in templ_specs {
-                let mut can_add = true;
-                for templ in needed_templates {
-                    if !used_templates.contains(templ.as_str()) {
-                        // We will need to re-add a check for this template,
-                        // in case it will appear later in the queue
-                        modifications.push((templ.clone(),
-                                            needed_templates.clone(),
-                                            Arc::clone(spec)));
-                        can_add = false;
-                        break;
+        {
+            if let Some(templ_specs) = each_stmts.get(&tpl.name) {
+                for (needed_templates, (loc, spec)) in templ_specs {
+                    let mut can_add = true;
+                    for templ in needed_templates {
+                        if !used_templates.contains(templ.as_str()) {
+                            // We will need to re-add a check for this template,
+                            // in case it will appear later in the queue
+                            modifications.push(
+                                (templ.clone(),
+                                needed_templates.clone(),
+                                (*loc, Arc::clone(spec))));
+                            can_add = false;
+                            break;
+                        }
                     }
-                }
-                if can_add {
-                    queue.extend(spec.instantiations.values()
-                                 .flat_map(|v|v.iter())
-                                 .map(|t|(spec.condition.clone(),
-                                          Arc::clone(t))));
-                    obj_specs.push(Arc::clone(spec));
+                    if can_add {
+                        queue.extend(spec.instantiations.values()
+                        .flat_map(|v|v.iter())
+                        .map(|t|(spec.condition.clone(),
+                        Arc::clone(t))));
+                        obj_specs.push(Arc::clone(spec));
+                        used_ineach_spans.push(*loc);
+                    }
                 }
             }
         }
-        for (name, templs, spec) in modifications {
-            let to_insert = (templs, spec);
+        for (name, templs, (loc, spec)) in modifications {
+            let to_insert = (templs, (loc, spec));
             if let Some(e) = each_stmts.get_mut(&name) {
                 e.push(to_insert);
             } else {
@@ -995,6 +1005,8 @@ fn add_template_specs(obj_specs: &mut Vec<Arc<ObjectSpec>>,
             queue.push((d.cond.clone(), Arc::clone(v)));
         }
     }
+
+    used_ineach_spans
 }
 
 // Simply adds the in_eachs specified in object specs to the ineachspec
@@ -1336,6 +1348,7 @@ fn create_object_instance(loc: Option<ZeroSpan>,
         declloc: loc.unwrap_or(identity.span),
         all_decls,
         identity: identity.clone(),
+        used_ineach_locs: vec![],
         key: StructureKey::null(),
         kind,
         definitions: vec![],
@@ -2208,7 +2221,7 @@ pub fn make_object(loc: ZeroSpan,
     debug!("Making object {}", identity.val);
 
     let mut each_stmts = parent_each_stmts.clone();
-    add_template_specs(&mut obj_specs, &each_stmts);
+    let used_ineach_locs = add_template_specs(&mut obj_specs, &each_stmts);
     add_template_ineachs(&obj_specs, &mut each_stmts);
 
     trace!("Has specs at {:?}", obj_specs.iter().map(|rc|rc.loc)
@@ -2244,6 +2257,7 @@ pub fn make_object(loc: ZeroSpan,
     {
         let new_obj = container.get_mut(new_obj_key).unwrap();
         new_obj.definitions = obj_specs.clone();
+        new_obj.used_ineach_locs = used_ineach_locs;
         add_templates(new_obj, &obj_specs);
         add_constants(new_obj, constants);
         add_parameters(new_obj, parameters);

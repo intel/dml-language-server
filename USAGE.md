@@ -37,7 +37,8 @@ See issues [#13](https://github.com/intel/dml-language-server/issues/13),
 They will find the locations of all object declarations that may be
 merged with the one at the name.
 
-`goto-implementations` on objects is currently unused.
+`goto-implementations` on objects will find all `in each` declaration block that
+applies to that object.
 
 `goto-references` will go to any location where the symbol is referred to
 directly.

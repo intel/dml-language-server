@@ -16,8 +16,10 @@
 -- Method declared in unrelated templates in an allowed way will now have their
    references correctly resolved.
 -- Goto-reference on default calls will now go to the methods that may be called.
--- Goto-implementation on templates will now go to all places where they are
+-- Goto-implementations on templates will now go to all places where they are
    instantiated.
+-- Goto-implementations on objects will now go to all the 'in each' declarations
+   which apply to that object.
 - Added parser support for provisional 'explicit\_method\_decls'
 - The DLS will now correctly report missing template names in 'in each' constructs
 

@@ -1847,6 +1847,7 @@ fn new_symbol_from_object(maker: &SymbolMaker,
         SymbolSource::DMLObject(DMLObject::CompObject(object.key)),
         definitions = all_decl_defs.clone(),
         declarations = all_decl_defs.clone(),
+        implementations = object.used_ineach_locs.clone().into_iter().collect(),
         // TODO: this does not follow from the new definition of bases
         bases = all_decl_defs)
 }
