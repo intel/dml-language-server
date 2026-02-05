@@ -746,13 +746,16 @@ impl <T: std::fmt::Debug + Clone + PartialEq> DMLAmbiguousDef<T> {
         }
     }
 
-    pub fn get_likely_declaration(&self) -> &T {
-        if let Some(def) = self.declarations.first() {
+    pub fn get_last_declaration(&self) -> &T {
+        if let Some(decl) = self.declarations.last() {
+            &decl.1
+        } else if let Some(def) = self.definitions.last() {
             &def.1
         } else {
-            &self.used_definitions.first().unwrap().1
+            &self.used_definitions.last().unwrap().1
         }
     }
+
     pub fn get_unambiguous_def(&self) -> Option<&T> {
         if self.used_definitions.len() == 1 {
             self.used_definitions.first().map(|t|&t.1)

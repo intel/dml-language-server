@@ -376,7 +376,7 @@ pub fn declarations_at_fp(context: &InitActionContext<impl Output>,
        .into_iter()
        .flat_map(|s|{
         let symlock = s.lock().unwrap();
-        if symlock.kind == DMLSymbolKind::Method {
+        if matches!(symlock.kind, DMLSymbolKind::Method | DMLSymbolKind::Parameter){
             symlock.bases.clone()
         } else {
             symlock.declarations.clone()

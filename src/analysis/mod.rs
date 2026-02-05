@@ -1938,11 +1938,11 @@ fn add_new_symbol_from_shallow(maker: &SymbolMaker,
                                <ZeroSpan, RangeEntry>) {
     let (bases, definitions, declarations) = match &shallow.variant {
         DMLShallowObjectVariant::Parameter(param) =>
-            (vec![*param.get_likely_declaration().loc_span()],
+            (vec![*param.get_last_declaration().loc_span()],
              param.used_definitions.iter()
-             .map(|(_, def)|*def.loc_span()).collect(),
+                .map(|(_, def)|*def.loc_span()).collect(),
              param.declarations.iter()
-             .map(|(_, def)|*def.loc_span()).collect()),
+                .map(|(_, def)|*def.loc_span()).collect()),
         DMLShallowObjectVariant::Method(method_ref) =>
             return add_new_symbol_from_method(maker, &shallow.parent, method_ref, errors, storage, method_structure),
         DMLShallowObjectVariant::Constant(constant) =>
@@ -1959,7 +1959,7 @@ fn add_new_symbol_from_shallow(maker: &SymbolMaker,
              vec![*hook.loc_span()],
              vec![*hook.loc_span()]),
     };
-    debug!("Made shallow symbol for {:?}", shallow);
+    
     let new_sym = symbol_ref!(
         maker,
         *shallow.location(),
@@ -1971,7 +1971,7 @@ fn add_new_symbol_from_shallow(maker: &SymbolMaker,
         bases = bases,
         definitions = definitions,
         declarations = declarations);
-
+    debug!("Made shallow symbol {:?}", new_sym);
     match &shallow.variant {
         DMLShallowObjectVariant::Parameter(_) => {
             log_non_same_insert(storage.param_symbols.entry(
