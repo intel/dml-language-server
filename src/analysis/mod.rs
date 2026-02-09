@@ -607,16 +607,10 @@ impl DeviceAnalysis {
         // Special handling for methods, since each method decl has its
         // own symbol
         if context_sym.kind() == DMLSymbolKind::Method {
-            let mut result = vec![];
-            for sym in self.symbol_info.method_symbols.values().flat_map(|m|m.values()) {
-                let sym_lock = sym.lock().unwrap();
-                if sym_lock.declarations.iter().any(
-                    |decl|decl == context_sym.loc_span()) {
-                    trace!("Found symbol {:?} at for {:?}", sym_lock, context_sym.loc_span());
-                    result.push(Arc::clone(sym));
-                }
-            }
-            return result;
+            return self.symbol_info.method_symbols
+                .get(context_sym.loc_span())
+                .map(|m|m.values().cloned())
+                .into_iter().flatten().collect();
         }
         self.lookup_symbols_by_contexted_symbol(context_sym, limitations)
     }
