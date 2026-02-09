@@ -252,15 +252,18 @@ fn symbol_implementations_of_symbol<'t>(symbol: &'t SymbolRef,
         let mut next_iteration = vec![symbol];
         while let Some(next) = next_iteration.pop() {
             let next_lock = next.lock().unwrap();
-            let (parent, _)= if let Some(meth_source) = next_lock.source.as_method() {
-                meth_source
-            } else {
-                internal_error!("Expected method symbol source of symbol iterated over by\
-                                     implementations_of_symbol, symbol is {:?}", next_lock);
-                continue;
-            };
             if !syms.contains(next) {
-                syms.insert(next);
+                let parent = if let Some(meth_source) = next_lock.source.as_method() {
+                    if !meth_source.1.is_abstract() {
+                        syms.insert(next);
+                    }
+                    meth_source.0
+                } else {
+                    internal_error!("Expected method symbol source of symbol iterated over by\
+                                     implementations_of_symbol, symbol is {:?}", next_lock);
+                    continue;
+                };
+                
                 for impl_ref in &next_lock.implementations {
                     // Note: We only need to find the implementations of the variant of this method
                     // under parent. Other variants are handled by finding multiple symbols at
