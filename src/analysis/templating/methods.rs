@@ -399,7 +399,7 @@ impl DeclarationSpan for DMLMethodRef {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DefaultCallReference {
-    Abstract(MethodDecl),
+    Abstract(Arc<DMLMethodRef>),
     Valid(Arc<DMLMethodRef>),
     Ambiguous(Vec<Arc<DMLMethodRef>>),
 }
@@ -407,7 +407,7 @@ pub enum DefaultCallReference {
 impl DefaultCallReference {
     pub fn get_bases(&self) -> Vec<MethodDecl> {
         match self {
-            DefaultCallReference::Abstract(method) => vec![method.clone()],
+            DefaultCallReference::Abstract(method) |
             DefaultCallReference::Valid(method) => method.get_bases(),
             DefaultCallReference::Ambiguous(methods) => 
                 methods.iter().flat_map(|m|m.get_bases()).collect(),
@@ -442,7 +442,7 @@ impl DefaultCallReference {
 
     pub fn flat_refs(&self) -> Vec<&Arc<DMLMethodRef>> {
         match self {
-            DefaultCallReference::Abstract(_) => vec![],
+            DefaultCallReference::Abstract(method) |
             DefaultCallReference::Valid(method) => vec![method],
             DefaultCallReference::Ambiguous(methods) =>
                 methods.iter().collect()

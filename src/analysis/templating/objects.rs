@@ -1,6 +1,7 @@
 //  © 2024 Intel Corporation
 //  SPDX-License-Identifier: Apache-2.0 and MIT
 use std::collections::{HashMap, HashSet};
+use std::hash::Hash;
 use std::iter;
 use std::sync::Arc;
 
@@ -1777,80 +1778,55 @@ fn merge_composite_subobjs<'c>(parent_each_stmts: &InEachSpec,
     // TODO: Check collisions of 'name' parameters
 }
 
-// return a tuple (default_map, order)
-// where 'default_map' maps method declarations to declarations they directly
-//     override
+// Maps a method decl to the method definitions it directly overrides, and the method declarations it directly overrides
+type DeclMap<'t> = HashMap<&'t MethodDecl, HashSet<&'t MethodDecl>>;
+
+// return a tuple (default_map, order, declaration_map)
+// where 'default_map' maps method declarations to definitions they directly override
 // and 'order' is a order of methods, with lowest rank being last
+// and 'declaration_map' maps method declarations to the abstract method declarations they directly override
 fn sort_method_decls<'t>(decls: &[(&Rank, &'t MethodDecl)]) ->
-    (HashMap<&'t MethodDecl, HashSet<&'t MethodDecl>>, Vec<&'t MethodDecl>) {
+    (DeclMap<'t>, Vec<&'t MethodDecl>, DeclMap<'t>) {
         debug!("Sorting method decls {:?}", decls);
-        let mut rank_to_method: HashMap<&Rank, (Vec<&MethodDecl>, Vec<&MethodDecl>)>
+        let mut rank_to_method_def: HashMap<&Rank, Vec<&MethodDecl>>
+            = HashMap::default();
+        let mut rank_to_method_decl: HashMap<&Rank, Vec<&MethodDecl>>
             = HashMap::default();
 
         for (rank, decl) in decls {
-            let (ref mut defs, ref mut decls) = rank_to_method.entry(rank).or_default();
             if decl.is_abstract() {
-                decls.push(*decl);
+                rank_to_method_decl.entry(rank).or_default().push(*decl);
             } else {
-                defs.push(*decl);
+                rank_to_method_def.entry(rank).or_default().push(*decl);
             }
         }
-        trace!("rank-to-method is: {:?}", rank_to_method);
-        let ranks: HashSet<&Rank> = rank_to_method.keys()
-            .cloned().collect();
-        let mut ancestry: HashMap<&Rank, Vec<&Rank>> = ranks.iter()
-            .map(|r|(*r, ranks.iter().filter(
-                |r2|r.inferior.contains(&r2.id)).cloned().collect()))
-            .collect();
+        trace!("rank-to-method-def is: {:?}, rank-to-method-decl is: {:?}", rank_to_method_def, rank_to_method_decl);
 
-        // Insert implicit special ancestry ordering to resolve unrelated ranks
-        // where a non-abstract method can override an abstract method
-        trace!("Initial ancestry is {:?}", ancestry);
-        let top_ancestry: HashSet<&Rank> = ranks.iter()
-            .filter(|a|!ancestry.values().any(|ra|ra.contains(*a)))
-            .cloned()
-            .collect();
-        trace!("Top ancestry ranks are {:?}", top_ancestry);
-        let new_edges = {
-            let mut top_defs = vec![];
-            let mut top_decls = vec![];
-            for r in top_ancestry {
-                let (defs, decls) = rank_to_method.get(r).unwrap();
-                top_defs.extend(defs.iter().map(|d|(r, *d)));
-                top_decls.extend(decls.iter().map(|d|(r, *d)));
-            }
-            if top_defs.len() == 1 {
-                let (top_rank, top_def) = &top_defs[0];
-                if !top_def.is_abstract() {
-                    top_decls.iter().filter_map(|(subrank, subdecl)|
-                        // In-rank case is handled in method sorting
-                        if subdecl.is_abstract() && top_rank != subrank {
-                            Some((top_rank, subrank))
-                        } else {
-                            None
-                        })
-                        .map(|(from, to)|(*from, *to))
-                        .collect()
-                } else {
-                    vec![]
-                }
-            } else {
-                vec![]
-            }
+        // Ancestry of defs->defs and defs->decls
+        #[allow(clippy::type_complexity)]
+        let (def_ancestry, decl_ancestry): (HashMap<&Rank, Vec<&Rank>>,
+                                            HashMap<&Rank, Vec<&Rank>>) = {
+            let def_ranks: HashSet<&Rank> = rank_to_method_def.keys()
+                .cloned().collect();
+            let decl_ranks: HashSet<&Rank> = rank_to_method_decl.keys()
+                .cloned().collect();
+            let def_ancestry = def_ranks.iter().map(|r|(*r, def_ranks.iter().filter(
+                |r2|r.inferior.contains(&r2.id)).cloned().collect()))
+                .collect();
+            let decl_ancestry = def_ranks.iter().map(|r|(*r, decl_ranks.iter().filter(
+                |r2|r.inferior.contains(&r2.id)).cloned().collect()))
+                .collect();
+            (def_ancestry, decl_ancestry)
         };
 
-        for (from, to) in new_edges {
-            trace!("Inserted implicit ancestry edge from {:?} to {:?}", from, to);
-            ancestry.entry(from).or_default().push(to);
-        }
-        trace!("Ancestry is {:?}", ancestry);
+        trace!("Def ancestry is {:?}", def_ancestry);
         let mut minimal_ancestry: HashMap<&Rank, Vec<&Rank>>
             = HashMap::default();
-        // Get ancestors that are not the ancestor of any ancestor
-        for (rank, ancestors) in &ancestry {
+        // For each rank, map to its first-level ancestry
+        for (rank, ancestors) in &def_ancestry {
             let mut minimal_ancestors = vec![];
             for ancestor in ancestors {
-                if !ancestors.iter().flat_map(|a|ancestry.get(a).unwrap())
+                if !ancestors.iter().flat_map(|a|def_ancestry.get(a).unwrap())
                     .any(|r|r == ancestor) {
                     minimal_ancestors.push(*ancestor);
                 }
@@ -1858,35 +1834,50 @@ fn sort_method_decls<'t>(decls: &[(&Rank, &'t MethodDecl)]) ->
             minimal_ancestry.insert(rank, minimal_ancestors);
         }
 
-        // Map method declaration to those that they directly override
-        let mut method_map: HashMap<&'t MethodDecl, HashSet<&'t MethodDecl>>
-            = HashMap::default();
-        for (r, (defs, decls)) in &rank_to_method {
-            for def in defs {
-                // Ensure the entry exists for later unwraps
-                method_map.entry(def).or_default();
-                for subrank in &minimal_ancestry[r] {
-                    let (subdefs, subdecls) = rank_to_method.get(subrank).unwrap();
-                    if subdefs.is_empty() {
-                        method_map.get_mut(def).unwrap()
-                            .extend(subdecls.clone());
-                    } else {
-                        method_map.get_mut(def).unwrap()
-                            .extend(subdefs.clone());
+        // Map method definitions to abstract decls they override, which none of their minimal ancestors override
+        let mut method_map_decls: DeclMap<'t> = HashMap::default();
+        for (rank, ancestors) in &decl_ancestry {
+            for def in rank_to_method_def.get(rank).unwrap() {
+                method_map_decls.entry(def).or_default();
+                for ancestor in ancestors {
+                    if !minimal_ancestry.get(rank).unwrap().iter().any(
+                        |ma|decl_ancestry.get(ma).unwrap().iter().any(|a|a == ancestor)) {
+                        if let Some(decls) = rank_to_method_decl.get(ancestor) {
+                            method_map_decls.entry(def).or_default().extend(decls.iter());
+                        }
                     }
                 }
-                method_map.get_mut(def).unwrap()
-                    .extend(decls.iter().cloned());
+                // Decls at the same rank are also directly overridden, by definition
+                if let Some(decls) = rank_to_method_decl.get(rank) {
+                    method_map_decls.entry(def).or_default().extend(decls.iter());
+                }
+                trace!("Method {:?} at rank {:?} directly overrides decls {:?}",
+                    def, rank, method_map_decls.get(def).unwrap());
             }
-            for decl in decls {
-                method_map.entry(decl).or_default();
+        }
+
+        trace!("Minimal ancestry is {:?}", minimal_ancestry);
+        // Map method definitions to those that they directly override
+        let mut method_map_defs: DeclMap<'t> = HashMap::default();
+
+        for (r, defs) in &rank_to_method_def {
+            for def in defs {
+                trace!("Handling method {:?} at rank {:?}", def, r);
+                // Ensure the entry exists for later unwraps
+                let mdefs = method_map_defs.entry(def).or_default();
+                for subrank in &minimal_ancestry[r] {
+                    let subdefs = rank_to_method_def.get(subrank).unwrap();
+                    trace!("Set as overriding {:?}", subdefs);
+                    mdefs.extend(subdefs.iter());
+                }
             }
         }
             
-        trace!("Default map is {:?}", method_map);
-        let method_order = topsort(&method_map).unwrap_sorted();
+        trace!("Default map is {:?}", method_map_defs);
+        trace!("Abstract override map is {:?}", method_map_decls);
+        let method_order = topsort(&method_map_defs).unwrap_sorted();
         trace!("Method order is {:?}", method_order);
-        (method_map, method_order)
+        (method_map_defs, method_order, method_map_decls)
 }
 
 fn add_methods(obj: &mut DMLCompositeObject,
@@ -1905,9 +1896,32 @@ fn add_methods(obj: &mut DMLCompositeObject,
         let all_decls: Vec<(&Rank, &MethodDecl)>
             = regular_decls.iter().map(|(a, b)|(a, b)).collect();
 
-        let (default_map, method_order) = sort_method_decls(&all_decls);
+        let (default_map, method_order, decl_map) = sort_method_decls(&all_decls);
         let mut decl_to_method: HashMap<MethodDecl, Arc<DMLMethodRef>>
             = HashMap::default();
+        // Create abstract methodrefs for declarations first, order does not matter
+        for method in decl_map.values().flatten() {
+            if decl_to_method.contains_key(method) {
+                internal_error!("Unexpectedly an abstract method decl {:?} was generate twice", method);
+                continue;
+            }
+            let template_ref = decl_to_trait_map
+                .get(method)
+                .map(Arc::clone);
+
+            let new_method = Arc::new(
+                DMLMethodRef {
+                    template_ref,
+                    concrete_decl: DMLConcreteMethod {
+                        decl: (*method).clone(),
+                        default_call: None,
+                    },
+                }
+            );
+            trace!("Inserted dependent methoddecl {:?}", new_method);
+            decl_to_method.insert((*method).clone(), new_method);
+        }
+        trace!("Abstract decl methods are {:?}", decl_to_method);
         for method in method_order.iter().rev() {
             trace!("Handling overrides of {:?}", method);
             // Guaranteed by topsort
@@ -1915,20 +1929,21 @@ fn add_methods(obj: &mut DMLCompositeObject,
             let default = match defaults.len() {
                 1 => {
                     let decl = defaults.iter().next().unwrap();
-                    trace!("Default call decl is {:?}", decl);
-                    trace!("And the current map is {:?}", decl_to_method);
-                    if let Some(m) = decl_to_method.get(decl) {
-                        Some(DefaultCallReference::Valid(Arc::clone(m)))
-                    } else {
-                        Some(DefaultCallReference::Abstract((*decl).clone()))
-                    }
+                    Some(DefaultCallReference::Valid(Arc::clone(decl_to_method.get(decl).unwrap())))
                 },
-                0 => None,
+                0 => decl_map.get(method).and_then(|decls| {
+                    match decls.len()  {
+                        1 => Some(DefaultCallReference::Abstract(
+                            Arc::clone(decls.iter().next().and_then(|d|decl_to_method.get(d)).unwrap()))),
+                        // The case of conflicting abstract declarations is handled elsewhere
+                        _ => None,
+                    }
+                }),
                 _ => Some(DefaultCallReference::Ambiguous(
                     defaults.iter().map(|d| Arc::clone(decl_to_method.get(d).unwrap())).collect())),
             };
             trace!("Default call would be {:?}", default);
-            for decl in defaults {
+            for decl in defaults.iter().chain(decl_map.get(method).unwrap_or(&HashSet::default())) {
                 // TODO: I suspect we could improve this error message in cases
                 // where several similar incorrect overrides are made over one
                 // method
