@@ -439,7 +439,7 @@ impl DMLTrait {
                     // Need one more check here, if we have multiple
                     // non-shared decls and one or more shared decls,
                     // we'd miss the extra non-shared ones otherwise
-                    if defined_methods.contains_key(new_m.name.val.as_str()) {
+                    if defined_methods.contains_key(new_m.identity()) {
                         report.push(DMLError {
                             span: *new_m.location(),
                             description:
