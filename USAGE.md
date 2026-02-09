@@ -15,7 +15,7 @@ missing or incomplete.
 ## Clarification of semantics of Symbol Lookups
 DML is at its core a _declarative_ language centered around a Device,
 and declarations are merged together according to the hierarchical
-structure. Thus, the meaning of `goto-definiton`, `goto-declaration`,
+structure. Thus, the meaning of `goto-definition`, `goto-declaration`,
 `goto-implementations`, and `goto-references` may not be similar to how
 they behave in other languages.
 Here is a clarification of what each operation means for each object
@@ -33,7 +33,7 @@ See issues [#13](https://github.com/intel/dml-language-server/issues/13),
 [#65](https://github.com/intel/dml-language-server/issues/65).
 
 ### On Composite Objects (banks, registers, implements, etc.)
-`goto-declaration` and `goto-definition` on an composite object are equivalent.
+`goto-declaration` and `goto-definition` on a composite object are equivalent.
 They will find the locations of all object declarations that may be
 merged with the one at the name.
 
@@ -82,7 +82,7 @@ instantiated.
 
 `goto-references` will go to any location where the template is referred to,
 including direct instantiation sites (so this is a super-set of
-goto-implementations`)
+`goto-implementations`)
 
 ## In-Line Linting Configuration
 It may be desireable to control linting on a per-file basis, rather than

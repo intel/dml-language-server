@@ -198,7 +198,7 @@ impl DMLTrait {
         }
     }
 
-    // Lookup a definiton or declaration of a member in THIS trait, does not
+    // Lookup a definition or declaration of a member in THIS trait, does not
     // examine ancestors
     pub fn get_member<'t, T>(&'t self, member_name: &T)
                              -> Option<TraitMemberKind<'t>>

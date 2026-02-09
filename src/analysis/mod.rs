@@ -2420,7 +2420,7 @@ impl DeviceAnalysis {
                                                  &mut errors,
                                                  &mut method_structure);
         // This needs to be done after all symbols are created, because method
-        // symbol order is not correlted to the object iteration order
+        // symbol order is not correlated to the object iteration order
         bind_method_implementations(&mut symbol_info.method_symbols);
 
         status.assert_alive();
