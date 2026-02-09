@@ -198,13 +198,18 @@ fn get_symbols_of_ref<'t>(reference: &Reference,
         // in that case
         if let Some(ContextKey::Template(ref sym)) = first_context {
             if device.templates.templates.get(sym.name_ref())
-            .and_then(|t|t.location.as_ref())
-            .and_then(|loc|device.template_object_implementation_map.get(loc))
-            .map_or(false, |impls|!impls.is_empty()) {
+                .and_then(|t|t.location.as_ref())
+                .and_then(|loc|device.template_object_implementation_map.get(loc))
+                .map_or(false, |impls|!impls.is_empty()) {
                 any_template_used = true;
             }
         }
-        symbols.append(&mut device.symbols_of_ref(*reference.loc_span()));
+        let syms = device.symbols_of_ref(*reference.loc_span());
+        debug!("Mapped {:?} to symbols {:?} in device analysis of {}",
+                reference.loc_span(),
+                syms.iter().map(|s|s.lock().unwrap().medium_debug_info()).collect::<Vec<_>>(),
+                device.clientpath.display());
+        symbols.push((*device, syms));
     }
     if let Some(ContextKey::Template(templ)) = first_context {
         if !any_template_used {
@@ -213,17 +218,7 @@ fn get_symbols_of_ref<'t>(reference: &Reference,
             );
         }
     }
-        
-    let mut symbols: DeviceSymbols<'t> = vec![];
-    for device_analysis in &analysis_info.device_analysises {
-        let syms = device_analysis.symbols_of_ref(*reference.loc_span());
-        if !syms.is_empty() {
-            debug!("Mapped {:?} to symbols {:?} in device analysis of {}", reference.loc_span(),
-            syms.iter().map(|s|s.lock().unwrap().medium_debug_info()).collect::<Vec<_>>(),
-            device_analysis.path.as_str());
-            symbols.push((*device_analysis, syms));
-        }
-    }
+
     symbols
 }
 
