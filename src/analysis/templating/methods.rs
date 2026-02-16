@@ -338,8 +338,9 @@ impl DMLMethodRef {
     }
     // Invariant: Return is non-empty
     pub fn get_bases(&self) -> Vec<MethodDecl> {
+        log::trace!("Getting bases of {:?}", self);
         let to_return = if let Some(default_refs) = &self.concrete_decl.default_call {
-            default_refs.flat_refs().into_iter().flat_map(|m|m.get_bases()).collect()
+            default_refs.get_bases()
         } else {
             vec![self.concrete_decl.decl.clone()]
         };
