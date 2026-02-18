@@ -1,8 +1,9 @@
 //  © 2024 Intel Corporation
 //  SPDX-License-Identifier: Apache-2.0 and MIT
 use crate::server::DEFAULT_REQUEST_TIMEOUT;
+use crate::logging::{info, error};
+
 use lazy_static::lazy_static;
-use log::{info, error};
 use std::sync::{mpsc, Mutex};
 use std::time::{Duration, Instant};
 use std::{fmt, panic};

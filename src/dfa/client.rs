@@ -28,7 +28,7 @@ use crate::server::{self, Notification};
 use crate::cmd;
 use crate::lsp_data::{parse_file_path, parse_uri};
 
-use log::{debug, trace};
+use crate::logging::{debug, trace};
 
 #[derive(Debug, PartialEq)]
 pub struct Diagnostic {

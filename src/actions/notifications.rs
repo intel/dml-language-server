@@ -8,9 +8,9 @@ use crate::file_management::CanonPath;
 use crate::span::{Span};
 use crate::vfs::{Change, VfsSpan};
 use crate::lsp_data::*;
+use crate::logging::{debug, error};
 
 use jsonrpc::error::StandardError;
-use log::{debug, error};
 use serde::{Serialize, Deserialize};
 
 use lsp_types::notification::ShowMessage;

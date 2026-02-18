@@ -28,7 +28,7 @@ use crate::file_management::CanonPath;
 use crate::vfs::{TextFile, Vfs};
 use crate::server::ServerToHandle;
 
-use log::{info, debug, trace, error};
+use crate::logging::{info, debug, trace, error};
 use crossbeam::channel;
 
 // Maps in-process device jobs the timestamps of their dependencies

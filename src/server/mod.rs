@@ -25,8 +25,9 @@ pub use crate::server::message::{
     RequestId, Response, ResponseError, ResponseWithMessage,
 };
 use crate::version;
+use crate::logging::{debug, error, info, trace};
+
 use jsonrpc::error::StandardError;
-use log::{debug, error, info, trace};
 pub use lsp_types::notification::{Exit as ExitNotification, ShowMessage};
 pub use lsp_types::request::Initialize as InitializeRequest;
 pub use lsp_types::request::Shutdown as ShutdownRequest;

@@ -10,7 +10,7 @@ use jsonrpc::error::{
     standard_error,
     StandardError::{self, InvalidParams, InvalidRequest, ParseError},
 };
-use log::debug;
+use crate::logging::debug;
 use lsp_types::notification::ShowMessage;
 use serde::ser::{SerializeStruct, Serializer};
 use serde::Deserialize;

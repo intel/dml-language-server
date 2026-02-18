@@ -84,6 +84,9 @@ instantiated.
 including direct instantiation sites (so this is a super-set of
 `goto-implementations`)
 
+## Relevant environment variables
+* `MAX_LOG_MESSAGE_LENGTH` When set, will truncate any outputted logs that are longer than the value. Defaults to 1000 characters. Set to 0 to turn off truncation.
+
 ## In-Line Linting Configuration
 It may be desireable to control linting on a per-file basis, rather than
 relying on the linting configuration. This can be done with in-line

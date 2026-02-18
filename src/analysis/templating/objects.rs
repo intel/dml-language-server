@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::iter;
 use std::sync::Arc;
 
-use log::{debug, trace, error};
+use crate::logging::{debug, trace, error};
 use lsp_types::DiagnosticSeverity;
 use slotmap::{DefaultKey, Key, SlotMap};
 
