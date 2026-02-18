@@ -3,7 +3,6 @@
 //! Requests that the DLS can respond to.
 
 use jsonrpc::error::StandardError;
-use log::{debug, error, info, trace};
 use serde::{Deserialize, Serialize};
 
 use std::collections::HashSet;
@@ -19,6 +18,7 @@ use crate::actions::semantic_lookup::{DLSLimitation, declarations_at_fp, definit
 use crate::analysis::{Named, DeclarationSpan, LocationSpan};
 use crate::analysis::symbols::SimpleSymbol;
 use crate::config::Config;
+use crate::logging::{debug, error, info, trace};
 
 pub use crate::lsp_data::request::{
     ApplyWorkspaceEdit,
