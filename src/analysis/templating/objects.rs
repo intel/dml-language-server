@@ -1982,7 +1982,8 @@ fn add_methods(obj: &mut DMLCompositeObject,
             decl_to_method.insert((*method).clone(), new_method);
         }
         trace!("Complete decl-to-method map is: {:?}", decl_to_method);
-        let to_add = decl_to_method.get(method_order.first().unwrap()).unwrap();
+        // If there are no definitions, skip to next method (declarations are separately added above)
+        let Some(to_add) = method_order.first().map(|m|decl_to_method.get(m).unwrap()) else { continue; };
         debug!("Added {:?}", to_add.identity());
         obj.add_shallow_component(DMLShallowObjectVariant::Method(
             Arc::clone(to_add)));
