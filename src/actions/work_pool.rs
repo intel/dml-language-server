@@ -2,7 +2,7 @@
 //  SPDX-License-Identifier: Apache-2.0 and MIT
 use crate::server::DEFAULT_REQUEST_TIMEOUT;
 use lazy_static::lazy_static;
-use log::{info, warn};
+use log::{info, error};
 use std::sync::{mpsc, Mutex};
 use std::time::{Duration, Instant};
 use std::{fmt, panic};
@@ -62,7 +62,7 @@ where
         if work.len() >= *NUM_THREADS {
             // there are already N ongoing tasks, that may or may not have timed out
             // don't add yet more to the queue fail fast to allow the work pool to recover
-            warn!("Could not start `{}` as at work capacity, {:?} in progress", description, *work,);
+            error!("Could not start `{}` as at work capacity, {:?} in progress", description, *work,);
             return receiver;
         }
         if work.iter().filter(|desc| *desc == &description).count() >= MAX_SIMILAR_CONCURRENT_WORK {
@@ -96,7 +96,7 @@ where
         if elapsed >= *WARN_TASK_DURATION {
             let secs =
                 elapsed.as_secs() as f64 + f64::from(elapsed.subsec_nanos()) / 1_000_000_000_f64;
-            warn!("`{}` took {:.1}s", description, secs);
+            info!("`{}` took {:.1}s", description, secs);
         }
     });
     receiver

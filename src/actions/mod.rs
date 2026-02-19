@@ -3,7 +3,7 @@
 //! Actions that the DLS can perform: responding to requests, watching files,
 //! etc.
 
-use log::{debug, info, trace, error, warn};
+use log::{debug, info, trace, error};
 use thiserror::Error;
 use crossbeam::channel;
 use serde::Deserialize;
@@ -594,7 +594,7 @@ impl <O: Output> InitActionContext<O> {
                                 .extend(includes.into_iter());
                         }
                     } else {
-                        warn!(
+                        info!(
                             "File in compile information file is not .dml; \
                              {:?}",
                             file

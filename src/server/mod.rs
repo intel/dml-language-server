@@ -26,7 +26,7 @@ pub use crate::server::message::{
 };
 use crate::version;
 use jsonrpc::error::StandardError;
-use log::{debug, error, info, trace, warn};
+use log::{debug, error, info, trace};
 pub use lsp_types::notification::{Exit as ExitNotification, ShowMessage};
 pub use lsp_types::request::Initialize as InitializeRequest;
 pub use lsp_types::request::Shutdown as ShutdownRequest;
@@ -117,11 +117,7 @@ pub(crate) fn maybe_notify_unknown_configs<O: Output>(_out: &O, unknowns: &[Stri
         write!(msg, "{}`{}` ", if first { ' ' } else { ',' }, key).unwrap();
         first = false;
     }
-    warn!("{}", msg);
-    // out.notify(Notification::<ShowMessage>::new(ShowMessageParams {
-    //     typ: MessageType::WARNING,
-    //     message: msg,
-    // }));
+    info!("{}", msg);
 }
 
 #[allow(dead_code)]
@@ -492,7 +488,7 @@ impl<O: Output> LsService<O> {
                             }
                         }
                         else {
-                            warn!(
+                            error!(
                                 "Server has not yet received an `initialize` request, ignoring {}", $method,
                             );
                         }
@@ -535,7 +531,7 @@ impl<O: Output> LsService<O> {
                             self.dispatcher.dispatch(request, ctx);
                         }
                         else {
-                            warn!(
+                            error!(
                                 "Server has not yet received an `initialize` request, cannot handle {}", $method,
                             );
                             self.output.failure_message(
