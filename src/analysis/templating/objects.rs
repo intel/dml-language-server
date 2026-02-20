@@ -1902,7 +1902,6 @@ fn add_methods(obj: &mut DMLCompositeObject,
         // Create abstract methodrefs for declarations first, order does not matter
         for method in decl_map.values().flatten() {
             if decl_to_method.contains_key(method) {
-                internal_error!("Unexpectedly an abstract method decl {:?} was generate twice", method);
                 continue;
             }
             let template_ref = decl_to_trait_map
