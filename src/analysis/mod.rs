@@ -349,28 +349,6 @@ impl SymbolStorage {
             .chain(self.method_symbols.values().flat_map(|h|h.values()))
             .chain(self.variable_symbols.values())
     }
-
-    pub fn all_symbols_at_lock<'a>(&'a self, loc: &ZeroSpan)
-        -> Vec<&'a SymbolRef> {
-        let mut result = vec![];
-        if let Some(sym) = self.template_symbols.get(loc) {
-            result.push(sym);
-        }
-        if let Some(param_map) = self.param_symbols.get(&(*loc, "".to_string())) {
-            for sym in param_map.values() {
-                result.push(sym);
-            }
-        }
-        if let Some(var_sym) = self.variable_symbols.get(loc) {
-            result.push(var_sym);
-        }
-        if let Some(method_map) = self.method_symbols.get(loc) {
-            for sym in method_map.values() {
-                result.push(sym);
-            }
-        }
-        result
-    }
 }
 
 // This maps references to the symbol they reference, made as a lock
