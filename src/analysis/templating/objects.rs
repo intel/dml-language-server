@@ -1,7 +1,6 @@
 //  © 2024 Intel Corporation
 //  SPDX-License-Identifier: Apache-2.0 and MIT
 use std::collections::{HashMap, HashSet};
-use std::hash::Hash;
 use std::iter;
 use std::sync::Arc;
 
