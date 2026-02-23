@@ -612,7 +612,7 @@ pub fn rank_templates_aux<'t>(mut templates: HashMap<&'t str,
                                     DMLError {
                                         span: *span,
                                         description: format!(
-                                            "No template; '{}'",
+                                            "No template named '{}'",
                                             missing_template_name),
                                         related: vec![],
                                         severity: Some(
