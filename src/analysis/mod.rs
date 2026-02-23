@@ -40,8 +40,7 @@ pub use crate::analysis::parsing::tree::
 {ZeroRange, ZeroSpan, ZeroPosition, ZeroFilePosition};
 
 use crate::analysis::parsing::tree::{MissingToken, MissingContent, TreeElement};
-use crate::analysis::structure::objects::{Template, Import, CompObjectKind,
-                                          ParamValue};
+use crate::analysis::structure::objects::{CompObjectKind, Import, MaybeAbstract, ParamValue, Template};
 use crate::analysis::structure::statements::{ForPre, Statement, StatementKind};
 use crate::analysis::structure::toplevel::{ObjectDecl, TopLevel};
 use crate::analysis::structure::types::DMLType;
@@ -2532,7 +2531,7 @@ fn bind_method_implementations(method_symbols: &mut HashMap<ZeroSpan, HashMap<St
     debug!("Bind method implementations");
     for (parent, method_symbol) in method_symbols.values().flat_map(|m|m.iter()) {
         debug!("Binding for method {} under {:?}", method_symbol.lock().unwrap().medium_debug_info(), parent);
-        
+
         // Cloning the arc is not strictly necessary, but avoiding holding the lock is good practice
         let method = match &method_symbol.lock().unwrap().source {
             SymbolSource::Method(_, methref) => Arc::clone(methref),
@@ -2556,7 +2555,12 @@ fn bind_method_implementations(method_symbols: &mut HashMap<ZeroSpan, HashMap<St
             .filter_map(|ps|ps.get(parent));
         for overridden_method in overridden_methods {
             debug!("Inserted into parent {}", overridden_method.lock().unwrap().medium_debug_info());
-            overridden_method.lock().unwrap().implementations.insert(*method.location());
+            if method.is_abstract() {
+                internal_error!("Unexpectedly bound abstract method {:?} as implementation of {:?}",
+                method, overridden_method);
+            } else {
+                overridden_method.lock().unwrap().implementations.insert(*method.location());
+            }
         }
     }
 }
