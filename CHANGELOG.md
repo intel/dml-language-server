@@ -24,6 +24,8 @@
 - The DLS will now correctly report missing template names in 'in each' constructs
 - Fixed error where the DLS would fail to match references from within in a template
   to symbols defined in parents of objects instantiating the template
+- Fixed an issue where the DLS document and workspace symbol request would
+  double-report symbols that contain other symbols (methods, templates, objects)
 
 ## 0.9.17
 - Fixed linter wrongly throwing an error on space after `defined` keyword
