@@ -22,6 +22,8 @@
    which apply to that object.
 - Added parser support for provisional 'explicit\_method\_decls'
 - The DLS will now correctly report missing template names in 'in each' constructs
+- Fixed error where the DLS would fail to match references from within in a template
+  to symbols defined in parents of objects instantiating the template
 
 ## 0.9.17
 - Fixed linter wrongly throwing an error on space after `defined` keyword

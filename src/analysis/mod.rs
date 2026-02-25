@@ -475,24 +475,29 @@ impl ReferenceMatches {
 /// TODO: Consider usage and variants of type hints
 pub type TypeHint = DMLResolvedType;
 
-// We replicate some of the structures from scope and reference here, because
-// we need to _discard_ the location information for the caching to work
-
-// agnostic context key
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
-enum AgnConKey {
-    Object(String),
-    Template(String),
-    AllWithTemplate(Vec<String>),
-}
-
 // Agnostic reference
 type AgnRef = Vec<String>;
 
-type ReferenceCacheKey = (Vec<AgnConKey>, AgnRef, Option<ZeroRange>);
+type ReferenceCacheKey = (String, AgnRef, Option<ZeroRange>);
 #[derive(Default)]
 struct ReferenceCache {
     underlying_cache: HashMap<ReferenceCacheKey, ReferenceMatches>,
+}
+
+fn object_to_path_name(object: Option<&DMLObject>, container: &StructureContainer) -> String {
+    object_to_path_name_aux(object, container, String::new())
+}
+
+fn object_to_path_name_aux(object: Option<&DMLObject>, container: &StructureContainer, acc: String) -> String {
+    if let Some(obj) = object {
+        let o = obj.resolve(container);
+        let parent = o.parent().map(DMLObject::CompObject);
+        object_to_path_name_aux(parent.as_ref(),
+                                container,
+                                format!("{}.{}", acc, o.identity()))
+    } else {
+        acc
+    }
 }
 
 impl ReferenceCache {
@@ -505,49 +510,40 @@ impl ReferenceCache {
             },
         }
     }
-    fn convert_to_key(key: (Vec<ContextKey>, VariableReference),
+    fn convert_to_key(key: (Option<&DMLObject>, VariableReference),
+                      container: &StructureContainer,
                       method_structure: &HashMap<ZeroSpan, RangeEntry>)
                       -> ReferenceCacheKey {
-        let (contexts, refr) = key;
-        let method_scope = contexts.last()
-            .and_then(|ck|if let ContextKey::Method(meth) = ck {
-                method_structure.get(meth.loc_span())
-                    .and_then(
-                        |re|re.find_smallest_scope_around(
-                            refr.loc_span().range.start()))
+        let (object, refr) = key;
+        let method_scope =
+            if let Some(meth) = object.and_then(|o|o.as_shallow()).and_then(|s|s.variant.as_method()) {
+                method_structure.get(meth.location()).and_then(
+                        |re|re.find_smallest_scope_around(refr.loc_span().range.start()))
             } else {
                 None
-            });
-        let agnostic_context = contexts.into_iter().map(
-            |con|match con {
-                ContextKey::Structure(sym) |
-                ContextKey::Method(sym) =>  AgnConKey::Object(sym.get_name()),
-                ContextKey::Template(sym) => AgnConKey::Template(
-                    sym.get_name()),
-                ContextKey::AllWithTemplate(_, names) =>
-                    AgnConKey::AllWithTemplate(names.clone()),
-            }).collect();
+            };
+        let object_path = object_to_path_name(object, container);
         let mut agnostic_reference = vec![];
         Self::flatten_ref(&refr.reference, &mut agnostic_reference);
-        (agnostic_context, agnostic_reference, method_scope)
+        (object_path, agnostic_reference, method_scope)
     }
 
     pub fn get(&self,
-               key: (Vec<ContextKey>,
-                     VariableReference),
+               key: (Option<&DMLObject>, VariableReference),
+               container: &StructureContainer,
                method_structure: &HashMap<ZeroSpan, RangeEntry>)
                -> Option<&ReferenceMatches> {
-        let agn_key = Self::convert_to_key(key, method_structure);
+        let agn_key = Self::convert_to_key(key, container, method_structure);
         self.underlying_cache.get(&agn_key)
     }
 
     pub fn insert(&mut self,
-                  key: (Vec<ContextKey>,
-                        VariableReference),
+                  key: (Option<&DMLObject>, VariableReference),
                   val: ReferenceMatches,
+                  container: &StructureContainer,
                   method_structure: &HashMap<ZeroSpan, RangeEntry>)
     {
-        let agn_key = Self::convert_to_key(key, method_structure);
+        let agn_key = Self::convert_to_key(key, container, method_structure);
         self.underlying_cache.insert(agn_key, val);
     }
 }
@@ -712,6 +708,11 @@ impl DeviceAnalysis {
         }
     }
 
+    // TODO: This function is called from two contexts, and this is a reoccuring pain-point
+    // From the analysis reference-matching side, this would like to have an entry point where
+    // limitations are not considered and the first entry in the chain is the device scope
+    // From the semantic lookup side, this would like to have an entry point where limitations
+    // are relevant and we do not have the device scope at all
     fn context_to_objs(&self,
                        curr_obj: &DMLCompositeObject,
                        context_chain: &[ContextKey],
@@ -1357,41 +1358,15 @@ impl DeviceAnalysis {
                                     ref_matches);
     }
 
-    pub fn lookup_symbols_by_contexted_reference(
-        &self,
-        context_chain: &[ContextKey],
-        reference: &VariableReference,
-        method_structure: &HashMap<ZeroSpan, RangeEntry>,
-        ref_matches: &mut ReferenceMatches) {
-        debug!("Looking up {:?} : {:?} in device tree", context_chain,
-               reference);
-        // NOTE: This is actually unused, but contexts_to_objs is used
-        // both from user- and server- context and thus needs this argument
-        let mut limitations = HashSet::new();
-        if let Some(objs) = self.contexts_to_objs(
-            vec![self.get_device_obj().clone()],
-            context_chain,
-            &mut limitations) {
-            for o in objs {
-                self.lookup_ref_in_obj(&o,
-                                       reference,
-                                       method_structure,
-                                       ref_matches);
-            }
-        } else {
-            debug!("Failed to obtain obj from context {:?}", context_chain);
-        }
-    }
-
     fn find_target_for_reference(
         &self,
-        context_chain: &[ContextKey],
+        in_object: Option<&DMLObject>,
         reference: &VariableReference,
         method_structure: &HashMap<ZeroSpan, RangeEntry>,
         reference_cache: &Mutex<ReferenceCache>)
         -> ReferenceMatches {
         let mut recursive_cache = HashSet::default();
-        self.find_target_for_reference_without_loop(context_chain,
+        self.find_target_for_reference_without_loop(in_object,
                                                     reference,
                                                     method_structure,
                                                     reference_cache,
@@ -1400,48 +1375,48 @@ impl DeviceAnalysis {
 
     fn find_target_for_reference_without_loop<'t>(
         &self,
-        context_chain: &'t [ContextKey],
+        in_object: Option<&'t DMLObject>,
         reference: &'t VariableReference,
         method_structure: &HashMap<ZeroSpan, RangeEntry>,
         reference_cache: &Mutex<ReferenceCache>,
-        recursive_cache: &'t mut HashSet<(&'t [ContextKey],
-                                          &'t VariableReference)>)
+        recursive_cache: &'t mut HashSet<(String, &'t VariableReference)>)
         -> ReferenceMatches {
         // Prevent us from calling into the exact same reference lookup twice
         // within one lookup.
-        if !recursive_cache.insert((context_chain, reference)) {
+        let path_name = object_to_path_name(in_object, &self.objects);
+        if !recursive_cache.insert((path_name, reference)) {
             internal_error!("Recursive reference lookup detected at \
-                             {:?} under {:?}", reference, context_chain);
+                             {:?} under {:?}", reference, in_object);
             return ReferenceMatches::new();
         }
-        let index_key = (context_chain.to_vec(),
-                         reference.clone());
+        let index_key = (in_object, reference.clone());
         {
             if let Some(cached_result) = reference_cache.lock().unwrap()
-                .get(index_key.clone(), method_structure) {
+                .get(index_key.clone(), &self.objects, method_structure) {
                     return cached_result.clone();
                 }
         }
         let mut result = ReferenceMatches::new();
-        self.find_target_for_reference_aux(context_chain,
+        self.find_target_for_reference_aux(in_object,
                                            reference,
                                            method_structure,
                                            reference_cache,
                                            &mut result);
         reference_cache.lock().unwrap().insert(index_key,
                                                result.clone(),
+                                               &self.objects,
                                                method_structure);
         result
     }
 
-    fn find_target_for_reference_aux(
-        &self,
-        context_chain: &[ContextKey],
+    fn find_target_for_reference_aux<'t>(
+        &'t self,
+        in_object: Option<&DMLObject>,
         reference: &VariableReference,
         method_structure: &HashMap<ZeroSpan, RangeEntry>,
         reference_cache: &Mutex<ReferenceCache>,
         reference_matches: &mut ReferenceMatches) {
-        if context_chain.is_empty() {
+        if in_object.is_none() {
             // Nothing matches the noderef except maybe globals
             self.lookup_global_from_noderef(
                 &reference.reference,
@@ -1450,15 +1425,13 @@ impl DeviceAnalysis {
             return;
         }
 
-        self.lookup_symbols_by_contexted_reference(
-            // Ignore first element of chain, it is the device context
-            &context_chain[1..],
-            reference,
-            method_structure,
-            reference_matches);
+        let in_object = in_object.unwrap();
+
+        self.lookup_ref_in_obj(in_object, reference, method_structure, reference_matches);
+
         if reference_matches.as_matches().is_none() {
-            let (_, new_chain) = context_chain.split_last().unwrap();
-            let sub_matches = self.find_target_for_reference(new_chain,
+            let parent = in_object.resolve(&self.objects).parent().map(DMLObject::CompObject);
+            let sub_matches = self.find_target_for_reference(parent.as_ref(),
                                                              reference,
                                                              method_structure,
                                                              reference_cache);
@@ -1483,51 +1456,74 @@ impl DeviceAnalysis {
         method_structure: &HashMap<ZeroSpan, RangeEntry>,
         reference_cache: &Mutex<ReferenceCache>,
         status: &AliveStatus) {
+        if scope_chain.is_empty() {
+            internal_error!("Attempted to match references in empty scope chain");
+            return;
+        }
         let current_scope = scope_chain.last().unwrap();
         let context_chain: Vec<ContextKey> = scope_chain
             .iter().map(|s|s.create_context()).collect();
+        let Some(objects_of_scope) = (
+            if context_chain.len() == 1 {
+                // Must be device object
+                Some(vec![self.get_device_obj().clone()])
+            } else {
+                self.context_to_objs(
+                    self.get_device_comp_obj(),
+                    // Skip first context, it's the device one
+                    &context_chain[1..],
+                    // Intentionally avoid storing limitations
+                    &mut HashSet::new())
+            }
+        )                 
+        else {
+            debug!("Context chain {:?} corresponded to no objects", context_chain);
+            return;
+        };
         // NOTE: chunk number is arbitrarily picked that benches well
         report.extend(current_scope.defined_references().par_chunks(25).flat_map(|references|{
             status.assert_alive();
             let mut local_reports = vec![];
             for reference in references {
-                trace!("In {:?}, Matching {:?}", context_chain, reference);
-                let symbol_lookup = match &reference.variant {
-                    ReferenceVariant::Variable(var) => self.find_target_for_reference(
-                        context_chain.as_slice(),
-                        var,
-                        method_structure,
-                        reference_cache),
-                    ReferenceVariant::Global(glob) =>
-                        self.lookup_global_from_ref(glob),
-                };
+                for object in &objects_of_scope {
+                    trace!("In {:?}, Matching {:?}", object, reference);
+                    let symbol_lookup = match &reference.variant {
+                        ReferenceVariant::Variable(var) => self.find_target_for_reference(
+                            Some(object),
+                            var,
+                            method_structure,
+                            reference_cache),
+                            ReferenceVariant::Global(glob) =>
+                            self.lookup_global_from_ref(glob),
+                        };
 
-                match symbol_lookup.kind {
-                    ReferenceMatchKind::NotFound =>
-                    // TODO: report suggestions?
-                    // TODO: Uncomment reporting of errors here when
-                    // semantics are strong enough that they are rare
-                    // for correct devices
-                    // report.lock().unwrap().push(DMLError {
-                    //     span: reference.span().clone(),
-                    //     description: format!("Unknown reference {}",
-                    //                          reference.to_string()),
-                    //     related: vec![],
-                    // })
-                        (),
-                    // This maps symbols->references, this is later
-                    // used to create the inverse map
-                    // (not done here because of ownership issues)
-                    ReferenceMatchKind::Found =>
-                        for symbol in &symbol_lookup.references {
-                            Self::handle_symbol_ref(symbol, reference);
-                        },
-                    ReferenceMatchKind::MismatchedFind =>
-                    //TODO: report mismatch,
-                        (),
+                        match symbol_lookup.kind {
+                            ReferenceMatchKind::NotFound =>
+                            // TODO: report suggestions?
+                            // TODO: Uncomment reporting of errors here when
+                            // semantics are strong enough that they are rare
+                            // for correct devices
+                            // report.lock().unwrap().push(DMLError {
+                            //     span: reference.span().clone(),
+                            //     description: format!("Unknown reference {}",
+                            //                          reference.to_string()),
+                            //     related: vec![],
+                            // })
+                                (),
+                            // This maps symbols->references, this is later
+                            // used to create the inverse map
+                            // (not done here because of ownership issues)
+                            ReferenceMatchKind::Found =>
+                                for symbol in &symbol_lookup.references {
+                                    Self::handle_symbol_ref(symbol, reference);
+                                },
+                            ReferenceMatchKind::MismatchedFind =>
+                            //TODO: report mismatch,
+                                (),
+                        }
+                        local_reports.extend(symbol_lookup.messages);
+                    }
                 }
-                local_reports.extend(symbol_lookup.messages);
-            }
             local_reports.into_par_iter()
         }).collect::<Vec<_>>());
     }
