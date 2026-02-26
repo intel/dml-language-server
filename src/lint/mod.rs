@@ -245,7 +245,7 @@ impl LinterAnalysis {
 fn begin_style_check(ast: TopAst, file: &str, rules: &CurrentRules) -> Result<Vec<DMLStyleError>, Error> {
     let (mut invalid_lint_annot, lint_annot) = obtain_lint_annotations(file);
     let mut linting_errors: Vec<DMLStyleError> = vec![];
-    ast.style_check(&mut linting_errors, rules, AuxParams { depth: 0 });
+    ast.style_check(&mut linting_errors, rules, AuxParams { depth: DepthHandler::new() });
 
     // Per line checks
     let lines: Vec<&str> = file.lines().collect();
@@ -426,6 +426,36 @@ fn remove_disabled_lints(errors: &mut Vec<DMLStyleError>,
     );
 }
 
+// Responsible for abstract tracking of depth in terms of levels,
+// regardless of indentation sizing
+#[derive(Copy, Clone, Debug, Default)]
+pub struct DepthHandler {
+    depth: u32,
+    ignore_next_increase: bool,
+}
+
+impl DepthHandler {
+    pub fn new() -> DepthHandler {
+        DepthHandler::default()
+    }
+
+    pub fn depth(&self) -> u32 {
+        self.depth
+    }
+
+    pub fn increase_depth(&mut self) {
+        if self.ignore_next_increase {
+            self.ignore_next_increase = false;
+        } else {
+            self.depth += 1;
+        }
+    }
+
+    pub fn force_depth(&mut self, new_depth: u32) {
+        self.depth = new_depth;
+        self.ignore_next_increase = true;
+    }
+}
 
 // AuxParams is an extensible struct.
 // It can be used for any data that needs
@@ -437,7 +467,7 @@ pub struct AuxParams {
     // the correct indentation level for a node in the AST.
     // Individual nodes update depth to affect level of their
     // nested TreeElements. See more in src/lint/README.md
-    pub depth: u32,
+    pub depth: DepthHandler,
 }
 
 pub mod rules;
