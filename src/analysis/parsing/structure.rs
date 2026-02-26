@@ -1,7 +1,7 @@
 //  © 2024 Intel Corporation
 //  SPDX-License-Identifier: Apache-2.0 and MIT
 // Types, traits, and structs for the structure of a DML file
-use log::{trace};
+use crate::logging::{trace};
 
 use crate::analysis::parsing::expression::{Expression,
                                            ensure_string_concatenation};

@@ -8,9 +8,9 @@ use crate::file_management::CanonPath;
 use crate::span::{Span};
 use crate::vfs::{Change, VfsSpan};
 use crate::lsp_data::*;
+use crate::logging::{debug, error};
 
 use jsonrpc::error::StandardError;
-use log::{debug, error, warn};
 use serde::{Serialize, Deserialize};
 
 use lsp_types::notification::ShowMessage;
@@ -211,7 +211,7 @@ impl BlockingNotificationAction for DidChangeConfiguration {
         let new_config = match settings {
             Ok(value) => value.dml,
             Err(err) => {
-                warn!("Received unactionable config: {:?} (error: {:?})", params.settings, err);
+                error!("Received unactionable config: {:?} (error: {:?})", params.settings, err);
                 return Err(().into());
             }
         };

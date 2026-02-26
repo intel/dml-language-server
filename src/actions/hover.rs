@@ -1,6 +1,6 @@
 //  © 2024 Intel Corporation
 //  SPDX-License-Identifier: Apache-2.0 and MIT
-use log::*;
+use crate::logging::*;
 
 use crate::span::{Range, ZeroIndexed};
 use serde::{Deserialize, Serialize};

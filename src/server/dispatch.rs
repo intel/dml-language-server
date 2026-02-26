@@ -5,7 +5,7 @@ use std::thread;
 use std::time::Duration;
 
 use jsonrpc::error::StandardError::InternalError;
-use log::{info, error, debug};
+use crate::logging::{info, error, debug};
 
 use crate::actions::work_pool;
 use crate::actions::work_pool::WorkDescription;

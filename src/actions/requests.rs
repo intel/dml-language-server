@@ -3,7 +3,6 @@
 //! Requests that the DLS can respond to.
 
 use jsonrpc::error::StandardError;
-use log::{debug, error, info, trace, warn};
 use serde::{Deserialize, Serialize};
 
 use std::collections::HashSet;
@@ -19,6 +18,7 @@ use crate::actions::semantic_lookup::{DLSLimitation, declarations_at_fp, definit
 use crate::analysis::{Named, DeclarationSpan, LocationSpan};
 use crate::analysis::symbols::SimpleSymbol;
 use crate::config::Config;
+use crate::logging::{debug, error, info, trace};
 
 pub use crate::lsp_data::request::{
     ApplyWorkspaceEdit,
@@ -65,17 +65,17 @@ fn warn_miss_lookup(error: AnalysisLookupError, file: Option<&str>) {
                 if let Some(f) = file { f.to_string() }
                 else { "the opened file".to_string() }),
         AnalysisLookupError::NoIsolatedAnalysis =>
-            warn!(
+            info!(
                 "No syntactical analysis available{}",
                 if let Some(f) = file { format!(" for the file '{}'", f) }
                 else { "".to_string() }),
         AnalysisLookupError::NoLintAnalysis =>
-            warn!(
+            info!(
                 "No linting analysis available{}",
                 if let Some(f) = file { format!(" for the file '{}'", f) }
                 else { "".to_string() }),
         AnalysisLookupError::NoDeviceAnalysis =>
-            warn!(
+            info!(
                 "No semantic analysis available{}, may need to open a file \
                  with a 'device' declaration that imports{}, directly or \
                  indirectly.",
@@ -985,8 +985,8 @@ impl SentRequest for WorkspaceConfiguration {
         let new_config = match settings {
             Ok(value) => value,
             Err(err) => {
-                warn!("Received unactionable config: {:?} (error: {:?})",
-                      &response, err);
+                error!("Received unactionable config: {:?} (error: {:?})",
+                        &response, err);
                 return;
             }
         };

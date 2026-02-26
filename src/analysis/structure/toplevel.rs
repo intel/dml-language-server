@@ -3,7 +3,7 @@
 use std::fmt::{Display, Formatter, self as fmt};
 use std::path::PathBuf;
 
-use log::trace;
+use crate::logging::trace;
 
 use crate::analysis::structure::objects::{Bitorder, CBlock, CompositeObject,
                                           CompObjectKind, Constant, Device,

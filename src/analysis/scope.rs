@@ -8,7 +8,7 @@ use crate::analysis::reference::{Reference};
 
 use crate::analysis::structure::objects::Method;
 
-use log::{debug, trace};
+use crate::logging::{debug, trace};
 
 pub trait Scope : DeclarationSpan + Named {
     // Need this to create default mappings
