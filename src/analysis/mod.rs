@@ -1205,7 +1205,6 @@ impl DeviceAnalysis {
                             }
                              let ambiguous_desc: &'static str 
                             = "Ambiguous default call, you may need to clarify the template ordering or use a template-qualified-method-implementation-call";
-                            // TODO: curren
                             ref_matches.add_message(DMLError {
                                     span: *node.span(),
                                     description: ambiguous_desc.to_string(),
