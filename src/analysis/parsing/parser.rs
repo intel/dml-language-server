@@ -2,7 +2,7 @@
 //  SPDX-License-Identifier: Apache-2.0 and MIT
 use logos::Lexer;
 use regex::Regex;
-use log::debug;
+use log::trace;
 use lazy_static::lazy_static;
 
 use crate::span::{Range, ZeroIndexed, Position};
@@ -129,13 +129,13 @@ impl ParseContext {
         let peek = fileparser.peek();
         let (endpos, endtok) = match &peek {
             Some(tok) => {
-                debug!("Ended context at {:?}: got {}, expected {}",
+                trace!("Ended context at {:?}: got {}, expected {}",
                        tok.range.end(), tok.kind.description(),
                        description);
                 (Some(tok.range.start()), Some(*tok))
             },
             None => {
-                debug!("Ended context at {:?}: got EOF, expected {}",
+                trace!("Ended context at {:?}: got EOF, expected {}",
                        fileparser.get_position(), description);
                 (Some(fileparser.get_position()), None)
             },
@@ -193,7 +193,7 @@ impl ParseContext {
                         } else {
                             // If nobody could've handled this token,
                             // skip it and retry
-                            debug!("Skipped token {} at {:?}, expected {}",
+                            trace!("Skipped token {} at {:?}, expected {}",
                                    token.kind.description(), token.range,
                                    description);
                             fileparser.skip(description);
@@ -241,7 +241,7 @@ impl ParseContext {
                         } else {
                             // If nobody could've handled this token,
                             // skip it and retry
-                            debug!("Skipped token {} at {:?}, expected {}",
+                            trace!("Skipped token {} at {:?}, expected {}",
                                    token.kind.description(), token.range,
                                    description);
                             fileparser.skip(description);
@@ -278,7 +278,7 @@ impl ParseContext {
                         } else {
                             // If nobody could've handled this token,
                             // skip it and retry
-                            debug!("Skipped token {} at {:?}, expected {}",
+                            trace!("Skipped token {} at {:?}, expected {}",
                                    token.kind.description(), token.range,
                                    description);
                             fileparser.skip(description);

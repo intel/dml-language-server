@@ -7,14 +7,14 @@ use std::iter;
 use std::sync::Arc;
 
 use crate::analysis::parsing::tree::ZeroSpan;
-use crate::analysis::structure;
 use crate::analysis::structure::objects::{MaybeAbstract};
 use crate::analysis::structure::expressions::DMLString;
 use crate::analysis::structure::toplevel::{ObjectDecl, ExistCondition};
 
 use crate::analysis::DMLError;
-use crate::analysis::templating::methods::{MethodDecl, MethodDeclaration};
+use crate::analysis::templating::methods::{DMLConcreteMethod, DMLMethodRef, DefaultCallReference, MethodDecl, MethodDeclaration};
 use crate::analysis::templating::objects::{CoarseObjectKind,
+                                           DMLNamedMember,
                                            DMLCoarseObjectKind,
                                            ObjectSpec, Spec};
 use crate::analysis::templating::Declaration;
@@ -42,14 +42,18 @@ pub struct DMLTrait {
     pub ancestors: HashMap<String, Arc<DMLTrait>>,
     // This is the final specification of a trait in analysis. So
     // lock in the objects here and move them to owned
-    // for further analysis later. Not that these are
+    // for further analysis later. Note that these are
     // _not_ objectdecls as conditional declarations are not
     // part of template type (this is IMO weird but what can you do)
 
     pub sessions: HashMap<String, Declaration>,
     pub saveds: HashMap<String, Declaration>,
     pub params: HashMap<String, Declaration>,
-    pub methods: HashMap<String, MethodDecl>,
+
+    pub abstract_methods: HashMap<String, MethodDecl>,
+    // These are now concrete method declarations, since we need to be able
+    // to handle them as such for purposes of TQMIC resolutions or default calls
+    pub methods: HashMap<String, DMLConcreteMethod>,
 
     // Maps a symbol name to the ancestor implementing it
     // does NOT include symbols defined in this trait
@@ -67,23 +71,36 @@ pub enum TraitMemberKind<'t> {
     Method(&'t MethodDecl),
 }
 
-impl <'t> TraitMemberKind<'t> {
-    pub fn location(&self) -> &ZeroSpan {
+impl <'t> DMLNamedMember for TraitMemberKind<'t> {
+    fn location(&self) -> &'t ZeroSpan {
         match self {
             TraitMemberKind::Session(d) |
             TraitMemberKind::Saved(d) |
             TraitMemberKind::Parameter(d) => &d.name.span,
-            TraitMemberKind::Method(m) => &m.name.span,
+            TraitMemberKind::Method(m) => m.location(),
         }
     }
-    pub fn name(&self) -> &str {
+
+    fn identity(&self) -> &'t str {
         match self {
             TraitMemberKind::Session(d) |
             TraitMemberKind::Saved(d) |
             TraitMemberKind::Parameter(d) => &d.name.val,
-            TraitMemberKind::Method(m) => &m.name.val,
+            TraitMemberKind::Method(m) => m.identity()
         }
     }
+
+    fn kind_name(&self) -> &'static str {
+        match self {
+            TraitMemberKind::Session(_) => "session",
+            TraitMemberKind::Saved(_) => "saved",
+            TraitMemberKind::Parameter(_) => "parameter",
+            TraitMemberKind::Method(_) => "method",
+        }
+    }
+}
+
+impl <'t> TraitMemberKind<'t> {
     pub fn as_method(&self) -> Option<&'t MethodDecl> {
         match self {
             TraitMemberKind::Method(m) => Some(m),
@@ -134,6 +151,7 @@ pub fn get_impls(me: &Arc<DMLTrait>) -> HashMap<String, Arc<DMLTrait>> {
         .chain(me.saveds.keys())
         .chain(me.params.keys())
         .chain(me.methods.keys())
+        .chain(me.abstract_methods.keys())
         .map(|name|(name.to_string(), Arc::clone(me)))
         .chain(me.ancestor_map.iter().map(|(n, rc)|(n.clone(), Arc::clone(rc))))
         .collect()
@@ -148,6 +166,18 @@ pub enum ImplementRelation {
 }
 
 impl DMLTrait {
+    pub fn get_defined_method<'t, T>(&'t self, method_name: &T)
+                             -> Option<&'t DMLConcreteMethod>
+    where T: Borrow<str> + ?Sized  {
+        self.methods.get(method_name.borrow())
+    }
+
+    pub fn get_method<'t, T>(&'t self, method_name: &T)
+                             -> Option<&'t MethodDecl>
+    where T: Borrow<str> + ?Sized  {
+        self.get_member(method_name)?.as_method()
+    }
+
     pub fn implement_relation<T>(&self, other: &T) -> ImplementRelation
     where T: Borrow<DMLTrait>
     {
@@ -168,13 +198,7 @@ impl DMLTrait {
         }
     }
 
-    pub fn get_method<'t, T>(&'t self, method_name: &T)
-                             -> Option<&'t MethodDecl>
-    where T: Borrow<str> + ?Sized  {
-        self.get_member(method_name)?.as_method()
-    }
-
-    // Lookup a definiton or declaration of a member in THIS trait, does not
+    // Lookup a definition or declaration of a member in THIS trait, does not
     // examine ancestors
     pub fn get_member<'t, T>(&'t self, member_name: &T)
                              -> Option<TraitMemberKind<'t>>
@@ -194,6 +218,10 @@ impl DMLTrait {
             return Some(TraitMemberKind::Parameter(param));
         }
         if let Some(method) = self.methods.get(member_name.borrow()) {
+            trace!("Got as {:?}", method);
+            return Some(TraitMemberKind::Method(&method.decl));
+        }
+        if let Some(method) = self.abstract_methods.get(member_name.borrow()) {
             trace!("Got as {:?}", method);
             return Some(TraitMemberKind::Method(method));
         }
@@ -232,13 +260,12 @@ impl DMLTrait {
                    traits: &HashMap<String, Arc<DMLTrait>>,
                    report: &mut Vec<DMLError>)
                    -> Arc<DMLTrait> {
-        debug!("Processing trait for {}",
-               traits.keys().fold(
+        debug!("Processing trait for {}", name);
+        trace!("other traits are {:?}", traits.keys().fold(
                    "".to_string(),
                    |mut s,k|{write!(s, "{}, ", k)
                              .expect("write string error");
                              s}));
-        trace!("other traits are {:?}", name,);
         // Skip analysis for dummy trait
         if maybeloc.is_none() {
             trace!("Dummy trait, skipped");
@@ -251,6 +278,7 @@ impl DMLTrait {
                 sessions: HashMap::default(),
                 saveds: HashMap::default(),
                 params: HashMap::default(),
+                abstract_methods: HashMap::default(),
                 methods: HashMap::default(),
                 ancestor_map: HashMap::default(),
                 reserved_symbols: HashMap::default(),
@@ -376,26 +404,71 @@ impl DMLTrait {
         trace!("params are: {:?}", params);
 
         // Map methods into non-colliding method declarations
-        let methods: HashMap<String, MethodDecl> = spec.methods.iter()
+        let abstract_methods: HashMap<String, MethodDecl> = spec.methods.iter()
             .filter_map(discard_conditional)
-            .filter(|method|method.modifier ==
-                    structure::objects::MethodModifier::Shared)
+            .filter(|method|method.is_abstract())
             .filter_map(|m| {
                 let new_m = MethodDecl::from_content(&m, report);
                 if maybe_report_collision(
                     &mut used_names,
-                    new_m.name.val.clone(),
-                    new_m.name.span,
+                    new_m.identity().to_string(),
+                    *new_m.location(),
                     report) {
                     Some(new_m)
                 } else {
                     None
                 }}).map(|m|(m.name.val.clone(), m)).collect();
-        trace!("methods are: {:?}", methods);
+        trace!("abstract methods are: {:?}", abstract_methods);
+        
+        let mut defined_methods: HashMap<String, MethodDecl> = HashMap::default();
+        for method in spec.methods.iter()
+            .filter_map(discard_conditional)
+            .filter(|method|!method.is_abstract()) {
+            let new_m = MethodDecl::from_content(&method, report);
+            // special case, methods are allowed to conflict 
+            // with abstract methods
+            // NOTE: Right now this means we'd report the collision
+            // with non-method members from abstract decl only
+            // when the definition also collides, which is probably fine
+            if abstract_methods.contains_key(new_m.name.val.as_str())
+            || (maybe_report_collision(
+                &mut used_names,
+                new_m.identity().to_string(),
+                *new_m.location(),
+                report)) {
+                    // Need one more check here, if we have multiple
+                    // non-shared decls and one or more shared decls,
+                    // we'd miss the extra non-shared ones otherwise
+                    if defined_methods.contains_key(new_m.identity()) {
+                        report.push(DMLError {
+                            span: *new_m.location(),
+                            description:
+                            format!("Name collision on '{}'",
+                            new_m.identity()),
+                            severity: Some(DiagnosticSeverity::ERROR),
+                            related: vec![
+                            (*defined_methods[new_m.identity()].location(),
+                            "Previously defined here".to_string())],
+                        });
+                    } else {
+                        defined_methods.insert(
+                            new_m.identity().to_string(), new_m.clone());
+                        }
+                    }
+        }
+        
+        trace!("defined methods are: {:?}", defined_methods);
 
-        // Check that our overrides are sound
-        for meth in methods.values() {
-            if let Some(ancestor) = impl_map.get(&meth.name.val) {
+        let mut methods: HashMap<String, DMLConcreteMethod> = HashMap::default();
+
+        // Check that our overrides are sound and construct our concrete methods
+        // NOTE: Override order is already checked in merge_impl_maps, so we can use
+        // impl_map to get the next in order
+        for meth in defined_methods.values().chain(abstract_methods.values()) {
+            // TODO: Fairly sure this does not handle ambiguous overrides correctly.
+            // Odds are: they are reported correctly from merge_impl_maps, but
+            // we do not collect all of them here
+            let default_call = if let Some(ancestor) = impl_map.get(&meth.name.val) {
                 if let Some(coll) = ancestor.get_member(
                     meth.name.val.as_str()) {
                     match coll {
@@ -408,24 +481,30 @@ impl DMLTrait {
                                      override another method".into(),
                                     severity: Some(DiagnosticSeverity::ERROR),
                                     related: vec![
-                                        (undermeth.name.span,
+                                        (*undermeth.location(),
                                          "Overridden definition here".into())],
                                 });
                             }
-                            if !undermeth.default && !undermeth.is_abstract()  {
+                            if !undermeth.is_default() && !undermeth.is_abstract()  {
                                 report.push(DMLError {
                                     span: meth.name.span,
                                     description:
                                     "This method attempts to override \
                                      a non-default method".into(),
                                     related: vec![
-                                        (undermeth.name.span,
+                                        (*undermeth.location(),
                                          "Attempted to override this \
                                           declaration".into())],
                                     severity: Some(DiagnosticSeverity::ERROR),
                                 });
                             }
                             meth.check_override(undermeth, report);
+                            ancestor.get_defined_method(meth.identity())
+                                .map(|dmeth|DefaultCallReference::Valid(
+                                    Arc::new(DMLMethodRef {
+                                        template_ref: Some(Arc::clone(ancestor)),
+                                        concrete_decl: dmeth.clone(),
+                                    })))
                         },
                         TraitMemberKind::Saved(invalid) |
                         TraitMemberKind::Session(invalid) |
@@ -440,15 +519,29 @@ impl DMLTrait {
                                     (invalid.name.span,
                                      "Previously defined here".into())],
                             });
+                            None
                         }
                     }
                 } else {
-                    error!("Invalid internal state: trait {} was indicated \
-                            as defining {} by {}, but didn't",
-                           ancestor.name,
-                           meth.name.val,
-                           name);
+                    internal_error!("trait {} was indicated \
+                        as defining {} by {}, but didn't",
+                        ancestor.name,
+                        meth.name.val,
+                        name);
+                    None
                 }
+            } else {
+                None
+            };
+            if !meth.is_abstract() {
+                methods.insert(
+                    meth.name.val.clone(),
+                    DMLConcreteMethod {
+                        // TODO: This clone is slightly inefficient
+                        decl: meth.clone(),
+                        default_call,       
+                    }
+                );
             }
         }
 
@@ -490,6 +583,7 @@ impl DMLTrait {
             sessions,
             saveds,
             params,
+            abstract_methods,
             methods,
             ancestor_map: impl_map,
             reserved_symbols,
@@ -536,7 +630,7 @@ where
                 // Methods can override each other on trait level,
                 // other declarations cannot
                 match (decl, edecl) {
-                    (TraitMemberKind::Method(_), TraitMemberKind::Method(_))
+                    (TraitMemberKind::Method(m1), TraitMemberKind::Method(m2))
                         => match relation {
                             ImplementRelation::Implements => {
                                 map.insert(name, implr);
@@ -549,14 +643,20 @@ where
                             // analysis.
                             // A minor improvement would be to pick both
                             ImplementRelation::Unrelated => {
-                                map.insert(name.clone(), Arc::clone(&mimplr));
-                                if let Some(ambdef) =
-                                    ambiguous_defs.get_mut(&name) {
-                                        ambdef.push(implr);
-                                    }
-                                else {
-                                    ambiguous_defs.insert(name,
-                                                          vec![mimplr, implr]);
+                                // This conflict is allowed as long as exactly 1
+                                // is abstract
+                                if m1.is_abstract() && !m2.is_abstract() {
+                                    map.insert(name, mimplr);
+                                    
+                                } else if !m1.is_abstract() && m2.is_abstract() {
+                                    map.insert(name, implr);
+                                } else {
+                                    // Both abstract or both non-abstract
+                                    // ambiguous
+                                    map.insert(name.clone(), Arc::clone(&implr));
+                                    ambiguous_defs.entry(name)
+                                        .or_default()
+                                        .push(mimplr);
                                 }
                             },
                             _ => unreachable!("should be covered by if clause"),
@@ -593,7 +693,7 @@ where
             related: traits.iter().map(
                 |t|{
                     let decl = t.get_method(ambiguous_name).unwrap();
-                    (decl.name.span,
+                    (*decl.location(),
                      format!("Conflicting definition here in {}",
                              t.name))
                 }).collect(),

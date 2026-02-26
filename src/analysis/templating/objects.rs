@@ -28,18 +28,15 @@ use crate::analysis::structure::toplevel::{ExistCondition, ObjectDecl,
 use crate::analysis::symbols::{DMLSymbolKind};
 use crate::analysis::templating::Declaration;
 use crate::analysis::templating::types::eval_type;
-use crate::analysis::templating::methods::{DMLMethodRef,
-                                           MethodDecl, MethodDeclaration,
-                                           DMLConcreteMethod};
+use crate::analysis::templating::methods::{DMLConcreteMethod, DMLMethodRef, DefaultCallReference, MethodDecl, MethodDeclaration};
 use crate::analysis::templating::topology::{InEachStruct, InferiorVariant,
                                             Rank, RankDesc, RankDescKind,
                                             RankMaker, topsort};
 use crate::analysis::templating::traits::{DMLTemplate, DMLTrait,
-                                          get_impls, merge_impl_maps,
-                                          TraitMemberKind, TemplateTraitInfo};
+                                          get_impls, TraitMemberKind, TemplateTraitInfo};
 use crate::analysis::{LocationSpan, DeclarationSpan, combine_vec_of_decls};
 
-type InEachSpec = HashMap<String, Vec<(Vec<String>, Arc<ObjectSpec>)>>;
+type InEachSpec = HashMap<String, Vec<(Vec<String>, (ZeroSpan, Arc<ObjectSpec>))>>;
 pub type StructureKey = DefaultKey;
 pub type StructureContainer = SlotMap<StructureKey, DMLCompositeObject>;
 
@@ -184,7 +181,7 @@ fn create_spec<'t>(loc: ZeroSpan,
         if let Some((first, rest)) = ineach.obj.spec.split_first() {
             if let Some(in_each_spec) = in_each_specs.get(ineach) {
                 let to_add = (rest.iter().map(|t|t.val.clone()).collect(),
-                              Arc::clone(in_each_spec));
+                              (ineach.obj.loc, Arc::clone(in_each_spec)));
                 if let Some(e) = in_eachs.get_mut(&first.val) {
                     e.push(to_add);
                 } else {
@@ -332,7 +329,7 @@ pub fn make_device<'t>(path: &str,
         container,
         report);
     let device_obj = container.get(obj_key).unwrap();
-    debug!("Device components are: {:?}", device_obj.components);
+    trace!("Device components are: {:?}", device_obj.components);
     export_invariants(toplevel, device_obj, container, report);
     device_obj
 }
@@ -749,13 +746,16 @@ impl <T: std::fmt::Debug + Clone + PartialEq> DMLAmbiguousDef<T> {
         }
     }
 
-    pub fn get_likely_declaration(&self) -> &T {
-        if let Some(def) = self.declarations.first() {
+    pub fn get_last_declaration(&self) -> &T {
+        if let Some(decl) = self.declarations.last() {
+            &decl.1
+        } else if let Some(def) = self.definitions.last() {
             &def.1
         } else {
-            &self.used_definitions.first().unwrap().1
+            &self.used_definitions.last().unwrap().1
         }
     }
+
     pub fn get_unambiguous_def(&self) -> Option<&T> {
         if self.used_definitions.len() == 1 {
             self.used_definitions.first().map(|t|&t.1)
@@ -822,6 +822,8 @@ pub struct DMLCompositeObject {
     // None: 'none' for size in arraydim here means an _unknown_ size
     pub arraydimvars: Vec<ArrayDim>,
     pub components: HashMap<String, DMLObject>,
+    // Used for goto-implementation on composite objects
+    pub used_ineach_locs: Vec<ZeroSpan>,
 }
 
 impl DMLCompositeObject {
@@ -920,8 +922,10 @@ impl DMLCompositeObject {
 // we need to add)
 // NOTE: new objectspecs are pathed with the full condition chain required
 // to instantiate them
+// Returns all spans of final actually used ineachspecs, needed for
+// implementations tracking for composite objects
 fn add_template_specs(obj_specs: &mut Vec<Arc<ObjectSpec>>,
-                      source_each_stmts: &InEachSpec) {
+                      source_each_stmts: &InEachSpec) -> Vec<ZeroSpan>{
     let mut each_stmts = source_each_stmts.clone();
     // TODO: We need to handle conditional imports and is-es here, as these are
     // allowed in _some_ cases. For now, we merely pretend the conditions do not
@@ -948,6 +952,8 @@ fn add_template_specs(obj_specs: &mut Vec<Arc<ObjectSpec>>,
     // true in whatever context it would work in
     let mut used_templates = HashSet::<String>::default();
 
+    let mut used_ineach_spans = vec![];
+
     while let Some((_, tpl)) = queue.pop() {
         // TODO: here we would have to consider cond when conditional
         // is/imports exist
@@ -958,31 +964,35 @@ fn add_template_specs(obj_specs: &mut Vec<Arc<ObjectSpec>>,
                tpl.name);
         used_templates.insert(tpl.name.to_string());
         let mut modifications = vec![];
-        if let Some(templ_specs) = each_stmts.get(&tpl.name) {
-            for (needed_templates, spec) in templ_specs {
-                let mut can_add = true;
-                for templ in needed_templates {
-                    if !used_templates.contains(templ.as_str()) {
-                        // We will need to re-add a check for this template,
-                        // in case it will appear later in the queue
-                        modifications.push((templ.clone(),
-                                            needed_templates.clone(),
-                                            Arc::clone(spec)));
-                        can_add = false;
-                        break;
+        {
+            if let Some(templ_specs) = each_stmts.get(&tpl.name) {
+                for (needed_templates, (loc, spec)) in templ_specs {
+                    let mut can_add = true;
+                    for templ in needed_templates {
+                        if !used_templates.contains(templ.as_str()) {
+                            // We will need to re-add a check for this template,
+                            // in case it will appear later in the queue
+                            modifications.push(
+                                (templ.clone(),
+                                needed_templates.clone(),
+                                (*loc, Arc::clone(spec))));
+                            can_add = false;
+                            break;
+                        }
                     }
-                }
-                if can_add {
-                    queue.extend(spec.instantiations.values()
-                                 .flat_map(|v|v.iter())
-                                 .map(|t|(spec.condition.clone(),
-                                          Arc::clone(t))));
-                    obj_specs.push(Arc::clone(spec));
+                    if can_add {
+                        queue.extend(spec.instantiations.values()
+                        .flat_map(|v|v.iter())
+                        .map(|t|(spec.condition.clone(),
+                        Arc::clone(t))));
+                        obj_specs.push(Arc::clone(spec));
+                        used_ineach_spans.push(*loc);
+                    }
                 }
             }
         }
-        for (name, templs, spec) in modifications {
-            let to_insert = (templs, spec);
+        for (name, templs, (loc, spec)) in modifications {
+            let to_insert = (templs, (loc, spec));
             if let Some(e) = each_stmts.get_mut(&name) {
                 e.push(to_insert);
             } else {
@@ -998,6 +1008,8 @@ fn add_template_specs(obj_specs: &mut Vec<Arc<ObjectSpec>>,
             queue.push((d.cond.clone(), Arc::clone(v)));
         }
     }
+
+    used_ineach_spans
 }
 
 // Simply adds the in_eachs specified in object specs to the ineachspec
@@ -1339,6 +1351,7 @@ fn create_object_instance(loc: Option<ZeroSpan>,
         declloc: loc.unwrap_or(identity.span),
         all_decls,
         identity: identity.clone(),
+        used_ineach_locs: vec![],
         key: StructureKey::null(),
         kind,
         definitions: vec![],
@@ -1764,45 +1777,55 @@ fn merge_composite_subobjs<'c>(parent_each_stmts: &InEachSpec,
     // TODO: Check collisions of 'name' parameters
 }
 
-// return a tuple (default_map, order)
-// where 'default_map' maps method declarations to declarations they directly
-//     override
+// Maps a method decl to the method definitions it directly overrides, and the method declarations it directly overrides
+type DeclMap<'t> = HashMap<&'t MethodDecl, HashSet<&'t MethodDecl>>;
+
+// return a tuple (default_map, order, declaration_map)
+// where 'default_map' maps method declarations to definitions they directly override
 // and 'order' is a order of methods, with lowest rank being last
+// and 'declaration_map' maps method declarations to the abstract method declarations they directly override
 fn sort_method_decls<'t>(decls: &[(&Rank, &'t MethodDecl)]) ->
-    (HashMap<&'t MethodDecl, HashSet<&'t MethodDecl>>, Vec<&'t MethodDecl>) {
-        trace!("Sorting method declarations: {:?}", decls);
-        let mut rank_to_method: HashMap<&Rank, &MethodDecl>
+    (DeclMap<'t>, Vec<&'t MethodDecl>, DeclMap<'t>) {
+        debug!("Sorting method decls {:?}", decls);
+        let mut rank_to_method_def: HashMap<&Rank, Vec<&MethodDecl>>
             = HashMap::default();
-        let mut conflicting_decls: HashMap<&MethodDecl, Vec<&MethodDecl>>
+        let mut rank_to_method_decl: HashMap<&Rank, Vec<&MethodDecl>>
             = HashMap::default();
+
         for (rank, decl) in decls {
-            if let Some(conflict) = rank_to_method.get(rank) {
-                // Conflicting declarations within one block
-                conflicting_decls.entry(conflict)
-                    .and_modify(|e|e.push(decl))
-                    .or_insert_with(||vec![decl]);
+            if decl.is_abstract() {
+                rank_to_method_decl.entry(rank).or_default().push(*decl);
             } else {
-                rank_to_method.insert(rank, *decl);
+                rank_to_method_def.entry(rank).or_default().push(*decl);
             }
         }
+        trace!("rank-to-method-def is: {:?}, rank-to-method-decl is: {:?}", rank_to_method_def, rank_to_method_decl);
 
-        trace!("Conflicting declarations are: {:?}", conflicting_decls);
-
-        let ranks: HashSet<&Rank> = rank_to_method.keys()
-            .cloned().collect();
-
-        let ancestry: HashMap<&Rank, Vec<&Rank>> = ranks.iter()
-            .map(|r|(*r, ranks.iter().filter(
+        // Ancestry of defs->defs and defs->decls
+        #[allow(clippy::type_complexity)]
+        let (def_ancestry, decl_ancestry): (HashMap<&Rank, Vec<&Rank>>,
+                                            HashMap<&Rank, Vec<&Rank>>) = {
+            let def_ranks: HashSet<&Rank> = rank_to_method_def.keys()
+                .cloned().collect();
+            let decl_ranks: HashSet<&Rank> = rank_to_method_decl.keys()
+                .cloned().collect();
+            let def_ancestry = def_ranks.iter().map(|r|(*r, def_ranks.iter().filter(
                 |r2|r.inferior.contains(&r2.id)).cloned().collect()))
-            .collect();
+                .collect();
+            let decl_ancestry = def_ranks.iter().map(|r|(*r, decl_ranks.iter().filter(
+                |r2|r.inferior.contains(&r2.id)).cloned().collect()))
+                .collect();
+            (def_ancestry, decl_ancestry)
+        };
 
+        trace!("Def ancestry is {:?}", def_ancestry);
         let mut minimal_ancestry: HashMap<&Rank, Vec<&Rank>>
             = HashMap::default();
-        // Get ancestors that are not the ancestor of any ancestor
-        for (rank, ancestors) in &ancestry {
+        // For each rank, map to its first-level ancestry
+        for (rank, ancestors) in &def_ancestry {
             let mut minimal_ancestors = vec![];
             for ancestor in ancestors {
-                if !ancestors.iter().flat_map(|a|ancestry.get(a).unwrap())
+                if !ancestors.iter().flat_map(|a|def_ancestry.get(a).unwrap())
                     .any(|r|r == ancestor) {
                     minimal_ancestors.push(*ancestor);
                 }
@@ -1810,33 +1833,58 @@ fn sort_method_decls<'t>(decls: &[(&Rank, &'t MethodDecl)]) ->
             minimal_ancestry.insert(rank, minimal_ancestors);
         }
 
-        trace!("Minimal ancestors are {:?}", minimal_ancestry);
+        // Map method definitions to abstract decls they override, which none of their minimal ancestors override
+        let mut method_map_decls: DeclMap<'t> = HashMap::default();
+        for (rank, ancestors) in &decl_ancestry {
+            for def in rank_to_method_def.get(rank).unwrap() {
+                method_map_decls.entry(def).or_default();
+                for ancestor in ancestors {
+                    if !minimal_ancestry.get(rank).unwrap().iter().any(
+                        |ma|decl_ancestry.get(ma).unwrap().iter().any(|a|a == ancestor)) {
+                        if let Some(decls) = rank_to_method_decl.get(ancestor) {
+                            method_map_decls.entry(def).or_default().extend(decls.iter());
+                        }
+                    }
+                }
+                // Decls at the same rank are also directly overridden, by definition
+                if let Some(decls) = rank_to_method_decl.get(rank) {
+                    method_map_decls.entry(def).or_default().extend(decls.iter());
+                }
+                trace!("Method {:?} at rank {:?} directly overrides decls {:?}",
+                    def, rank, method_map_decls.get(def).unwrap());
+            }
+        }
 
-        // TODO: there is an error that is missed here,
-        // see L463 of traits.py in dmlc source
-        // (or, if it has moved, the EAMBINH report in the
-        // sort_method_implementations function in the same
-        // file)
+        trace!("Minimal ancestry is {:?}", minimal_ancestry);
+        // Map method definitions to those that they directly override
+        let mut method_map_defs: DeclMap<'t> = HashMap::default();
 
-        let method_map: HashMap<&'t MethodDecl, HashSet<&'t MethodDecl>>
-            = rank_to_method.iter()
-            .map(|(r, m)|(*m,
-                          minimal_ancestry[r].iter()
-                          .map(|subrank|&rank_to_method[*subrank])
-                          .cloned().collect()))
-            .collect();
-        trace!("Default map is {:?}", method_map);
-        let method_order = topsort(&method_map).unwrap_sorted();
+        for (r, defs) in &rank_to_method_def {
+            for def in defs {
+                trace!("Handling method {:?} at rank {:?}", def, r);
+                // Ensure the entry exists for later unwraps
+                let mdefs = method_map_defs.entry(def).or_default();
+                for subrank in &minimal_ancestry[r] {
+                    let subdefs = rank_to_method_def.get(subrank).unwrap();
+                    trace!("Set as overriding {:?}", subdefs);
+                    mdefs.extend(subdefs.iter());
+                }
+            }
+        }
+            
+        trace!("Default map is {:?}", method_map_defs);
+        trace!("Abstract override map is {:?}", method_map_decls);
+        let method_order = topsort(&method_map_defs).unwrap_sorted();
         trace!("Method order is {:?}", method_order);
-        (method_map, method_order)
+        (method_map_defs, method_order, method_map_decls)
 }
 
 fn add_methods(obj: &mut DMLCompositeObject,
                methods: MethodMapping,
-               method_map: &HashMap<String, Arc<DMLTrait>>,
+               decl_to_trait_map: &HashMap<MethodDecl, Arc<DMLTrait>>,
                report: &mut Vec<DMLError>) {
     debug!("Adding methods to {}", obj.identity());
-    trace!("Shared methods are {:?}", method_map);
+
     for (name, (used, regular_decls)) in methods {
         if !used {
             trace!("Skipped {} name, declaration unused", name);
@@ -1844,63 +1892,56 @@ fn add_methods(obj: &mut DMLCompositeObject,
         }
         trace!("Handling method {}, which is declared by {:?}",
                name, regular_decls);
-        let mut all_decls: Vec<(&Rank, &MethodDecl)>
+        let all_decls: Vec<(&Rank, &MethodDecl)>
             = regular_decls.iter().map(|(a, b)|(a, b)).collect();
-        // TODO: If we obtain a shared method that is not in a trait
-        // does this mean it was declared in a non-shared context,
-        // and if so, do we need to report it?
-        if let Some(trait_impl) = method_map.get(&name) {
-            if let Some(trait_decl) = trait_impl.get_method(&name) {
-                all_decls.push((&trait_impl.rank, trait_decl));
-            }
-        }
-        trace!("All possible declarations are: {:?}", all_decls);
-        let (default_map, method_order) = sort_method_decls(&all_decls);
-        trace!("Method order is: {:?}", method_order);
+
+        let (default_map, method_order, decl_map) = sort_method_decls(&all_decls);
         let mut decl_to_method: HashMap<MethodDecl, Arc<DMLMethodRef>>
             = HashMap::default();
-        for method in method_order.iter().rev() {
-            debug!("Handling overrides of {:?}", method);
-            // Guaranteed, every val in method order is a key in default_map
-            let default_decls = default_map.get(method).unwrap();
-            if method.is_shared() {
-                trace!("Was a shared method, deferred");
-                let conflicting_decls : Vec<&MethodDecl> = default_decls.iter()
-                    .filter(|d|!d.is_shared()).cloned().collect();
-                if !conflicting_decls.is_empty() {
-                    report.push(DMLError {
-                        span: method.name.span,
-                        description:
-                        "Shared method cannot override non-shared method"
-                            .to_string(),
-                        related: conflicting_decls.iter().map(
-                            |d|(d.name.span,
-                                "Overrides this non-shared method".to_string()))
-                            .collect(),
-                        severity: Some(DiagnosticSeverity::ERROR),
-                    });
-                }
-                // The actual shared method "codegenning" is done later
-                // since it is not stored with the containing object
-                let new_method = Arc::new(
-                    DMLMethodRef::TraitMethod(
-                        Arc::clone(method_map.get(method.identity()).unwrap()),
-                        (*method).clone()));
-                trace!("Inserted dependent methoddecl {:?}", new_method);
-                decl_to_method.insert((*method).clone(), new_method);
+        // Create abstract methodrefs for declarations first, order does not matter
+        for method in decl_map.values().flatten() {
+            if decl_to_method.contains_key(method) {
                 continue;
             }
+            let template_ref = decl_to_trait_map
+                .get(method)
+                .map(Arc::clone);
+
+            let new_method = Arc::new(
+                DMLMethodRef {
+                    template_ref,
+                    concrete_decl: DMLConcreteMethod {
+                        decl: (*method).clone(),
+                        default_call: None,
+                    },
+                }
+            );
+            trace!("Inserted dependent methoddecl {:?}", new_method);
+            decl_to_method.insert((*method).clone(), new_method);
+        }
+        trace!("Abstract decl methods are {:?}", decl_to_method);
+        for method in method_order.iter().rev() {
+            trace!("Handling overrides of {:?}", method);
+            // Guaranteed by topsort
             let defaults = default_map.get(method).unwrap();
-            let default = if defaults.len() == 1 {
-                let decl = defaults.iter().next().unwrap();
-                trace!("Default call decl is {:?}", decl);
-                trace!("And the current map is {:?}", decl_to_method);
-                Some(decl_to_method.get(decl).unwrap())
-            } else {
-                None
+            let default = match defaults.len() {
+                1 => {
+                    let decl = defaults.iter().next().unwrap();
+                    Some(DefaultCallReference::Valid(Arc::clone(decl_to_method.get(decl).unwrap())))
+                },
+                0 => decl_map.get(method).and_then(|decls| {
+                    match decls.len()  {
+                        1 => Some(DefaultCallReference::Abstract(
+                            Arc::clone(decls.iter().next().and_then(|d|decl_to_method.get(d)).unwrap()))),
+                        // The case of conflicting abstract declarations is handled elsewhere
+                        _ => None,
+                    }
+                }),
+                _ => Some(DefaultCallReference::Ambiguous(
+                    defaults.iter().map(|d| Arc::clone(decl_to_method.get(d).unwrap())).collect())),
             };
             trace!("Default call would be {:?}", default);
-            for decl in default_map.get(method).unwrap() {
+            for decl in defaults.iter().chain(decl_map.get(method).unwrap_or(&HashSet::default())) {
                 // TODO: I suspect we could improve this error message in cases
                 // where several similar incorrect overrides are made over one
                 // method
@@ -1919,21 +1960,28 @@ fn add_methods(obj: &mut DMLCompositeObject,
                     });
                 }
 
-                if !decl.is_shared() {
-                    method.check_override(*decl, report);
-                }
+                 method.check_override(*decl, report);
             }
 
-            let new_method = Arc::new(DMLMethodRef::ConcreteMethod(
-                DMLConcreteMethod {
-                    decl: (*method).clone(),
-                    default_call: default.cloned(),
-                }));
+            let template_ref = decl_to_trait_map
+                .get(method)
+                .map(Arc::clone);
+
+            let new_method = Arc::new(
+                DMLMethodRef {
+                    template_ref,
+                    concrete_decl: DMLConcreteMethod {
+                        decl: (*method).clone(),
+                        default_call: default,
+                    },
+                }
+            );
             trace!("Inserted dependent methoddecl {:?}", new_method);
             decl_to_method.insert((*method).clone(), new_method);
         }
         trace!("Complete decl-to-method map is: {:?}", decl_to_method);
-        let to_add = decl_to_method.get(method_order.first().unwrap()).unwrap();
+        // If there are no definitions, skip to next method (declarations are separately added above)
+        let Some(to_add) = method_order.first().map(|m|decl_to_method.get(m).unwrap()) else { continue; };
         debug!("Added {:?}", to_add.identity());
         obj.add_shallow_component(DMLShallowObjectVariant::Method(
             Arc::clone(to_add)));
@@ -1944,7 +1992,7 @@ fn check_trait_overrides(obj: &DMLCompositeObject,
                          container: &StructureContainer,
                          report: &mut Vec<DMLError>) {
     debug!("Checking traits overrides on {:?}", obj.identity);
-    debug!("all symbols are: {:?}",
+    trace!("all symbols are: {:?}",
            obj.components.keys().collect::<Vec<&String>>());
     fn report_collision(name: &str,
                         srcloc: ZeroSpan,
@@ -2014,7 +2062,13 @@ fn check_trait_overrides(obj: &DMLCompositeObject,
                                 variant: DMLShallowObjectVariant::Method(m),
                                 ..
                             }) = collision {
-                                m.check_override(meth, report);
+                                // Special case, we are allowed conflict with
+                                // an abstract method if we can override it
+                                if m.is_abstract() {
+                                    meth.check_override(m.get_decl(), report);
+                                } else {
+                                    m.check_override(meth, report);
+                                }
                             }
                     }
                 } else if let TraitMemberKind::Method(meth) = member {
@@ -2184,10 +2238,10 @@ pub fn make_object(loc: ZeroSpan,
     debug!("Making object {}", identity.val);
 
     let mut each_stmts = parent_each_stmts.clone();
-    add_template_specs(&mut obj_specs, &each_stmts);
+    let used_ineach_locs = add_template_specs(&mut obj_specs, &each_stmts);
     add_template_ineachs(&obj_specs, &mut each_stmts);
 
-    debug!("Has specs at {:?}", obj_specs.iter().map(|rc|rc.loc)
+    trace!("Has specs at {:?}", obj_specs.iter().map(|rc|rc.loc)
           .collect::<Vec<ZeroSpan>>());
 
     trace!("Complete specs are: {:?}",
@@ -2205,7 +2259,7 @@ pub fn make_object(loc: ZeroSpan,
          saveds, sessions,
          methods, hooks,
          subobjs) = collect_symbols(&parameters, &obj_specs, report);
-    debug!("All local symbols are: {:?}",
+    trace!("All local symbols are: {:?}",
            symbols.keys().map(|k|k.as_str()).collect::<Vec<&str>>());
 
     let new_obj_key = create_object_instance(Some(loc),
@@ -2220,6 +2274,7 @@ pub fn make_object(loc: ZeroSpan,
     {
         let new_obj = container.get_mut(new_obj_key).unwrap();
         new_obj.definitions = obj_specs.clone();
+        new_obj.used_ineach_locs = used_ineach_locs;
         add_templates(new_obj, &obj_specs);
         add_constants(new_obj, constants);
         add_parameters(new_obj, parameters);
@@ -2232,10 +2287,12 @@ pub fn make_object(loc: ZeroSpan,
     add_subobjs(new_obj_key, subobj_keys, container);
     {
         let new_obj = container.get_mut(new_obj_key).unwrap();
-        let trait_method_map = merge_impl_maps(&identity.val, &loc,
-                                               new_obj.templates.values().map(
-                                                   |t|&t.traitspec),
-                                               report);
+        let trait_method_map = new_obj.templates.values()
+            .flat_map(|t|t.traitspec.methods.values()
+                      .map(|m|(m.decl.clone(), Arc::clone(&t.traitspec)))
+                      .collect::<Vec<_>>())
+            .collect();
+
         add_methods(new_obj, methods, &trait_method_map, report);
     }
     check_trait_overrides(container.get(new_obj_key).unwrap(),

@@ -309,7 +309,7 @@ pub fn dependencies<'t>(statements: &'t StatementSpec,
             InferiorVariant::Import(imp) => {
                 let name = imp_map.get(&imp.obj)
                     .map_or_else(||imp.obj.imported_name(), |s|s.as_str());
-                debug!("Mapped {:?} to {:?}", imp.obj, name);
+                debug!("Mapped import {:?} to {:?}", imp.obj, name);
                 inferior.insert(name,
                                 InferiorVariant::Import(imp));
                 if imp.cond == ExistCondition::Always {
@@ -612,7 +612,7 @@ pub fn rank_templates_aux<'t>(mut templates: HashMap<&'t str,
                                     DMLError {
                                         span: *span,
                                         description: format!(
-                                            "No template; '{}'",
+                                            "No template named '{}'",
                                             missing_template_name),
                                         related: vec![],
                                         severity: Some(
@@ -626,6 +626,42 @@ pub fn rank_templates_aux<'t>(mut templates: HashMap<&'t str,
                     InferiorVariant::ImplicitIs(_) => {
                         debug!("Implicit import of '{}' missing and intentionally ignored",
                                missing_template_name);
+                    },
+                    InferiorVariant::InEach(decl) => {
+                        if !BUILTIN_TEMPLATES.iter().any(
+                            |name|name==missing_template_name) {
+                            // The 'is' may contain more names than we
+                            // are looking for, find the particular name
+                            // that matches and use that span
+                            // Because the same name could be used multiple
+                            // times, but this only causes inferior binding
+                            // report one error per such span
+
+                            let spans: Vec<_> = decl.obj.spec.iter()
+                                .filter(|dmlname|
+                                        &dmlname.val == missing_template_name)
+                                .map(|dmlname|dmlname.span())
+                                .collect();
+                            if spans.is_empty() {
+                                internal_error!("Unexpectedly no name \
+                                                 matching missing template \
+                                                 in {:?} (wanted {})",
+                                                decl, missing_template_name);
+                                continue;
+                            }
+                            for span in spans {
+                                report.push(
+                                    DMLError {
+                                        span: *span,
+                                        description: format!(
+                                            "No template; '{}'",
+                                            missing_template_name),
+                                        related: vec![],
+                                        severity: Some(
+                                            DiagnosticSeverity::ERROR),
+                                    });
+                            }
+                        }
                     },
                     inf => {
                         internal_error!(

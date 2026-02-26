@@ -2,7 +2,7 @@
 //  SPDX-License-Identifier: Apache-2.0 and MIT
 //! Stores currently completed analysis.
 
-use log::{debug, trace, info};
+use log::{debug, info, trace};
 
 use crossbeam::channel;
 
@@ -14,13 +14,12 @@ use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
 
 use crate::actions::ContextDefinition;
-use crate::analysis::scope::{ContextedSymbol, ContextKey};
+use crate::analysis::scope::ContextKey;
 use crate::analysis::structure::objects::Import;
-use crate::analysis::{IsolatedAnalysis, DeviceAnalysis, DMLError};
+use crate::analysis::{DMLError, DeviceAnalysis, IsolatedAnalysis};
 
 use crate::lsp_data::*;
 use crate::analysis::parsing::tree::{ZeroSpan, ZeroFilePosition};
-use crate::analysis::reference::Reference;
 use crate::server::ServerToHandle;
 
 use crate::lint::LinterAnalysis;
@@ -211,27 +210,6 @@ impl AnalysisStorage {
         }
     }
 
-    pub fn context_symbol_at_pos<'t>(&'t self, pos: &ZeroFilePosition) ->
-        Result<Option<ContextedSymbol<'t>>, AnalysisLookupError> {
-            let canon_path = CanonPath::from_path_buf(pos.path())
-                .ok_or(AnalysisLookupError::NoFile)?;
-            let analysis = self.get_isolated_analysis(&canon_path)?;
-            let mut context = analysis.lookup_context_symbol(pos);
-            // Patch out leading 'device' context, unneeded
-            if let Some(ref mut ic) = context {
-                ic.remove_head_context();
-            }
-            Ok(context)
-        }
-
-    pub fn reference_at_pos(&self, pos: &ZeroFilePosition) ->
-        Result<Option<&Reference>, AnalysisLookupError> {
-            let canon_path = CanonPath::from_path_buf(pos.path())
-                .ok_or(AnalysisLookupError::NoFile)?;
-            let analysis = self.get_isolated_analysis(&canon_path)?;
-            Ok(analysis.lookup_reference(pos))
-        }
-
     pub fn first_context_at_pos(&self, pos: &ZeroFilePosition) ->
         Result<Option<ContextKey>, AnalysisLookupError> {
             let canon_path = CanonPath::from_path_buf(pos.path())
@@ -306,7 +284,7 @@ impl AnalysisStorage {
             };
         contexts.insert(None);
 
-        debug!("Full contexts for {:?} are {:?}", path, contexts);
+        trace!("Full contexts for {:?} are {:?}", path, contexts);
 
         if self.get_isolated_analysis(path).map_or(
             false, |a|a.is_device_file()) {
@@ -489,7 +467,7 @@ impl AnalysisStorage {
     pub fn update_analysis(&mut self, resolver: &PathResolver) {
         let mut device_analysis = vec![];
         let mut results_holder = vec![];
-        debug!("Updating stored analysises");
+        trace!("Updating stored analysises");
         for r in self.results.try_iter() {
             results_holder.push(r);
         }
@@ -566,7 +544,7 @@ impl AnalysisStorage {
                             |i|!timestamp_is_newer(timestamp,
                                                    i.timestamp))
                             .unwrap_or(false)) {
-                        debug!("was not invalidated by recent \
+                        trace!("was not invalidated by recent \
                                 isolated analysis");
                         self.device_analysis.insert(canon_path,
                                                     TimestampedStorage {
@@ -628,7 +606,7 @@ impl AnalysisStorage {
     fn update_last_use(&self, path: &CanonPath) {
         if let Some(mut_lock) = self.last_use.get(path) {
             let now = SystemTime::now();
-            debug!("Updated last-use of {} to {:?}", path.as_str(), now);
+            trace!("Updated last-use of {} to {:?}", path.as_str(), now);
             *mut_lock.lock().unwrap() = now;
         }
     }
@@ -677,7 +655,7 @@ impl AnalysisStorage {
         if let Some(device_timestamp) = self.device_analysis.get(path)
             .map(|device|device.timestamp)
         {
-            debug!("Timestamp is {:?}", device_timestamp);
+            trace!("Timestamp is {:?}", device_timestamp);
             for dependee_path in self.all_dependencies(path, Some(path)) {
                 // NOTE: This means that calling this function with a missing
                 // isolated analysis will not tell you the device needs to be
