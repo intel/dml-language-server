@@ -40,6 +40,7 @@ struct Args {
     lint_cfg_path: Option<PathBuf>,
     test: bool,
     quiet: bool,
+    scip_output: Option<PathBuf>,
 }
 
 fn parse_args() -> Args {
@@ -95,6 +96,11 @@ fn parse_args() -> Args {
              .action(ArgAction::Set)
              .value_parser(clap::value_parser!(PathBuf))
              .required(false))
+        .arg(Arg::new("scip-output").long("scip-output")
+             .help("Export SCIP index to the specified file after analysis")
+             .action(ArgAction::Set)
+             .value_parser(clap::value_parser!(PathBuf))
+             .required(false))
         .arg(arg!(<PATH> ... "DML files to analyze")
              .value_parser(clap::value_parser!(PathBuf)))
         .arg_required_else_help(false)
@@ -118,7 +124,9 @@ fn parse_args() -> Args {
         linting_enabled: args.get_one::<bool>("linting-enabled")
             .cloned(),
         lint_cfg_path: args.get_one::<PathBuf>("lint-cfg-path")
-            .cloned()
+            .cloned(),
+        scip_output: args.get_one::<PathBuf>("scip-output")
+            .cloned(),
     }
 }
 
@@ -181,6 +189,33 @@ fn main_inner() -> Result<(), i32> {
         }
         if arg.test && !dlsclient.no_errors() {
             exit_code = Err(1);
+        }
+
+        // Export SCIP if requested
+        if let Some(scip_path) = &arg.scip_output {
+            println!("Exporting SCIP index to {:?}", scip_path);
+            let scip_output_str = scip_path.to_string_lossy().to_string();
+            let device_paths: Vec<String> = arg.files.iter()
+                .filter_map(|f| f.canonicalize().ok())
+                .map(|p| p.to_string_lossy().to_string())
+                .collect();
+            match dlsclient.export_scip(device_paths, scip_output_str) {
+                Ok(result) => {
+                    if result.success {
+                        println!("SCIP export complete: {} document(s) written",
+                                 result.document_count);
+                    } else {
+                        let err_msg = result.error.unwrap_or_else(
+                            || "Unknown error".to_string());
+                        eprintln!("SCIP export failed: {}", err_msg);
+                        exit_code = Err(1);
+                    }
+                },
+                Err(e) => {
+                    eprintln!("SCIP export request failed: {}", e);
+                    exit_code = Err(1);
+                }
+            }
         }
     }
 

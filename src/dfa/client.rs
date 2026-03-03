@@ -414,4 +414,37 @@ impl ClientInterface {
         self.server.wait_timeout(Duration::from_millis(1000))?;
         Ok(())
     }
+
+    pub fn export_scip(&mut self,
+                       device_paths: Vec<String>,
+                       output_path: String)
+                       -> anyhow::Result<crate::actions::requests::ExportScipResult> {
+        debug!("Sending SCIP export request for {:?} -> {}", device_paths, output_path);
+        self.send(
+            cmd::export_scip(device_paths, output_path).to_string()
+        )?;
+        // Wait for the response
+        loop {
+            match self.receive_maybe() {
+                Ok(ServerMessage::Response(value)) => {
+                    let result: crate::actions::requests::ExportScipResult
+                        = serde_json::from_value(value)
+                        .map_err(|e| RpcErrorKind::from(e.to_string()))?;
+                    return Ok(result);
+                },
+                Ok(ServerMessage::Error(e)) => {
+                    return Err(anyhow::anyhow!(
+                        "Server exited during SCIP export: {:?}", e));
+                },
+                Ok(_) => {
+                    // Skip other messages (diagnostics, progress, etc.)
+                    continue;
+                },
+                Err(e) => {
+                    trace!("Skipping message during SCIP export wait: {:?}", e);
+                    continue;
+                }
+            }
+        }
+    }
 }

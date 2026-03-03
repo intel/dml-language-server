@@ -942,6 +942,145 @@ impl RequestAction for GetKnownContextsRequest {
     }
 }
 
+// ---- SCIP Export Request ----
+
+#[derive(Debug, Clone)]
+pub struct ExportScipRequest;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExportScipParams {
+    /// Device paths to export SCIP for. If empty, exports all known devices.
+    pub devices: Option<Vec<lsp_types::Uri>>,
+    /// The file path where the SCIP index should be written.
+    pub output_path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExportScipResult {
+    /// Whether the export succeeded.
+    pub success: bool,
+    /// Number of documents in the exported index.
+    pub document_count: usize,
+    /// Error message, if any.
+    pub error: Option<String>,
+}
+
+impl LSPRequest for ExportScipRequest {
+    type Params = ExportScipParams;
+    type Result = ExportScipResult;
+
+    const METHOD: &'static str = "$/exportScip";
+}
+
+impl RequestAction for ExportScipRequest {
+    type Response = ExportScipResult;
+
+    fn timeout() -> std::time::Duration {
+        crate::server::dispatch::DEFAULT_REQUEST_TIMEOUT * 30
+    }
+
+    fn fallback_response() -> Result<Self::Response, ResponseError> {
+        Ok(ExportScipResult {
+            success: false,
+            document_count: 0,
+            error: Some("Request timed out".to_string()),
+        })
+    }
+
+    fn get_identifier(params: &Self::Params) -> String {
+        Self::request_identifier(&params.output_path)
+    }
+
+    fn handle<O: Output>(
+        ctx: InitActionContext<O>,
+        params: Self::Params,
+    ) -> Result<Self::Response, ResponseError> {
+        info!("Handling SCIP export request to {}", params.output_path);
+
+        // Determine which device paths to export
+        let device_paths: Vec<CanonPath> =
+            if let Some(devices) = params.devices {
+                devices.iter().filter_map(
+                    |uri| parse_file_path!(&uri, "ExportScip")
+                        .ok()
+                        .and_then(CanonPath::from_path_buf))
+                    .collect()
+            } else {
+                vec![]
+            };
+
+        // Wait for device analyses to be ready
+        if !device_paths.is_empty() {
+            ctx.wait_for_state(
+                AnalysisProgressKind::Device,
+                AnalysisWaitKind::Work,
+                AnalysisCoverageSpec::Paths(device_paths.clone())).ok();
+        } else {
+            ctx.wait_for_state(
+                AnalysisProgressKind::Device,
+                AnalysisWaitKind::Work,
+                AnalysisCoverageSpec::All).ok();
+        }
+
+        let analysis = ctx.analysis.lock().unwrap();
+
+        // Collect device analyses
+        let devices: Vec<&crate::analysis::DeviceAnalysis> =
+            if device_paths.is_empty() {
+                // Export all device analyses
+                analysis.device_analysis.values()
+                    .map(|ts| &ts.stored)
+                    .collect()
+            } else {
+                device_paths.iter().filter_map(|path| {
+                    analysis.get_device_analysis(path).ok()
+                }).collect()
+            };
+
+        if devices.is_empty() {
+            return Ok(ExportScipResult {
+                success: false,
+                document_count: 0,
+                error: Some("No device analyses found".to_string()),
+            });
+        }
+
+        info!("Exporting SCIP for {} device(s)", devices.len());
+
+        // Determine project root from workspaces
+        let project_root = ctx.workspace_roots
+            .lock()
+            .unwrap()
+            .first()
+            .and_then(|ws| parse_file_path!(&ws.uri, "ExportScip").ok())
+            .unwrap_or_else(|| std::path::PathBuf::from("."));
+
+        let index = crate::scip::build_scip_index(&devices, &project_root);
+        let doc_count = index.documents.len();
+
+        let output = std::path::Path::new(&params.output_path);
+        match crate::scip::write_scip_to_file(index, output) {
+            Ok(()) => {
+                info!("SCIP export complete: {} documents written to {}",
+                      doc_count, params.output_path);
+                Ok(ExportScipResult {
+                    success: true,
+                    document_count: doc_count,
+                    error: None,
+                })
+            },
+            Err(e) => {
+                error!("SCIP export failed: {}", e);
+                Ok(ExportScipResult {
+                    success: false,
+                    document_count: 0,
+                    error: Some(e),
+                })
+            }
+        }
+    }
+}
+
 /// Server-to-client requests
 impl SentRequest for RegisterCapability {
     type Response = <Self as lsp_data::request::Request>::Result;

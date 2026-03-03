@@ -38,6 +38,7 @@ pub mod dfa;
 pub mod file_management;
 pub mod lint;
 pub mod lsp_data;
+pub mod scip;
 pub mod server;
 pub mod span;
 pub mod utility;
