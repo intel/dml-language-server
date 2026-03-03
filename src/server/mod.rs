@@ -594,7 +594,8 @@ impl<O: Output> LsService<O> {
                 requests::References,
                 requests::Completion,
                 requests::CodeLensRequest,
-                requests::GetKnownContextsRequest;
+                requests::GetKnownContextsRequest,
+                requests::ExportScipRequest;
         );
         Ok(())
     }
