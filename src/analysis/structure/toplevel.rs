@@ -5,15 +5,7 @@ use std::path::PathBuf;
 
 use log::trace;
 
-use crate::analysis::structure::objects::{Bitorder, CBlock, CompositeObject,
-                                          CompObjectKind, Constant, Device,
-                                          DMLObject, DMLStatement, Error,
-                                          make_statements, Hook,
-                                          Loggroup, Import, InEach,
-                                          Instantiation, Method, MethodModifier,
-                                          Export, Parameter, Statements,
-                                          Template, Typedef,
-                                          Variable, Version, ToStructure};
+use crate::analysis::structure::objects::{Bitorder, CBlock, CompObjectKind, CompositeObject, Constant, DMLObject, DMLStatement, Device, Error, Export, Hook, Import, InEach, Instantiation, Loggroup, Method, MethodModifier, Parameter, Statements, Template, ToStructure, Typedef, Variable, Version, make_statements};
 use crate::analysis::structure::expressions::{Expression};
 use crate::analysis::FileSpec;
 use crate::analysis::parsing::tree::{ZeroRange, ZeroSpan, TreeElement};
@@ -240,6 +232,9 @@ pub struct StatementSpec {
     pub exports: Vec<ObjectDecl<Export>>,
     pub hooks: Vec<ObjectDecl<Hook>>,
     pub instantiations: Vec<ObjectDecl<Instantiation>>,
+    // Templates are actually forbidden except in toplevel, but we keep this here
+    // in order to be able to track them anyway
+    pub templates: Vec<ObjectDecl<Template>>,
     // It is a bit strange to keep this here, but we need this
     // in the contexts where we only have a spec. It is empty everywhere
     // except toplevel
@@ -266,11 +261,27 @@ impl ScopeContainer for StatementSpec {
         let mut scopes = self.methods.to_scopes();
         scopes.append(&mut self.objects.to_scopes());
         scopes.append(&mut self.ineachs.to_scopes());
+        scopes.append(&mut self.templates.to_scopes());
         scopes
     }
 }
 
 impl StatementSpec {
+    pub fn gather_templates(&self) -> Vec<&ObjectDecl<Template>> {
+        let mut templates = vec![];
+        for obj in &self.objects {
+            templates.append(&mut obj.spec.gather_templates());
+        }
+        for obj in &self.ineachs {
+            templates.append(&mut obj.spec.gather_templates());
+        }
+        for obj in &self.templates {
+            templates.append(&mut obj.spec.gather_templates());
+        }
+        templates.extend(&self.templates);
+        templates
+    }
+
     pub fn empty() -> StatementSpec {
         StatementSpec {
             objects: vec![],
@@ -285,6 +296,7 @@ impl StatementSpec {
             ineachs: vec![],
             exports: vec![],
             imports: vec![],
+            templates: vec![],
         }
     }
     pub fn consume(mut self,
@@ -298,6 +310,7 @@ impl StatementSpec {
                    ineachs: &mut Vec<ObjectDecl<InEach>>,
                    exports: &mut Vec<ObjectDecl<Export>>,
                    errors: &mut Vec<ObjectDecl<Error>>,
+                   templates: &mut Vec<ObjectDecl<Template>>,
                    imports: &mut Vec<ObjectDecl<Import>>) {
         objects.append(&mut self.objects);
         constants.append(&mut self.constants);
@@ -310,6 +323,7 @@ impl StatementSpec {
         exports.append(&mut self.exports);
         errors.append(&mut self.errors);
         imports.append(&mut self.imports);
+        templates.append(&mut self.templates);
     }
 }
 
@@ -331,6 +345,7 @@ fn flatten_hashif_branch(context: StatementContext,
     let mut exports = vec![];
     let mut hooks = vec![];
     let mut errors = vec![];
+    let mut templates = vec![];
     for inst in &stmnts.instantiations {
         instantiations.push(ObjectDecl::depending_on_context(
             inst, context, &conds));
@@ -391,13 +406,27 @@ fn flatten_hashif_branch(context: StatementContext,
                                 "Extern declaration not allowed in {}",
                                 context),
                         }),
-                    DMLObject::Template(tmpl) =>
+                    DMLObject::Template(tmpl) => {
+                        // Invalid place to declare a template, but track it anyway
+                        // to allow better feedback while editing
+                        let subspec = flatten_hashif_branch(
+                            StatementContext::Template,
+                            &tmpl.statements,
+                            vec![],
+                            report);
+                        templates.push(
+                            ObjectDecl {
+                                cond: ExistCondition::Always,
+                                obj: tmpl.clone(),
+                                spec: subspec,
+                            });
                         report.push(LocalDMLError {
                             range: tmpl.object.name.span.range,
                             description: format!(
                                 "Template declaration not allowed in {}",
                                 context),
-                        }),
+                        })
+                    },
                     DMLObject::Header(block) =>
                         report.push(LocalDMLError {
                             range: block.span.range,
@@ -512,6 +541,7 @@ fn flatten_hashif_branch(context: StatementContext,
                                        &mut ineachs,
                                        &mut exports,
                                        &mut errors,
+                                       &mut templates,
                                        &mut vec![]);
                 falsebranchspec.consume(&mut objects,
                                         &mut sessions,
@@ -523,6 +553,7 @@ fn flatten_hashif_branch(context: StatementContext,
                                         &mut ineachs,
                                         &mut exports,
                                         &mut errors,
+                                        &mut templates,
                                         &mut vec![]);
             },
         }
@@ -539,6 +570,7 @@ fn flatten_hashif_branch(context: StatementContext,
         hooks,
         instantiations,
         errors,
+        templates,
         imports: vec![],
     }
 }
@@ -557,7 +589,6 @@ pub struct TopLevel {
     pub cblocks: Vec<CBlock>,
     pub externs: Vec<Variable>,
     pub typedefs: Vec<Typedef>,
-    pub templates: Vec<ObjectDecl<Template>>,
     pub references: Vec<Reference>,
     pub spec: StatementSpec,
     // The philosophy for duplicate templates is to track them,
@@ -592,14 +623,10 @@ impl Scope for TopLevel {
         &self.references
     }
     fn defined_scopes(&self) -> Vec<&dyn Scope> {
-        let mut scopes = self.spec.scopes();
-        scopes.append(&mut self.templates.to_scopes());
-        scopes
+        self.spec.scopes()
     }
     fn defined_symbols(&self) -> Vec<&dyn StructureSymbol> {
-        let mut symbols = self.spec.symbols();
-        symbols.append(&mut self.templates.to_symbols());
-        symbols
+        self.spec.symbols()
     }
 }
 
@@ -615,7 +642,7 @@ impl fmt::Display for TopLevel {
             writeln!(f, "\tdevice: {}", dev.name.val)?;
         }
         write!(f, "\ttemplates: [")?;
-        for template in &self.templates {
+        for template in &self.spec.templates {
             write!(f, "{}, ", template.obj.object.name.val)?;
         }
         writeln!(f, "]")?;
@@ -626,6 +653,10 @@ impl fmt::Display for TopLevel {
 
 // Rudimentary checks for toplevel only
 impl TopLevel {
+    pub fn gather_templates(&self) -> Vec<&ObjectDecl<Template>> {
+        self.spec.gather_templates()
+    }
+
     pub fn from_ast(ast: &structure::TopAst,
                     report: &mut Vec<LocalDMLError>,
                     filespec: FileSpec<'_>)
@@ -794,6 +825,7 @@ impl TopLevel {
                                            &mut ineachs,
                                            &mut exports,
                                            &mut errors,
+                                           &mut templates,
                                            &mut vec![]);
                     falsebranchspec.consume(&mut objects,
                                             &mut sessions,
@@ -805,6 +837,7 @@ impl TopLevel {
                                             &mut ineachs,
                                             &mut exports,
                                             &mut errors,
+                                            &mut templates,
                                             &mut vec![]);
                 },
             }
@@ -812,7 +845,8 @@ impl TopLevel {
 
         let spec = StatementSpec {
             objects, instantiations, ineachs, errors, imports,
-            saveds, sessions, params, constants, methods, exports, hooks
+            saveds, sessions, params, constants, methods, exports, hooks,
+            templates,
         };
         let mut references = vec![];
         ast.references(&mut references, filespec);
@@ -834,7 +868,6 @@ impl TopLevel {
             externs,
             typedefs,
             bitorder,
-            templates,
             loggroups,
             spec,
             references,
