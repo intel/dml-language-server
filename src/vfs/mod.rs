@@ -1,6 +1,6 @@
 //  © 2024 Intel Corporation
 //  SPDX-License-Identifier: Apache-2.0 and MIT
-use log::trace;
+use crate::logging::trace;
 
 use std::collections::HashMap;
 use std::cmp::Ordering;

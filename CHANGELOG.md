@@ -24,6 +24,7 @@
 - The DLS will now correctly report missing template names in 'in each' constructs
 - Fixed error where the DLS would fail to match references from within in a template
   to symbols defined in parents of objects instantiating the template
+- Added environment variable to control max per-log output length for most logging from the DLS, defaulting to 1000 characters.
 
 ## 0.9.17
 - Fixed linter wrongly throwing an error on space after `defined` keyword

@@ -21,7 +21,7 @@ use std::sync::Mutex;
 
 use lsp_types::{DiagnosticSeverity};
 use logos::Logos;
-use log::{debug, error, info, trace};
+use crate::logging::{debug, error, info, trace};
 use rayon::prelude::*;
 
 use crate::actions::SourcedDMLError;
