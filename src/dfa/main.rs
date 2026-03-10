@@ -169,11 +169,9 @@ fn main_inner() -> Result<(), i32> {
         }
 
         dlsclient.wait_for_analysis().map_err(
-            |e|match e {
-                ExitStatus::Exited(u) => u.try_into().unwrap(),
-                ExitStatus::Signaled(u) => u.into(),
-                ExitStatus::Other(i) => i,
-                ExitStatus::Undetermined => -1,
+            |e|match e.code() {
+                Some(code) => code as i32,
+                None => -1,
             })?;
 
         if !arg.quiet {
