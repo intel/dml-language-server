@@ -337,8 +337,7 @@ impl Parse<BaseTypeContent> for BitfieldsContent {
                                                   TokenKind::IntConstant);
         let lbrace = new_context.expect_next_kind(stream, TokenKind::LBrace);
         let mut fields = vec![];
-        while new_context.peek_kind(stream).map_or(
-            false,
+        while new_context.peek_kind(stream).is_some_and(
             CDecl::first_token_matcher) {
             fields.push(BitfieldsDeclContent::parse(
                 &list_context, stream, file_info));
@@ -450,8 +449,7 @@ impl Parse<BaseTypeContent> for HookTypeContent {
         let hook = new_context.next_leaf(stream);
         let lparen = new_context.expect_next_kind(stream, TokenKind::LParen);
         let mut args = vec![];
-        while new_context.peek_kind(stream).map_or(
-            false,
+        while new_context.peek_kind(stream).is_some_and(
             CDecl::first_token_matcher) {
             let arg = CDecl::parse(&new_context, stream, file_info);
             let next_kind = new_context.peek_kind(stream);
@@ -459,8 +457,8 @@ impl Parse<BaseTypeContent> for HookTypeContent {
             // if we would loop again, we can catch the case
             // "hook(typ1 typ2)" and correctly expect a comma between the cdecls
             let comma = if next_kind == Some(TokenKind::Comma)
-                ||  new_context.peek_kind(stream).map_or(
-                    false, CDecl::first_token_matcher)  {
+                ||  new_context.peek_kind(stream).is_some_and(
+                    CDecl::first_token_matcher)  {
                 Some(new_context.expect_next_kind(stream, TokenKind::Comma))
             } else {
                 None

@@ -760,7 +760,7 @@ fn check_dmlobject_kind(obj: &DMLObjectContent, _file: &TextFile) ->
             },
             DMLObjectContent::Method(methodcontent) => {
                 if methodcontent.modifier.as_ref().and_then(|m|m.get_token())
-                    .map_or(false, |s|s.kind == TokenKind::Shared) {
+                    .is_some_and(|s|s.kind == TokenKind::Shared) {
                         return vec![LocalDMLError {
                             range: obj.range(),
                             description: "Shared method \
@@ -813,8 +813,8 @@ impl Parse<ObjectStatementsContent> for ObjectStatements {
                     let mut bracecontext = outer.enter_context(
                         understands_rbrace);
                     let mut statements = vec![];
-                    while bracecontext.peek_kind(stream).map_or(
-                        false, |t|dmlobject_first_token_matcher(t)) {
+                    while bracecontext.peek_kind(stream).is_some_and(
+                        |t|dmlobject_first_token_matcher(t)) {
                         statements.push(
                             DMLObject::parse(&bracecontext, stream, file_info));
                     }

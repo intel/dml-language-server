@@ -1154,7 +1154,7 @@ impl ToStructure<structure::ParameterContent> for Parameter {
             .map_or((false, None), |d| match d {
                 structure::ParamDef::Set(assigntok, expr) => {
                     (assigntok.get_token()
-                     .map_or(false, |rt|rt.kind == TokenKind::Default),
+                     .is_some_and(|rt|rt.kind == TokenKind::Default),
                      ExpressionKind::to_expression(expr, report, file).map(
                          |e|ParamValue::Set(e)))
                 },

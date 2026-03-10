@@ -8,14 +8,11 @@
 use dls::config::Config;
 
 use std::path::PathBuf;
-use std::convert::TryInto;
 use std::io::Write;
-use subprocess::ExitStatus;
 
 use clap::{command, arg, Arg, ArgAction};
 
 use dls::dfa::ClientInterface;
-
 
 use log::debug;
 

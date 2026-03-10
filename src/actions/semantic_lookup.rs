@@ -200,7 +200,7 @@ fn get_symbols_of_ref<'t>(reference: &Reference,
             if device.templates.templates.get(sym.name_ref())
                 .and_then(|t|t.location.as_ref())
                 .and_then(|loc|device.template_object_implementation_map.get(loc))
-                .map_or(false, |impls|!impls.is_empty()) {
+                .is_some_and(|impls|!impls.is_empty()) {
                 any_template_used = true;
             }
         }

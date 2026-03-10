@@ -177,7 +177,7 @@ impl Parse<StatementContent> for CompoundContent {
             statements.push(Statement::parse(&statement_context,
                                              stream, file_info));
             cont = statement_context.peek_kind(stream)
-                .map_or(false, dmlstatement_first_token_matcher);
+                .is_some_and(dmlstatement_first_token_matcher);
         }
         let rbrace = new_context.expect_next_kind(stream, TokenKind::RBrace);
         StatementContent::Compound(CompoundContent {
@@ -666,6 +666,7 @@ impl TreeElement for ForPostElement {
     }
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum ForPre {
     Declaration(LeafToken, VarDecl, Option<(LeafToken, Initializer)>),
@@ -966,11 +967,11 @@ fn parse_switchhashif(context: &ParseContext, stream: &mut FileParser<'_>, file_
     let lbrace = outer_context.expect_next_kind(stream, TokenKind::LBrace);
     let mut rbrace_context = outer_context.enter_context(understands_rbrace);
     let mut truecases = vec![];
-    while rbrace_context.peek_kind(stream).map_or(
-        false, |t|matches!(t,
-                           TokenKind::HashIf |
-                           TokenKind::Case |
-                           TokenKind::Default) ||
+    while rbrace_context.peek_kind(stream).is_some_and(
+        |t|matches!(t,
+                    TokenKind::HashIf |
+                    TokenKind::Case |
+                    TokenKind::Default) ||
             dmlstatement_first_token_matcher(t)) {
         truecases.push(parse_switchcase(&rbrace_context, stream, file_info));
     }
@@ -983,11 +984,11 @@ fn parse_switchhashif(context: &ParseContext, stream: &mut FileParser<'_>, file_
             let mut falsecases = vec![];
             let mut rbrace_context = outer_context.enter_context(
                 understands_rbrace);
-            while rbrace_context.peek_kind(stream).map_or(
-                false, |t|matches!(t,
-                                   TokenKind::HashIf |
-                                   TokenKind::Case |
-                                   TokenKind::Default) ||
+            while rbrace_context.peek_kind(stream).is_some_and(
+                |t|matches!(t,
+                            TokenKind::HashIf |
+                            TokenKind::Case |
+                            TokenKind::Default) ||
                     dmlstatement_first_token_matcher(t)){
                 falsecases.push(parse_switchcase(&rbrace_context, stream, file_info));
             }
@@ -1147,11 +1148,11 @@ impl Parse<StatementContent> for SwitchContent {
         let mut rbrace_context = outer_context.enter_context(
             understands_rbrace);
         let mut cases = vec![];
-        while rbrace_context.peek_kind(stream).map_or(
-            false, |t|matches!(t,
-                               TokenKind::HashIf |
-                               TokenKind::Case |
-                               TokenKind::Default) ||
+        while rbrace_context.peek_kind(stream).is_some_and(
+            |t|matches!(t,
+                        TokenKind::HashIf |
+                        TokenKind::Case |
+                        TokenKind::Default) ||
                 dmlstatement_first_token_matcher(t)) {
             cases.push(parse_switchcase(&rbrace_context, stream, file_info));
         }

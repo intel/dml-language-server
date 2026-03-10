@@ -109,6 +109,7 @@ impl SimpleSymbol {
     }
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum SymbolSource {
     DMLObject(DMLObject),
