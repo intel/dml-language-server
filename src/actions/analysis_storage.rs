@@ -178,8 +178,7 @@ impl AnalysisStorage {
         self.device_triggers.get(path)
             .map(|triggers|triggers.iter()
                  .filter(
-                     |p|filter.map_or(
-                         true,
+                     |p|filter.is_none_or(
                          |f|f.contains(&ContextDefinition::Device((*p).clone()))))
                  .filter_map(|p|self.get_device_analysis(p).ok())
                  .collect())
@@ -286,8 +285,7 @@ impl AnalysisStorage {
 
         trace!("Full contexts for {:?} are {:?}", path, contexts);
 
-        if self.get_isolated_analysis(path).map_or(
-            false, |a|a.is_device_file()) {
+        if self.get_isolated_analysis(path).is_ok_and(|a|a.is_device_file()) {
             contexts.insert(Some(path.clone()));
         }
 
@@ -316,7 +314,7 @@ impl AnalysisStorage {
         let mut target_devices: Vec<CanonPath> = vec![];
 
         if self.get_isolated_analysis(path)
-            .map_or(false, |a|a.is_device_file()) {
+            .is_ok_and(|a|a.is_device_file()) {
                 target_devices.push(path.clone());
             } else {
                 // Remove ourselves from the trigee list of any file
@@ -325,7 +323,7 @@ impl AnalysisStorage {
                     self.device_triggers.get_mut(trigger_path)
                         .map(|e|e.remove(path));
                     if self.device_triggers.get(trigger_path)
-                        .map_or(false, |e|e.is_empty()) {
+                        .is_some_and(|e|e.is_empty()) {
                         self.device_triggers.remove(trigger_path);
                     }
                 }
@@ -483,13 +481,11 @@ impl AnalysisStorage {
                     let canon_path = analysis.path.clone();
                     trace!("Handling isolated analysis on {}",
                            canon_path.as_str());
-                    if self.isolated_analysis.get(&canon_path).map_or(
-                        true,
+                    if self.isolated_analysis.get(&canon_path).is_none_or(
                         |prev| timestamp_is_newer(timestamp, prev.timestamp)) {
                         trace!("invalidators are {:?}", self.invalidators);
-                        if self.invalidators.get(&canon_path).map_or(
-                            true, |invalid| timestamp_is_newer(timestamp,
-                                                               *invalid)) {
+                        if self.invalidators.get(&canon_path).is_none_or(
+                            |invalid| timestamp_is_newer(timestamp, *invalid)) {
                             trace!("was new, or fresh compared to previous");
                             dependencies_to_update.insert(canon_path.clone());
                             self.isolated_analysis.insert(canon_path.clone(),
@@ -530,9 +526,8 @@ impl AnalysisStorage {
             if let AnalysisResult::Device(analysis) = analysisresult.stored {
                 let canon_path = analysis.path.clone();
                 trace!("Handling device analysis on {}", canon_path.as_str());
-                if self.device_analysis.get(&canon_path).map_or(
-                    true, |prev| timestamp_is_newer(timestamp,
-                                                    prev.timestamp)) {
+                if self.device_analysis.get(&canon_path).is_none_or(
+                    |prev| timestamp_is_newer(timestamp, prev.timestamp)) {
                     trace!("was new, or fresh compared to previous");
                     // This should be guaranteed
                     let invalidators = self.all_dependencies(
@@ -581,7 +576,7 @@ impl AnalysisStorage {
         for path in self.last_use.keys().cloned().collect::<Vec<CanonPath>>() {
             if now.duration_since(*self.last_use.get(&path)
                                   .unwrap().lock().unwrap())
-                .map_or(false, |duration|duration > max_age) {
+                .is_ok_and(|duration|duration > max_age) {
                     info!("Discarded analysis of {} due to it being \
                            unused for too long.", path.as_str());
                     self.mark_file_dirty(&path);
@@ -704,7 +699,7 @@ impl AnalysisStorage {
                 .extend(self.gather_linter_errors(file).into_iter());
 
             // Only report device errors if this analysis context is active
-            if filter.map_or(true, |f|f.contains(&file.clone().into())) {
+            if filter.is_none_or(|f|f.contains(&file.clone().into())) {
                 for (dfile, errors) in self.gather_device_errors(file) {
                     device_errors.entry(dfile.clone())
                     .or_default()

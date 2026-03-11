@@ -16,6 +16,7 @@ on:
 
 env:
     CARGO_TERM_COLOR: always
+    rust_version: 1.93.0
 jobs:
   audit:
     runs-on: ${{ inputs.os }}
@@ -23,6 +24,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: versions
         run: |
+          rustup default ${{ env.rust_version }}
           rustup --version
           cargo --version
           rustc --version

@@ -21,7 +21,7 @@ use lsp_types::{self, notification,
                 PublishDiagnosticsParams,
                 ProgressParams, ProgressParamsValue, ProgressToken,
                 WorkDoneProgress};
-use subprocess::{ExitStatus, Popen, PopenConfig, Redirection};
+use subprocess::{ExitStatus, Exec, Job, Redirection};
 
 use crate::config::Config;
 use crate::server::{self, Notification};
@@ -97,7 +97,7 @@ impl RpcErrorKind {
 }
 
 pub struct ClientInterface {
-    server: Popen,
+    server: Job,
     reader: channel::Receiver<String>,
     _reading_thread: JoinHandle<()>,
     diagnostics: HashMap<CanonPath, Vec<Diagnostic>>,
@@ -114,13 +114,11 @@ impl ClientInterface {
                binary.to_str().unwrap(),
                wd.to_str().unwrap());
 
-        let mut server = Popen::create(&[binary],
-                                   PopenConfig {
-                                       stdin: Redirection::Pipe,
-                                       stdout: Redirection::Pipe,
-                                       stderr: Redirection::None,
-                                       ..Default::default()
-                                   })?;
+        let mut server = Exec::cmd(binary)
+            .stdout(Redirection::Pipe)
+            .stdin(Redirection::Pipe)
+            .stderr(Redirection::None)
+            .start()?;
         let (sender, receiver) = channel::unbounded();
         let child_stdout = server.stdout.take().unwrap();
         let reading_thread = thread::spawn(move || {

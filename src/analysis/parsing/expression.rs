@@ -830,8 +830,8 @@ fn maybe_parse_extended_expression(preset_left: Option<Expression>,
     let mut new_context = context.enter_context(understands_continuations);
     let mut left = parse_expression_inner(
         preset_left, &new_context, stream, file_info);
-    while new_context.peek_kind(stream).map_or(
-        false, |k|understands_continuations(k)) {
+    while new_context.peek_kind(stream).is_some_and(
+        |k|understands_continuations(k)) {
         match new_context.peek_kind(stream) {
             Some(TokenKind::LParen) => left = parse_function_call(
                 left, &new_context, stream, file_info),
@@ -872,7 +872,7 @@ fn maybe_parse_muldivmod_expression(preset_left: Option<Expression>,
     let mut left = maybe_parse_extended_expression(preset_left,
                                                    &new_context,
                                                    stream, file_info);
-    if new_context.peek_kind(stream).map_or(false, understands_muldivmods) {
+    if new_context.peek_kind(stream).is_some_and(understands_muldivmods) {
         let operation = new_context.next_leaf(stream);
         let right = maybe_parse_muldivmod_expression(None,
                                                      context,
@@ -897,7 +897,7 @@ fn maybe_parse_addsub_expression(preset_left: Option<Expression>,
     let mut left = maybe_parse_muldivmod_expression(preset_left,
                                                     &new_context,
                                                     stream, file_info);
-    if new_context.peek_kind(stream).map_or(false, understands_addsubs) {
+    if new_context.peek_kind(stream).is_some_and(understands_addsubs) {
         let operation = new_context.next_leaf(stream);
         let right = maybe_parse_addsub_expression(None,
                                                   context,
@@ -922,7 +922,7 @@ fn maybe_parse_shift_expression(preset_left: Option<Expression>,
     let mut left = maybe_parse_addsub_expression(preset_left,
                                                  &new_context,
                                                  stream, file_info);
-    if new_context.peek_kind(stream).map_or(false, understands_shifts) {
+    if new_context.peek_kind(stream).is_some_and(understands_shifts) {
         let operation = new_context.next_leaf(stream);
         let right = maybe_parse_shift_expression(None,
                                                  context,
@@ -948,7 +948,7 @@ fn maybe_parse_comparison_expression(preset_left: Option<Expression>,
     let mut left = maybe_parse_shift_expression(preset_left,
                                                 &new_context,
                                                 stream, file_info);
-    if new_context.peek_kind(stream).map_or(false, understands_comparisons) {
+    if new_context.peek_kind(stream).is_some_and(understands_comparisons) {
         let operation = new_context.next_leaf(stream);
         let right = maybe_parse_comparison_expression(None,
                                                       context,
@@ -974,7 +974,7 @@ fn maybe_parse_equality_expression(preset_left: Option<Expression>,
                                                      &new_context,
                                                      stream,
                                                      file_info);
-    if new_context.peek_kind(stream).map_or(false, understands_equality) {
+    if new_context.peek_kind(stream).is_some_and(understands_equality) {
         let operation = new_context.next_leaf(stream);
         let right = maybe_parse_equality_expression(None,
                                                     context,
@@ -1002,7 +1002,7 @@ fn maybe_parse_binary_calc_expression(preset_left: Option<Expression>,
     let mut left = maybe_parse_equality_expression(preset_left,
                                                    &new_context,
                                                    stream, file_info);
-    if new_context.peek_kind(stream).map_or(false, understands_binaries) {
+    if new_context.peek_kind(stream).is_some_and(understands_binaries) {
         let operation = new_context.next_leaf(stream);
         let right = maybe_parse_binary_calc_expression(None,
                                                        context,
@@ -1090,8 +1090,8 @@ pub fn maybe_parse_tertiary_expression(preset_left: Option<Expression>,
     let mut left = maybe_parse_logic_or_expression(preset_left,
                                                    &pre_quest_context,
                                                    stream, file_info);
-    if pre_quest_context.peek_kind(stream).map_or(
-        false, |k|understands_tert_first_ops(k)) {
+    if pre_quest_context.peek_kind(stream).is_some_and(
+        |k|understands_tert_first_ops(k)) {
         let first_opr = pre_quest_context.next_leaf(stream);
         let opr_kind = match first_opr {
             LeafToken::Actual(token) => token.kind,

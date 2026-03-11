@@ -713,8 +713,7 @@ pub fn rank_templates_aux<'t>(mut templates: HashMap<&'t str,
                 for stmnt in spec.all_statements() {
                     match stmnt {
                         StatementSpecStatement::Import(imp) => {
-                            if imp_map.get(&imp.obj).map_or(
-                                false,
+                            if imp_map.get(&imp.obj).is_some_and(
                                 |iname|iname == templ2.get_name()) {
                                 is_import_cycle = true;
                                 is_or_imp_sites.push(imp.span());

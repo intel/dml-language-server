@@ -465,8 +465,8 @@ impl <O: Output> InitActionContext<O> {
                     if !workspaces.is_empty() &&
                         !workspaces.iter().any(
                             |root|parse_file_path!(&root.uri, "workspace")
-                                .map_or(false, |p|canon_path.as_path()
-                                        .starts_with(p))) {
+                                .is_ok_and(|p|canon_path.as_path()
+                                           .starts_with(p))) {
                             crate::server::warning_message(
                                 out,
                                 "Compilation info file is not under \
@@ -1435,7 +1435,7 @@ impl FileWatch {
     fn relevant_change_kind(&self, change_uri: &Uri,
                             _kind: FileChangeType) -> bool {
         let path = change_uri.as_str();
-        self.file_path.to_str().map_or(false, |fp|fp == path)
+        self.file_path.to_str().is_some_and(|fp|fp == path)
     }
 
     #[inline]

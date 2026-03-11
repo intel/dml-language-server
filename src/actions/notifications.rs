@@ -183,7 +183,7 @@ impl BlockingNotificationAction for DidChangeConfiguration {
         debug!("config change: {:?}", params.settings);
         // New style config update, send re-config request
         if params.settings.is_null() || params.settings.as_object().
-            map_or(false, |o|o.is_empty()) {
+            is_some_and(|o|o.is_empty()) {
             let config_params = lsp_types::ConfigurationParams {
                 items: vec![lsp_types::ConfigurationItem {
                     scope_uri: None,

@@ -402,7 +402,7 @@ impl<O: Output> LsService<O> {
                         {
                             if ctx.analysis.lock().unwrap()
                                 .get_isolated_analysis(&path)
-                                .map_or(false, |a|a.is_device_file()) {
+                                .is_ok_and(|a|a.is_device_file()) {
                                     // We cannot be sure that all the imported are
                                     // uncovered by contexts until we know
                                     // what all the imported files are, which
@@ -746,7 +746,7 @@ mod test {
             .root_uri
             .as_ref()
             .map(|uri| {
-                assert!(uri.scheme().map_or(false,|s| s.as_str() == "file"));
+                assert!(uri.scheme().is_some_and(|s| s.as_str() == "file"));
                 parse_file_path(uri).expect("Could not convert URI to path")
             })
             .unwrap_or_else(|| {
