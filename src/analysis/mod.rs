@@ -2311,7 +2311,7 @@ impl DeviceAnalysis {
             }
         }
 
-        let base_templates = from_device_and_bases(&root, &bases);
+        let base_templates = templates_from_device_and_bases(&root, &bases);
 
         trace!("base template names: {:?}", base_templates.iter()
                .fold("".to_string(),
@@ -2489,15 +2489,14 @@ impl DeviceAnalysis {
     }
 }
 
-pub fn from_device_and_bases<'a>(_device: &'a IsolatedAnalysis,
+pub fn templates_from_device_and_bases<'a>(_device: &'a IsolatedAnalysis,
                                  bases: &'a [IsolatedAnalysis])
                                  -> Vec<&'a ObjectDecl<Template>> {
     // Need to be sure we get the device toplevel from device here, since
     // it has been modified a little from the original isolatedanalysis
     let toplevels: Vec<&'a TopLevel> =
         bases.iter().map(|ia|&ia.toplevel).collect();
-    toplevels.iter().flat_map(
-        |tl|&tl.templates).collect()
+    toplevels.into_iter().flat_map(|tl|tl.gather_templates()).collect()
 }
 
 fn bind_method_implementations(method_symbols: &mut HashMap<ZeroSpan, HashMap<StructureKey, SymbolRef>>) {

@@ -540,6 +540,11 @@ impl ScopeContainer for Statements {
     fn scopes(&self) -> Vec<&dyn Scope> {
         let mut scopes = self.statements.scopes();
         scopes.append(&mut self.ineachs.to_scopes());
+        for obj in &self.statements {
+            if let DMLStatement::Object(DMLObject::Template(template)) = obj {
+                scopes.push(template as &dyn Scope);
+            }
+        }
         scopes
     }
 }
