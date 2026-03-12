@@ -24,6 +24,8 @@
 - The DLS will now correctly report missing template names in 'in each' constructs
 - Fixed error where the DLS would fail to match references from within in a template
   to symbols defined in parents of objects instantiating the template
+- Fixed an issue where the DLS document and workspace symbol request would
+  double-report symbols that contain other symbols (methods, templates, objects)
 - The DLS will now index templates declared inside incorrect contexts (objects, methods, etc.). This avoids internal errors in some cases and allows for slightly-better feedback in broken-syntax contexts.
 - Added parsing support for provisional 'explicit\_object\_decls', note that it has no semantic effect.
 

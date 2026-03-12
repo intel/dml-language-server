@@ -213,6 +213,18 @@ fn simplesymbol_to_workspace_symbol(parent_name: &str,
     }
 }
 
+// Filter out the flat simplesymbols that will also be output as
+// contexts
+fn should_output_symbol_for_subsymbol(sym: &SubSymbol) -> bool {
+    match sym {
+        SubSymbol::Context(_) => true,
+        SubSymbol::Simple(simple) => !matches!(simple.kind(),
+            DMLSymbolKind::CompObject(_)
+          | DMLSymbolKind::Template
+          | DMLSymbolKind::Method),
+    }
+}
+
 fn context_to_document_symbol(context: &SymbolContext) -> DocumentSymbol {
     // Note: This is probably slightly inefficient for simple contexts,
     // but is unlikely to be a large problem
@@ -230,6 +242,7 @@ fn context_to_document_symbol(context: &SymbolContext) -> DocumentSymbol {
         range: ls_util::dls_to_range(span.range),
         selection_range: ls_util::dls_to_range(loc.range),
         children: Some(context.subsymbols.iter()
+                       .filter(|subsymbol|should_output_symbol_for_subsymbol(subsymbol))
                        .map(subsymbol_to_document_symbol)
                        .collect()),
     }
@@ -259,6 +272,9 @@ fn context_to_workspace_symbols_aux(context: &SymbolContext,
     });
 
     for child in &context.subsymbols {
+        if !should_output_symbol_for_subsymbol(child) {
+            continue;
+        }
         match child {
             SubSymbol::Context(con) => context_to_workspace_symbols_aux(
                 con, Some(&full_name), symbols),
@@ -333,8 +349,9 @@ impl RequestAction for DocumentSymbolRequest {
             .map(|isolated|{
                 let context = isolated.toplevel.to_context();
                 // Fold out the toplevel context
-                let symbols = context.subsymbols.iter().map(
-                    subsymbol_to_document_symbol).collect();
+                let symbols = context.subsymbols.iter()
+                    .filter(|s|should_output_symbol_for_subsymbol(s))
+                    .map(subsymbol_to_document_symbol).collect();
                 Some(DocumentSymbolResponse::Nested(symbols))
             })
             .or(Self::fallback_response())
