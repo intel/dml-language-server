@@ -4,6 +4,9 @@
 -->
 # Change Log
 
+## 0.9.19
+
+
 ## 0.9.18
 - Fixed a rare case where the DLS would crash when reporting device contexts
 - Fixed issue where the DLS may fail to parse files with unended cblock headers
