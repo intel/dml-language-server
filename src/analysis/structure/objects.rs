@@ -906,6 +906,7 @@ impl CompObjectKindDecl {
 pub struct CompositeObject {
     pub kind: CompObjectKindDecl,
     pub object: DMLObjectCommon,
+    pub explicitly_merged: bool,
     pub dims: Vec<ArrayDim>,
     pub doc: Option<Expression>,
     pub statements: Statements,
@@ -1591,7 +1592,7 @@ fn to_objectstatement<'a>(content: &structure::DMLObjectContent,
         structure::DMLObjectContent::Bitorder(con) =>
             DMLStatementKind::Statement(DMLStatement::Object(DMLObject::Bitorder(
                 Bitorder::to_structure(con, report, file)?))),
-        structure::DMLObjectContent::Connection(con) =>
+        structure::DMLObjectContent::Connect(con) =>
             DMLStatementKind::Statement(DMLStatement::Object(
                 DMLObject::CompositeObject(
                     to_composite_object(con, report, file)?))),
@@ -1796,6 +1797,7 @@ fn to_composite_object<'a>(content: &structure::CompositeObjectContent,
     Some(CompositeObject {
         kind,
         object,
+        explicitly_merged: content.explicit_merge_tok.is_some(),
         doc,
         dims,
         statements,
