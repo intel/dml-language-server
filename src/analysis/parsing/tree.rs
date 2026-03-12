@@ -394,4 +394,11 @@ impl <T: Clone + PartialEq> AstObject<T> {
             _ => default,
         }
     }
+
+    pub fn as_some_mut(&mut self) -> Option<&mut T> {
+        match &mut *self.content {
+            Content::Some(content) => Some(content),
+            _ => None,
+        }
+    }
 }
