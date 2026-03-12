@@ -429,8 +429,8 @@ impl CDeclList {
                  -> CDeclList {
         let mut new_context = context.enter_context(doesnt_understand_tokens);
         let mut decls = vec![];
-        let empty = !new_context.peek_kind(stream).map_or(
-            false, CDecl::first_token_matcher);
+        let empty = !new_context.peek_kind(stream).is_some_and(
+            CDecl::first_token_matcher);
         // Note that trailing commas in these lists are NOT allowed,
         // which is why we only check for entry into the loop
         if !empty {

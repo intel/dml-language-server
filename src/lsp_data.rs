@@ -47,7 +47,7 @@ where
 pub fn parse_file_path(uri: &Uri) -> Result<PathBuf, UriFileParseError> {
     // NOTE: We do not need to mirror the windows->unix style file separators
     // here, as windows also accepts backslashes
-    if uri.scheme().map_or(false,|s|s.as_str() == "file") {
+    if uri.scheme().is_some_and(|s|s.as_str() == "file") {
         let decoded_path = urlencoding::decode(uri.path().as_str())
             .map_err(|_|UriFileParseError::InvalidFilePath)?;
         Ok(Path::new(
@@ -338,7 +338,7 @@ impl ClientCapabilities {
 impl ClientCapabilities {
     pub fn workspace_folder_support(&self) -> bool {
         self.capabilities.workspace.as_ref()
-            .map_or(false, |w|w.workspace_folders.unwrap_or(false))
+            .is_some_and(|w|w.workspace_folders.unwrap_or(false))
     }
     // (supported, dynamic registration supported)
     pub fn did_change_configuration_support(&self) -> (bool, bool) {
@@ -351,7 +351,7 @@ impl ClientCapabilities {
     }
     pub fn configuration_support(&self) -> bool {
         self.capabilities.workspace.as_ref()
-            .map_or(false, |w|w.configuration.unwrap_or(false))
+            .is_some_and(|w|w.configuration.unwrap_or(false))
     }
 }
 

@@ -253,8 +253,7 @@ pub fn create_objectspec<'t>(loc: ZeroSpan,
 
     let inferior_ranks = in_each_struct.inferior.iter().filter(
         |(name, kind)|invalid_isimps.get(kind)
-            .map_or(true,
-                    |container|!container.contains(name))).map(
+            .is_none_or(|container|!container.contains(name))).map(
         |(name, _)|templates.get(*name).unwrap_or_else(||panic!(
             "Internal Error: \
              Unexpectedly missing def for template '{:?}'", name))
@@ -366,6 +365,7 @@ pub trait DMLHierarchyMember : DMLNamedMember {
 // underlying objects carry their own multiple definitions
 // This means we might miss some cases where we refer to a composite object
 // that does not actually exist
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DMLObject {
     // This is a key to be used in the structure dictionary for
@@ -1234,8 +1234,8 @@ fn resolve_parameter(obj_loc: &ZeroSpan,
 
     // find if we're an auto param
     for (def, _) in &sorted_definitions {
-        if def.obj.value.as_ref().map_or(
-            false, |v|matches!(v, ParamValue::Auto(_))) {
+        if def.obj.value.as_ref().is_some_and(
+            |v|matches!(v, ParamValue::Auto(_))) {
             if sorted_definitions.len() > 1 {
                 report.push(DMLError {
                     span: *def.obj.span(),

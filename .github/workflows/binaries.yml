@@ -28,7 +28,7 @@ on:
         type: string
 env:
     CARGO_TERM_COLOR: always
-    rust_version: 1.83.0
+    rust_version: 1.93.0
 jobs:
   build:
     runs-on: ${{ inputs.os }}

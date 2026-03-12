@@ -1,7 +1,7 @@
 //  © 2024 Intel Corporation
 //  SPDX-License-Identifier: Apache-2.0 and MIT
 // Types, traits, and structs for the structure of a DML file
-use log::{trace};
+use log::{trace, error};
 
 use crate::analysis::parsing::expression::{Expression,
                                            ensure_string_concatenation};
@@ -9,8 +9,7 @@ use crate::analysis::parsing::lexer::TokenKind;
 use crate::analysis::parsing::misc::{CDecl, CDeclList, Initializer,
                                      ident_filter, objident_filter};
 use crate::analysis::parsing::statement::Statement;
-use crate::analysis::parsing::tree::{AstObject, TreeElement, TreeElements,
-                                     LeafToken, ZeroRange};
+use crate::analysis::parsing::tree::{AstObject, LeafToken, TreeElement, TreeElements, ZeroRange};
 use crate::analysis::parsing::types::CTypeDecl;
 use crate::analysis::parsing::parser::{doesnt_understand_tokens,
                                        FileParser, Parse, ParseContext,
@@ -760,7 +759,7 @@ fn check_dmlobject_kind(obj: &DMLObjectContent, _file: &TextFile) ->
             },
             DMLObjectContent::Method(methodcontent) => {
                 if methodcontent.modifier.as_ref().and_then(|m|m.get_token())
-                    .map_or(false, |s|s.kind == TokenKind::Shared) {
+                    .is_some_and(|s|s.kind == TokenKind::Shared) {
                         return vec![LocalDMLError {
                             range: obj.range(),
                             description: "Shared method \
@@ -813,8 +812,8 @@ impl Parse<ObjectStatementsContent> for ObjectStatements {
                     let mut bracecontext = outer.enter_context(
                         understands_rbrace);
                     let mut statements = vec![];
-                    while bracecontext.peek_kind(stream).map_or(
-                        false, |t|dmlobject_first_token_matcher(t)) {
+                    while bracecontext.peek_kind(stream).is_some_and(
+                        |t|object_decl_first_token_matcher(t)) {
                         statements.push(
                             DMLObject::parse(&bracecontext, stream, file_info));
                     }
@@ -837,12 +836,19 @@ impl Parse<ObjectStatementsContent> for ObjectStatements {
 pub struct CompositeObjectContent {
     pub kind: LeafToken,
     pub name: LeafToken,
+    pub explicit_merge_tok: Option<LeafToken>,
     pub dimensions: Vec<(LeafToken,
                          LeafToken, LeafToken, ArraySize,
                          LeafToken)>,
     pub instantiation: Option<(LeafToken, Instantiation)>,
     pub documentation: Option<Expression>,
     pub statements: ObjectStatements,
+}
+
+impl CompositeObjectContent {
+    pub fn set_explicit_merge(&mut self, merge_tok: LeafToken) {
+        self.explicit_merge_tok = Some(merge_tok);
+    }
 }
 
 impl TreeElement for CompositeObjectContent {
@@ -975,11 +981,12 @@ impl Parse<DMLObjectContent> for CompositeObjectContent {
         let content = CompositeObjectContent {
             kind, name, dimensions,
             instantiation, documentation, statements,
+            explicit_merge_tok: None,
         };
         match object_kind {
             TokenKind::Attribute => DMLObjectContent::Attribute(content),
             TokenKind::Bank => DMLObjectContent::Bank(content),
-            TokenKind::Connect => DMLObjectContent::Connection(content),
+            TokenKind::Connect => DMLObjectContent::Connect(content),
             TokenKind::Event => DMLObjectContent::Event(content),
             TokenKind::Group => DMLObjectContent::Group(content),
             TokenKind::Implement => DMLObjectContent::Implement(content),
@@ -1103,6 +1110,7 @@ impl Parse<DMLObjectContent> for RegisterContent {
         let obj = CompositeObjectContent {
             kind, name, dimensions,
             instantiation, documentation, statements,
+            explicit_merge_tok: None,
         };
         DMLObjectContent::Register(RegisterContent {
             obj, size, offset
@@ -1181,6 +1189,7 @@ impl Parse<DMLObjectContent> for FieldContent {
         let obj = CompositeObjectContent {
             kind, name, dimensions,
             instantiation, documentation, statements,
+            explicit_merge_tok: None,
         };
         DMLObjectContent::Field(FieldContent {
             obj, bitrange
@@ -1694,56 +1703,57 @@ impl TreeElement for InEachContent {
     }
 }
 
-impl Parse<DMLObjectContent> for InEachContent {
-    fn parse(context: &ParseContext, stream: &mut FileParser<'_>, file_info: &FileInfo)
-             -> DMLObject {
-        fn understands_rparen(token: TokenKind) -> bool {
-            token == TokenKind::RParen
-        }
-        let mut outer = context.enter_context(doesnt_understand_tokens);
-        let intok = outer.expect_next_kind(stream, TokenKind::In);
-        let each = outer.expect_next_kind(stream, TokenKind::Each);
-        let spec = match outer.peek_kind(stream) {
-            Some(TokenKind::LParen) => {
-                let lparen = outer.next_leaf(stream);
-                let mut paren_context = outer.enter_context(understands_rparen);
-                let mut spec = vec![];
-                // Require at least one
-                let first_objident = paren_context.expect_next_filter(
-                    stream, objident_filter, "template name");
-                let mut end = true;
-                let first_comma = match outer.peek_kind(stream) {
-                    Some(TokenKind::Comma) => {
-                        end = false;
-                        Some(outer.next_leaf(stream))
-                    },
-                    _ => None,
-                };
-                spec.push((first_objident, first_comma));
-                while !end {
-                    let objident = paren_context.expect_next_filter(
-                        stream, objident_filter, "template name");
-                    let comma = match paren_context.peek_kind(stream) {
-                        Some(TokenKind::Comma) =>
-                            Some(paren_context.next_leaf(stream)),
-                        _ => {
-                            end = true;
-                            None
-                        },
-                    };
-                    spec.push((objident, comma));
-                }
-                let rparen = outer.expect_next_kind(stream, TokenKind::RParen);
-                InEachSpec::List(lparen, spec, rparen)
-            },
-            _ => InEachSpec::One(outer.expect_next_filter(
-                stream, objident_filter, "template name"))
-        };
-        let statements = ObjectStatements::parse(&outer, stream, file_info);
-        DMLObjectContent::InEach(InEachContent {
-            intok, each, spec, statements
-        }).into()
+fn parse_ineach_content(context: &ParseContext,
+                        stream: &mut FileParser<'_>,
+                        file_info: &FileInfo,
+                        intok: LeafToken) -> DMLObject {
+    fn understands_rparen(token: TokenKind) -> bool {
+        token == TokenKind::RParen
     }
+    let mut outer = context.enter_context(doesnt_understand_tokens);
+    // 'in' given from outer context, because of 'in each' and 'in OBJECT'
+    // disambiguation
+    let each = outer.expect_next_kind(stream, TokenKind::Each);
+    let spec = match outer.peek_kind(stream) {
+        Some(TokenKind::LParen) => {
+            let lparen = outer.next_leaf(stream);
+            let mut paren_context = outer.enter_context(understands_rparen);
+            let mut spec = vec![];
+            // Require at least one
+            let first_objident = paren_context.expect_next_filter(
+                stream, objident_filter, "template name");
+            let mut end = true;
+            let first_comma = match outer.peek_kind(stream) {
+                Some(TokenKind::Comma) => {
+                    end = false;
+                    Some(outer.next_leaf(stream))
+                },
+                _ => None,
+            };
+                spec.push((first_objident, first_comma));
+            while !end {
+                let objident = paren_context.expect_next_filter(
+                    stream, objident_filter, "template name");
+                let comma = match paren_context.peek_kind(stream) {
+                    Some(TokenKind::Comma) =>
+                        Some(paren_context.next_leaf(stream)),
+                    _ => {
+                        end = true;
+                        None
+                    },
+                };
+                spec.push((objident, comma));
+            }
+            let rparen = outer.expect_next_kind(stream, TokenKind::RParen);
+            InEachSpec::List(lparen, spec, rparen)
+        },
+        _ => InEachSpec::One(outer.expect_next_filter(
+            stream, objident_filter, "template name"))
+    };
+    let statements = ObjectStatements::parse(&outer, stream, file_info);
+    DMLObjectContent::InEach(InEachContent {
+        intok, each, spec, statements
+    }).into()
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1834,7 +1844,7 @@ pub enum DMLObjectContent {
     Attribute(CompositeObjectContent),
     Bank(CompositeObjectContent),
     Bitorder(BitorderContent),
-    Connection(CompositeObjectContent),
+    Connect(CompositeObjectContent),
     Constant(ConstantContent),
     Device(DeviceContent),
     DMLVersion(DMLVersionContent),
@@ -1872,7 +1882,7 @@ impl TreeElement for DMLObjectContent {
             Self::Attribute(content) => content.range(),
             Self::Bank(content) => content.range(),
             Self::Bitorder(content) => content.range(),
-            Self::Connection(content) => content.range(),
+            Self::Connect(content) => content.range(),
             Self::Constant(content) => content.range(),
             Self::Device(content) => content.range(),
             Self::DMLVersion(content) => content.range(),
@@ -1909,7 +1919,7 @@ impl TreeElement for DMLObjectContent {
             Self::Attribute(content) => create_subs![content],
             Self::Bank(content) => create_subs![content],
             Self::Bitorder(content) => create_subs![content],
-            Self::Connection(content) => create_subs![content],
+            Self::Connect(content) => create_subs![content],
             Self::Constant(content) => create_subs![content],
             Self::Device(content) => create_subs![content],
             Self::DMLVersion(content) => create_subs![content],
@@ -1948,7 +1958,7 @@ impl TreeElement for DMLObjectContent {
 
 pub type DMLObject = AstObject<DMLObjectContent>;
 
-pub fn dmlobject_first_token_matcher(token: TokenKind) -> bool {
+pub fn object_decl_first_token_matcher(token: TokenKind) -> bool {
     matches!(token,
              TokenKind::Attribute | TokenKind::Bank | TokenKind::Bitorder |
              TokenKind::Connect | TokenKind::Constant | TokenKind::Device |
@@ -1966,118 +1976,163 @@ pub fn dmlobject_first_token_matcher(token: TokenKind) -> bool {
              TokenKind::Provisional)
 }
 
+// Matches things allowed after 'in'
+pub fn dmlobject_first_token_matcher(token: TokenKind) -> bool {
+    matches!(token,
+             TokenKind::Attribute | TokenKind::Bank |
+             TokenKind::Connect | TokenKind::Event | TokenKind::Field |
+             TokenKind::Group | TokenKind::Implement |
+             TokenKind::Port | TokenKind::Register | TokenKind::Subdevice)
+}
+
+fn explicit_merge_parse(outer: &mut ParseContext,
+                        stream: &mut FileParser<'_>,
+                        file_info: &FileInfo,
+                        intok: LeafToken)
+                        -> DMLObject {
+    let mut obj = dispatch_object_kind(outer, stream, file_info);
+    match obj.as_some_mut() {
+        Some(DMLObjectContent::Attribute(con) | DMLObjectContent::Bank(con) |
+             DMLObjectContent::Connect(con) | DMLObjectContent::Event(con) |
+             DMLObjectContent::Group(con) |
+             DMLObjectContent::Implement(con) | DMLObjectContent::Port(con) |
+             DMLObjectContent::Subdevice(con)) => con.set_explicit_merge(intok),
+        Some(DMLObjectContent::Field(con)) => con.obj.set_explicit_merge(intok),
+        Some(DMLObjectContent::Register(con)) => con.obj.set_explicit_merge(intok),
+        None => (),
+        _ => {
+            // Should be unreachable, log internal error
+            internal_error!("Object after 'in' was not composite object kind, got '{:?}'", obj);
+        }
+    }
+    obj
+}
+
+fn dispatch_object_kind(context: &ParseContext,
+                        stream: &mut FileParser<'_>,
+                        file_info: &FileInfo)
+                        -> DMLObject {
+    let mut outer = context.enter_context(doesnt_understand_tokens);
+    match outer.expect_peek_filter(
+        stream, object_decl_first_token_matcher, "DML object") {
+        LeafToken::Actual(token) =>
+            match token.kind {
+                TokenKind::Attribute =>
+                    CompositeObjectContent::parse(&outer, stream,
+                                                  file_info),
+                TokenKind::Bank =>
+                    CompositeObjectContent::parse(&outer, stream,
+                                                  file_info),
+                TokenKind::Bitorder =>
+                    BitorderContent::parse(&outer, stream, file_info),
+                TokenKind::Connect =>
+                    CompositeObjectContent::parse(&outer, stream,
+                                                  file_info),
+                TokenKind::Constant =>
+                    ConstantContent::parse(&outer, stream, file_info),
+                TokenKind::Device =>
+                    DeviceContent::parse(&outer, stream, file_info),
+                TokenKind::DML =>
+                    DMLVersionContent::parse(&outer, stream, file_info),
+                TokenKind::Error =>
+                    ErrorObjectContent::parse(&outer, stream, file_info),
+                TokenKind::Export =>
+                    ExportContent::parse(&outer, stream, file_info),
+                TokenKind::Extern => {
+                    let externtok = outer.next_leaf(stream);
+                    match outer.peek_kind(stream) {
+                        Some(TokenKind::Typedef) => TypedefContent::parse(
+                            Some(externtok), &outer, stream, file_info),
+                        _ => parse_extern(externtok, &outer, stream,
+                                          file_info),
+                    }
+                },
+                TokenKind::Typedef =>
+                    TypedefContent::parse(None, &outer, stream,
+                                          file_info),
+                TokenKind::Event =>
+                    CompositeObjectContent::parse(&outer, stream,
+                                                  file_info),
+                TokenKind::Field =>
+                    FieldContent::parse(&outer, stream, file_info),
+                TokenKind::Footer =>
+                    CBlockContent::parse(&outer, stream, file_info),
+                TokenKind::Group =>
+                    CompositeObjectContent::parse(&outer, stream,
+                                                  file_info),
+                TokenKind::HashIf =>
+                    HashIfContent::parse(&outer, stream, file_info),
+                TokenKind::Header =>
+                    CBlockContent::parse(&outer, stream, file_info),
+                TokenKind::Hook =>
+                    parse_hook(None, &outer, stream, file_info),
+                TokenKind::Implement =>
+                    CompositeObjectContent::parse(&outer, stream,
+                                                  file_info),
+                TokenKind::Import =>
+                    ImportContent::parse(&outer, stream, file_info),
+                TokenKind::In => {
+                    let intok = outer.next_leaf(stream);
+                    if outer.peek_kind(stream).is_some_and(dmlobject_first_token_matcher) {
+                        explicit_merge_parse(&mut outer, stream, file_info, intok)
+                    } else {
+                        parse_ineach_content(&outer, stream, file_info, intok)
+                    }
+                },
+                TokenKind::Interface =>
+                    CompositeObjectContent::parse(&outer, stream,
+                                                  file_info),
+                TokenKind::Is =>
+                    InstantiationContent::parse(&outer, stream,
+                                                file_info),
+                TokenKind::Loggroup =>
+                    LoggroupContent::parse(&outer, stream, file_info),
+                TokenKind::Shared => {
+                    let sharedtok = outer.next_leaf(stream);
+                    match outer.peek_kind(stream) {
+                        Some(TokenKind::Hook) => parse_hook(
+                            Some(sharedtok), &outer, stream, file_info),
+                        _ => parse_method(
+                            Some(sharedtok), &outer, stream, file_info),
+                    }
+                },
+                TokenKind::Inline =>
+                    parse_method(Some(outer.next_leaf(stream)),
+                                 &outer,
+                                 stream,
+                                 file_info),
+                TokenKind::Method | TokenKind::Independent
+                    | TokenKind::Startup | TokenKind::Memoized =>
+                    parse_method(None, &outer, stream, file_info),
+                TokenKind::Param =>
+                    ParameterContent::parse(&outer, stream, file_info),
+                TokenKind::Port =>
+                    CompositeObjectContent::parse(&outer, stream,
+                                                  file_info),
+                TokenKind::Provisional =>
+                    ProvisionalContent::parse(&outer, stream, file_info),
+                TokenKind::Register =>
+                        RegisterContent::parse(&outer, stream, file_info),
+                TokenKind::Saved =>
+                    VariableContent::parse(&outer, stream, file_info),
+                TokenKind::Session =>
+                    VariableContent::parse(&outer, stream, file_info),
+                TokenKind::Subdevice =>
+                    CompositeObjectContent::parse(&outer, stream,
+                                                  file_info),
+                TokenKind::Template =>
+                    TemplateContent::parse(&outer, stream, file_info),
+                _ => unreachable!(),
+            },
+        LeafToken::Missing(missing) => missing.into(),
+    }
+}
+
 impl Parse<DMLObjectContent> for DMLObject {
     fn parse(context: &ParseContext,
              stream: &mut FileParser<'_>,
              file_info: &FileInfo) -> DMLObject {
-        let mut outer = context.enter_context(doesnt_understand_tokens);
-        match outer.expect_peek_filter(
-            stream, dmlobject_first_token_matcher, "DML object") {
-            LeafToken::Actual(token) =>
-                match token.kind {
-                    TokenKind::Attribute =>
-                        CompositeObjectContent::parse(&outer, stream,
-                                                      file_info),
-                    TokenKind::Bank =>
-                        CompositeObjectContent::parse(&outer, stream,
-                                                      file_info),
-                    TokenKind::Bitorder =>
-                        BitorderContent::parse(&outer, stream, file_info),
-                    TokenKind::Connect =>
-                        CompositeObjectContent::parse(&outer, stream,
-                                                      file_info),
-                    TokenKind::Constant =>
-                        ConstantContent::parse(&outer, stream, file_info),
-                    TokenKind::Device =>
-                        DeviceContent::parse(&outer, stream, file_info),
-                    TokenKind::DML =>
-                        DMLVersionContent::parse(&outer, stream, file_info),
-                    TokenKind::Error =>
-                        ErrorObjectContent::parse(&outer, stream, file_info),
-                    TokenKind::Export =>
-                        ExportContent::parse(&outer, stream, file_info),
-                    TokenKind::Extern => {
-                        let externtok = outer.next_leaf(stream);
-                        match outer.peek_kind(stream) {
-                            Some(TokenKind::Typedef) => TypedefContent::parse(
-                                Some(externtok), &outer, stream, file_info),
-                            _ => parse_extern(externtok, &outer, stream,
-                                              file_info),
-                        }
-                    },
-                    TokenKind::Typedef =>
-                        TypedefContent::parse(None, &outer, stream,
-                                              file_info),
-                    TokenKind::Event =>
-                        CompositeObjectContent::parse(&outer, stream,
-                                                      file_info),
-                    TokenKind::Field =>
-                        FieldContent::parse(&outer, stream, file_info),
-                    TokenKind::Footer =>
-                        CBlockContent::parse(&outer, stream, file_info),
-                    TokenKind::Group =>
-                        CompositeObjectContent::parse(&outer, stream,
-                                                      file_info),
-                    TokenKind::HashIf =>
-                        HashIfContent::parse(&outer, stream, file_info),
-                    TokenKind::Header =>
-                        CBlockContent::parse(&outer, stream, file_info),
-                    TokenKind::Hook =>
-                        parse_hook(None, &outer, stream, file_info),
-                    TokenKind::Implement =>
-                        CompositeObjectContent::parse(&outer, stream,
-                                                      file_info),
-                    TokenKind::Import =>
-                        ImportContent::parse(&outer, stream, file_info),
-                    TokenKind::In =>
-                        InEachContent::parse(&outer, stream, file_info),
-                    TokenKind::Interface =>
-                        CompositeObjectContent::parse(&outer, stream,
-                                                      file_info),
-                    TokenKind::Is =>
-                        InstantiationContent::parse(&outer, stream,
-                                                    file_info),
-                    TokenKind::Loggroup =>
-                        LoggroupContent::parse(&outer, stream, file_info),
-                    TokenKind::Shared => {
-                        let sharedtok = outer.next_leaf(stream);
-                        match outer.peek_kind(stream) {
-                            Some(TokenKind::Hook) => parse_hook(
-                                Some(sharedtok), &outer, stream, file_info),
-                            _ => parse_method(
-                                Some(sharedtok), &outer, stream, file_info),
-                        }
-                    },
-                    TokenKind::Inline =>
-                        parse_method(Some(outer.next_leaf(stream)),
-                                     &outer,
-                                     stream,
-                                     file_info),
-                    TokenKind::Method | TokenKind::Independent
-                        | TokenKind::Startup | TokenKind::Memoized =>
-                        parse_method(None, &outer, stream, file_info),
-                    TokenKind::Param =>
-                        ParameterContent::parse(&outer, stream, file_info),
-                    TokenKind::Port =>
-                        CompositeObjectContent::parse(&outer, stream,
-                                                      file_info),
-                    TokenKind::Provisional =>
-                        ProvisionalContent::parse(&outer, stream, file_info),
-                    TokenKind::Register =>
-                        RegisterContent::parse(&outer, stream, file_info),
-                    TokenKind::Saved =>
-                        VariableContent::parse(&outer, stream, file_info),
-                    TokenKind::Session =>
-                        VariableContent::parse(&outer, stream, file_info),
-                    TokenKind::Subdevice =>
-                        CompositeObjectContent::parse(&outer, stream,
-                                                      file_info),
-                    TokenKind::Template =>
-                        TemplateContent::parse(&outer, stream, file_info),
-                    _ => unreachable!(),
-                },
-            LeafToken::Missing(missing) => missing.into(),
-        }
+        dispatch_object_kind(context, stream, file_info)
     }
 }
 
@@ -2167,7 +2222,7 @@ pub fn parse_toplevel(stream: &mut FileParser<'_>,
                       file: FileSpec<'_>)
                       -> TopAst {
     let mut top_context = ParseContext::new_context(
-        dmlobject_first_token_matcher);
+        object_decl_first_token_matcher);
     let version = dmlversion_parse(&top_context, stream, file_info);
     let provisionals = if top_context.peek_kind(stream) == Some(TokenKind::Provisional) {
         Some(provisionals_parse(&top_context, stream, file_info))
@@ -2375,6 +2430,43 @@ mod test {
                                     }));
         test_ast_tree::<DMLObjectContent, DMLObject>(
             "provisional;",
+            &expected,
+            &vec![]);
+    }
+
+    #[test]
+    fn test_provisional_explicit_merge() {
+        let expected = make_ast(
+            zero_range(0, 0, 3, 13),
+            DMLObjectContent::Group(
+                CompositeObjectContent {
+                    kind: make_leaf(
+                        zero_range(0,0,2,3),
+                        zero_range(0,0,3,8),
+                        TokenKind::Group),
+                    name: make_leaf(zero_range(0, 0, 8, 9),
+                                    zero_range(0, 0, 9, 10),
+                                    TokenKind::Identifier),
+                    explicit_merge_tok: Some(make_leaf(
+                        zero_range(0,0,0,0),
+                        zero_range(0,0,0,2),
+                        TokenKind::In)),
+                    dimensions: vec![],
+                    instantiation: None,
+                    documentation: None,
+                    statements: make_ast(
+                        zero_range(0, 0, 11, 13),
+                        ObjectStatementsContent::List(
+                            make_leaf(zero_range(0, 0, 10, 11),
+                                      zero_range(0, 0, 11, 12),
+                                      TokenKind::LBrace),
+                            vec![],
+                            make_leaf(zero_range(0, 0, 12, 12),
+                                      zero_range(0, 0, 12, 13),
+                                      TokenKind::RBrace))),
+                        }));
+        test_ast_tree::<DMLObjectContent, DMLObject>(
+            "in group g {}",
             &expected,
             &vec![]);
     }

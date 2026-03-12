@@ -8,7 +8,7 @@ use log::debug;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use clap::{Parser, command, arg};
+use clap::Parser;
 
 /// The main entry point to the DLS.
 // Parses CLI arguments and then runs the server.

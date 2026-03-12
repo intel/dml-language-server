@@ -734,7 +734,7 @@ impl DeviceAnalysis {
                 if let Some(found_obj)
                     = curr_obj.get_object(sym.name_ref()) {
                         if found_obj.resolve(&self.objects).as_shallow()
-                            .map_or(false, |s|matches!(
+                            .is_some_and(|s|matches!(
                                 &s.variant,
                                 DMLShallowObjectVariant::Method(_))) {
                                 vec![found_obj.clone()]
@@ -1009,7 +1009,7 @@ impl DeviceAnalysis {
                          sym: &SimpleSymbol,
                          ref_matches: &mut ReferenceMatches) {
         let resolved = obj.resolve(&self.objects);
-        if resolved.as_comp().map_or(false, |c|c.kind == CompObjectKind::Device)
+        if resolved.as_comp().is_some_and(|c|c.kind == CompObjectKind::Device)
             && sym.kind == DMLSymbolKind::Template {
                 self.lookup_global_symbol(sym, ref_matches);
             } else {
@@ -1656,8 +1656,8 @@ impl IsolatedAnalysis {
                                         &mut errors, filespec);
         status.assert_alive();
         // sanity, clientpath and path should be the same file
-        if CanonPath::from_path_buf(clientpath.clone()).map_or(
-            true, |cp|&cp != path) {
+        if CanonPath::from_path_buf(clientpath.clone()).is_none_or(
+            |cp|&cp != path) {
             error!("Clientpath did not describe the same \
                     file as the actual path; {:?} vs {:?}",
                    path,
@@ -2311,7 +2311,7 @@ impl DeviceAnalysis {
             }
         }
 
-        let base_templates = from_device_and_bases(&root, &bases);
+        let base_templates = templates_from_device_and_bases(&root, &bases);
 
         trace!("base template names: {:?}", base_templates.iter()
                .fold("".to_string(),
@@ -2489,15 +2489,14 @@ impl DeviceAnalysis {
     }
 }
 
-pub fn from_device_and_bases<'a>(_device: &'a IsolatedAnalysis,
+pub fn templates_from_device_and_bases<'a>(_device: &'a IsolatedAnalysis,
                                  bases: &'a [IsolatedAnalysis])
                                  -> Vec<&'a ObjectDecl<Template>> {
     // Need to be sure we get the device toplevel from device here, since
     // it has been modified a little from the original isolatedanalysis
     let toplevels: Vec<&'a TopLevel> =
         bases.iter().map(|ia|&ia.toplevel).collect();
-    toplevels.iter().flat_map(
-        |tl|&tl.templates).collect()
+    toplevels.into_iter().flat_map(|tl|tl.gather_templates()).collect()
 }
 
 fn bind_method_implementations(method_symbols: &mut HashMap<ZeroSpan, HashMap<StructureKey, SymbolRef>>) {

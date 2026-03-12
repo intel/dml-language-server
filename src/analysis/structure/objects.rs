@@ -540,6 +540,11 @@ impl ScopeContainer for Statements {
     fn scopes(&self) -> Vec<&dyn Scope> {
         let mut scopes = self.statements.scopes();
         scopes.append(&mut self.ineachs.to_scopes());
+        for obj in &self.statements {
+            if let DMLStatement::Object(DMLObject::Template(template)) = obj {
+                scopes.push(template as &dyn Scope);
+            }
+        }
         scopes
     }
 }
@@ -901,6 +906,7 @@ impl CompObjectKindDecl {
 pub struct CompositeObject {
     pub kind: CompObjectKindDecl,
     pub object: DMLObjectCommon,
+    pub explicitly_merged: bool,
     pub dims: Vec<ArrayDim>,
     pub doc: Option<Expression>,
     pub statements: Statements,
@@ -1154,7 +1160,7 @@ impl ToStructure<structure::ParameterContent> for Parameter {
             .map_or((false, None), |d| match d {
                 structure::ParamDef::Set(assigntok, expr) => {
                     (assigntok.get_token()
-                     .map_or(false, |rt|rt.kind == TokenKind::Default),
+                     .is_some_and(|rt|rt.kind == TokenKind::Default),
                      ExpressionKind::to_expression(expr, report, file).map(
                          |e|ParamValue::Set(e)))
                 },
@@ -1586,7 +1592,7 @@ fn to_objectstatement<'a>(content: &structure::DMLObjectContent,
         structure::DMLObjectContent::Bitorder(con) =>
             DMLStatementKind::Statement(DMLStatement::Object(DMLObject::Bitorder(
                 Bitorder::to_structure(con, report, file)?))),
-        structure::DMLObjectContent::Connection(con) =>
+        structure::DMLObjectContent::Connect(con) =>
             DMLStatementKind::Statement(DMLStatement::Object(
                 DMLObject::CompositeObject(
                     to_composite_object(con, report, file)?))),
@@ -1791,6 +1797,7 @@ fn to_composite_object<'a>(content: &structure::CompositeObjectContent,
     Some(CompositeObject {
         kind,
         object,
+        explicitly_merged: content.explicit_merge_tok.is_some(),
         doc,
         dims,
         statements,
