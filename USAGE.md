@@ -117,3 +117,80 @@ method now_we_can_declare_this_method_with_a_really_really_really_really_long na
 ```
 Will allow 'long_lines' globally, 'nsp_unary' and 'indent_no_tabs' on the
 `param p = (1 ++ *` line, and 'indent_paren_expr' on the `'4);` line.
+
+## SCIP Export
+
+The DLS can export a [SCIP index](https://sourcegraph.com/docs/code-search/code-navigation/scip)
+of analyzed DML devices. SCIP (Source Code Intelligence Protocol) is a
+language-agnostic format for code intelligence data, used by tools such as
+Sourcegraph for cross-repository navigation and code search.
+
+### Invocation
+
+SCIP export is available through the DFA (DML File Analyzer) binary via the
+`--scip-output <path>` flag:
+```
+dfa --compile-info <compile_commands.json> --workspace <project root> --scip-output <scip_file_name> [list of devices to analyze, ]
+```
+
+It is worth noting that SCIP format specifies that symbols from documents that are not under the project root (which we define as the workspace) get slotted under external symbols with no occurances tracked.
+
+### SCIP schema details
+Here we list how we have mapped DML specifically to the SCIP format.
+
+#### SCIP symbol kind mappings
+
+DML symbol kinds are mapped to SCIP `SymbolInformation.Kind` as follows:
+
+- `Constant` — Parameter, Constant, Loggroup
+- `Variable` — Extern, Saved, Session, Local
+- `Parameter` — MethodArg
+- `Function` — Hook
+- `Method` — Method
+- `Class` — Template
+- `TypeAlias` — Typedef
+- `Namespace` — All composite objects (Device, Bank, Register, Field, Group, Port, Connect, Attribute, Event, Subdevice)
+- `Struct` — Implement
+- `Interface` — Interface
+
+#### Symbol Naming Scheme
+
+SCIP symbols follow the format:
+`<scheme> ' ' <manager> ' ' <package> ' ' <version> ' ' <descriptors>`
+
+For DML, the scheme is `dml`, the manager is `simics`, version is `.` (currently we cannot extract simics version here), and the
+package is the device name. Descriptors are built from the fully qualified path
+through the device hierarchy:
+
+```
+dml simics sample_device . sample_device.regs.r1.offset.
+                                                       ^ term (parameter)
+dml simics sample_device . sample_device.regs.r1.read().
+                                                      ^ method
+dml simics sample_device . bank#
+                              ^ 'type' (template)
+```
+
+Descriptor suffixes follow the SCIP standard:
+- `.` (term) — used for composite objects, parameters, and other named values
+- `#` (type) — used only for templates
+- `().` (method) — used for methods
+
+#### Local Symbols
+
+Method arguments and method-local variables use SCIP local symbols of the form
+`local <name>_<id>`, where `<id>` is the internal symbol identifier. Local
+symbols are scoped to a single document and are not navigable across files.
+
+#### Occurrence Roles
+
+DML declarations and definitions are both emitted with the SCIP `Definition`
+role, since SCIP does not distinguish between the two. References (including
+template instantiation sites from `is` statements) are emitted with
+`ReadAccess`.
+
+#### Relationships
+
+Composite objects that instantiate templates (via `is some_template`) emit
+SCIP `Relationship` entries with `is_implementation = true` pointing to the
+template symbol.
