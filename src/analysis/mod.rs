@@ -1933,7 +1933,7 @@ fn add_new_symbol_from_shallow(maker: &SymbolMaker,
         SymbolSource::DMLObject(
             // TODO: Inefficient clone. Not terribly so, but worth
             // noting
-            DMLObject::ShallowObject(shallow.clone())),
+            DMLObject::ShallowObject(Box::new(shallow.clone()))),
         bases = bases,
         definitions = definitions,
         declarations = declarations);

@@ -1838,7 +1838,6 @@ impl Parse<DMLObjectContent> for ErrorObjectContent {
     }
 }
 
-#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum DMLObjectContent {
     Attribute(CompositeObjectContent),

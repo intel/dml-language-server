@@ -365,13 +365,12 @@ pub trait DMLHierarchyMember : DMLNamedMember {
 // underlying objects carry their own multiple definitions
 // This means we might miss some cases where we refer to a composite object
 // that does not actually exist
-#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DMLObject {
     // This is a key to be used in the structure dictionary for
     // current device analysis
     CompObject(StructureKey),
-    ShallowObject(DMLShallowObject),
+    ShallowObject(Box<DMLShallowObject>),
 }
 
 impl DMLObject {
@@ -562,7 +561,6 @@ impl DMLHierarchyMember for DMLShallowObject {
     }
 }
 
-#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DMLShallowObjectVariant {
     Method(Arc<DMLMethodRef>),
@@ -570,7 +568,7 @@ pub enum DMLShallowObjectVariant {
     Saved(DMLVariable),
     Parameter(DMLParameter),
     Constant(Constant),
-    Hook(ObjectDecl<Hook>),
+    Hook(Box<ObjectDecl<Hook>>),
 }
 
 impl DMLShallowObjectVariant {
@@ -833,28 +831,28 @@ impl DMLCompositeObject {
     }
     pub fn get_param<T>(&self, name: T) -> Option<&DMLParameter>
     where T: std::borrow::Borrow<str> + Sized {
-        if let Some(DMLObject::ShallowObject(
-            DMLShallowObject {
+        self.get_object(name).and_then(|obj|
+            if let Some(DMLShallowObject {
                 variant: DMLShallowObjectVariant::Parameter(param),
                 ..
-            })) = self.get_object(name) {
-            Some(param)
-        } else {
-            None
-        }
+            }) = obj.as_shallow() {
+                Some(param)
+            } else {
+                None
+            })
     }
 
     pub fn get_method<T>(&self, name: T) -> Option<Arc<DMLMethodRef>>
     where T: std::borrow::Borrow<str> + Sized {
-        if let Some(DMLObject::ShallowObject(
-            DMLShallowObject {
+        self.get_object(name).and_then(|obj|
+            if let Some(DMLShallowObject {
                 variant: DMLShallowObjectVariant::Method(meth),
                 ..
-            })) = self.get_object(name) {
-            Some(Arc::clone(meth))
-        } else {
-            None
-        }
+            }) = obj.as_shallow() {
+                Some(Arc::clone(meth))
+            } else {
+                None
+            })
     }
 
     pub fn dimensions(&self, container: &StructureContainer) -> usize {
@@ -873,15 +871,16 @@ impl DMLCompositeObject {
     pub fn parameters<'t>(&'t self)
                           -> impl Iterator<Item=&'t DMLParameter> + 't {
         self.components.values().filter_map(
-            |c| if let DMLObject::ShallowObject(
-                DMLShallowObject {
+            |c|c.as_shallow().and_then(|s|
+            if let DMLShallowObject {
                     variant: DMLShallowObjectVariant::Parameter(p),
                     ..
-                }) = c {
+                } = s{
                 Some(p)
             } else {
                 None
             })
+        )
     }
 
     pub fn add_composite_component(&mut self,
@@ -909,10 +908,10 @@ impl DMLCompositeObject {
                    });
         } else {
             self.components.insert(child.identity().to_string(),
-                                   DMLObject::ShallowObject(DMLShallowObject {
+                                   DMLObject::ShallowObject(Box::new(DMLShallowObject {
                                        parent: self.key,
                                        variant: child,
-                                   }));
+                                   })));
         }
     }
 }
@@ -1047,7 +1046,7 @@ fn add_hooks(obj: &mut DMLCompositeObject,
         if used {
             let (_, hook) = hook_decls.swap_remove(0);
             obj.add_shallow_component(
-                DMLShallowObjectVariant::Hook(hook));
+                DMLShallowObjectVariant::Hook(Box::new(hook)));
         }
     }
 }

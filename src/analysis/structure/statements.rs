@@ -433,9 +433,10 @@ impl For {
             ||vec![],
             |post|to_forpost(post, report, file));
         let pre = content.pre.as_ref().and_then(|pre|match pre {
-            statement::ForPre::Declaration(kind, vardecls, maybe_init) =>
-                to_variable(kind, vardecls,
-                            maybe_init.as_ref().map(|(_, init)|init),
+            statement::ForPre::Declaration(forpre) =>
+                to_variable(&forpre.decl_kind,
+                            &forpre.declarations,
+                            forpre.initializer.as_ref().map(|(_, init)|init),
                             report, file)
                 .map(ForPre::Declaration),
             statement::ForPre::Post(p) => Some(ForPre::Post(

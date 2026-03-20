@@ -76,7 +76,7 @@ impl AnalysisQueue {
                               tracking_token: JobToken) -> bool {
         match LinterJob::new(tracking_token, storage, cfg, vfs, file) {
             Ok(newjob) => {
-                self.enqueue(QueuedJob::FileLinterJob(newjob));
+                self.enqueue(newjob.into());
                 true
             },
             Err(desc) => {
@@ -104,7 +104,7 @@ impl AnalysisQueue {
             Ok(newjob) => {
                 debug!("Enqueued isolated analysis job of {}",
                        newjob.path.as_str());
-                self.enqueue(QueuedJob::IsolatedAnalysisJob(newjob));
+                self.enqueue(newjob.into());
                 true
             },
             Err(desc) => {
@@ -146,7 +146,7 @@ impl AnalysisQueue {
                         }
                     }
                 debug!("Enqueued device analysis job of {:?}", device);
-                self.enqueue(QueuedJob::DeviceAnalysisJob(newjob));
+                self.enqueue(newjob.into());
                 true
             },
             Err(desc) => {
@@ -360,14 +360,31 @@ impl Drop for AnalysisQueue {
     }
 }
 
-#[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 enum QueuedJob {
-    IsolatedAnalysisJob(IsolatedAnalysisJob),
-    FileLinterJob(LinterJob),
-    DeviceAnalysisJob(DeviceAnalysisJob),
+    IsolatedAnalysisJob(Box<IsolatedAnalysisJob>),
+    FileLinterJob(Box<LinterJob>),
+    DeviceAnalysisJob(Box<DeviceAnalysisJob>),
     Sentinel,
     Terminate,
+}
+
+impl From<IsolatedAnalysisJob> for QueuedJob {
+    fn from(job: IsolatedAnalysisJob) -> Self {
+        QueuedJob::IsolatedAnalysisJob(Box::new(job))
+    }
+}
+
+impl From<LinterJob> for QueuedJob {
+    fn from(job: LinterJob) -> Self {
+        QueuedJob::FileLinterJob(Box::new(job))
+    }
+}
+
+impl From<DeviceAnalysisJob> for QueuedJob {
+    fn from(job: DeviceAnalysisJob) -> Self {
+        QueuedJob::DeviceAnalysisJob(Box::new(job))
+    }
 }
 
 impl QueuedJob {
@@ -439,7 +456,7 @@ impl IsolatedAnalysisJob {
                     self.context.clone()
                 };
                 let import_paths = analysis.get_import_names();
-                self.report.send(TimestampedStorage::make_isolated_result(
+                self.report.send(TimestampedStorage::make_timestamped(
                     self.timestamp,
                     analysis)).ok();
                 self.notify.send(ServerToHandle::IsolatedAnalysisDone(
@@ -542,7 +559,7 @@ impl DeviceAnalysisJob {
                 info!("Finished device analysis of {:?}", analysis.name);
                 self.notify.send(ServerToHandle::DeviceAnalysisDone(
                     analysis.path.clone())).ok();
-                self.report.send(TimestampedStorage::make_device_result(
+                self.report.send(TimestampedStorage::make_timestamped(
                     self.timestamp,
                     analysis)).ok();
             },
@@ -606,7 +623,7 @@ impl LinterJob {
                                   self.ast,
                                   self.token.status) {
             Ok(analysis) => {
-                self.report.send(TimestampedStorage::make_linter_result(
+                self.report.send(TimestampedStorage::make_timestamped(
                     self.timestamp,
                     analysis)).ok();
                 self.notify.send(ServerToHandle::LinterDone(

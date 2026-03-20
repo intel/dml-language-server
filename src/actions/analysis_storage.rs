@@ -26,12 +26,29 @@ use crate::lint::LinterAnalysis;
 
 use crate::file_management::{PathResolver, CanonPath};
 
-#[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 pub enum AnalysisResult {
-    Isolated(IsolatedAnalysis),
-    Linter(LinterAnalysis),
-    Device(DeviceAnalysis),
+    Isolated(Box<IsolatedAnalysis>),
+    Linter(Box<LinterAnalysis>),
+    Device(Box<DeviceAnalysis>),
+}
+
+impl From<IsolatedAnalysis> for AnalysisResult {
+    fn from(analysis: IsolatedAnalysis) -> Self {
+        AnalysisResult::Isolated(Box::new(analysis))
+    }
+}
+
+impl From<LinterAnalysis> for AnalysisResult {
+    fn from(analysis: LinterAnalysis) -> Self {
+        AnalysisResult::Linter(Box::new(analysis))
+    }
+}
+
+impl From<DeviceAnalysis> for AnalysisResult {
+    fn from(analysis: DeviceAnalysis) -> Self {
+        AnalysisResult::Device(Box::new(analysis))
+    }
 }
 
 impl AnalysisResult {
@@ -52,29 +69,13 @@ pub struct TimestampedStorage<T> {
     pub stored: T,
 }
 
-impl TimestampedStorage<AnalysisResult> {
-    pub fn make_isolated_result(timestamp: SystemTime,
-                                analysis: IsolatedAnalysis)
-                                -> TimestampedStorage<AnalysisResult>{
+impl <T> TimestampedStorage<T> {
+    pub fn make_timestamped<F>(timestamp: SystemTime, result: F) -> Self
+        where F: Into<T>
+    {
         TimestampedStorage {
             timestamp,
-            stored : AnalysisResult::Isolated(analysis),
-        }
-    }
-    pub fn make_device_result(timestamp: SystemTime,
-                              analysis: DeviceAnalysis)
-                              -> TimestampedStorage<AnalysisResult>{
-        TimestampedStorage {
-            timestamp,
-            stored : AnalysisResult::Device(analysis),
-        }
-    }
-    pub fn make_linter_result(timestamp: SystemTime,
-                              analysis: LinterAnalysis)
-                              -> TimestampedStorage<AnalysisResult> {
-        TimestampedStorage {
-            timestamp,
-            stored: AnalysisResult::Linter(analysis),
+            stored: result.into(),
         }
     }
 }
@@ -489,10 +490,7 @@ impl AnalysisStorage {
                             trace!("was new, or fresh compared to previous");
                             dependencies_to_update.insert(canon_path.clone());
                             self.isolated_analysis.insert(canon_path.clone(),
-                                                          TimestampedStorage {
-                                                              timestamp,
-                                                              stored: analysis,
-                                                          });
+                                                          TimestampedStorage::make_timestamped(timestamp, *analysis));
                             self.last_use.insert(canon_path.clone(),
                                                  Mutex::new(SystemTime::now()));
                             self.update_last_use(&canon_path);
@@ -509,10 +507,7 @@ impl AnalysisStorage {
                 AnalysisResult::Linter(analysis) => {
                     let canon_path = analysis.path.clone();
                     self.lint_analysis.insert(canon_path.clone(),
-                                              TimestampedStorage {
-                                                timestamp,
-                                                stored: analysis,
-                                            });
+                                              TimestampedStorage::make_timestamped(timestamp, *analysis));
                 },
             }
         }
@@ -542,10 +537,7 @@ impl AnalysisStorage {
                         trace!("was not invalidated by recent \
                                 isolated analysis");
                         self.device_analysis.insert(canon_path,
-                                                    TimestampedStorage {
-                                                        timestamp,
-                                                        stored: analysis,
-                                                    });
+                                                    TimestampedStorage::make_timestamped(timestamp, *analysis));
                     }
                 }
             } else {
