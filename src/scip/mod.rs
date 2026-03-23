@@ -18,7 +18,7 @@ use scip::types::{
 };
 
 use crate::analysis::symbols::{DMLSymbolKind, SymbolSource};
-use crate::analysis::structure::objects::CompObjectKind;
+use crate::analysis::structure::objects::{CompObjectKind, MethodModifier};
 use crate::analysis::templating::objects::{
     DMLHierarchyMember, DMLNamedMember, DMLObject, StructureContainer,
 };
@@ -51,13 +51,13 @@ fn dml_kind_to_scip_kind(kind: &DMLSymbolKind) -> ScipSymbolKind {
     match kind {
         DMLSymbolKind::CompObject(comp_kind) => match comp_kind {
             CompObjectKind::Interface => ScipSymbolKind::Interface,
-            CompObjectKind::Implement => ScipSymbolKind::Struct,
-            _ => ScipSymbolKind::Namespace,
+            CompObjectKind::Implement => ScipSymbolKind::Object,
+            _ => ScipSymbolKind::Object,
         },
         DMLSymbolKind::Parameter => ScipSymbolKind::Constant,
         DMLSymbolKind::Constant => ScipSymbolKind::Constant,
         DMLSymbolKind::Extern => ScipSymbolKind::Variable,
-        DMLSymbolKind::Hook => ScipSymbolKind::Function,
+        DMLSymbolKind::Hook => ScipSymbolKind::Event,
         DMLSymbolKind::Local => ScipSymbolKind::Variable,
         DMLSymbolKind::Loggroup => ScipSymbolKind::Constant,
         DMLSymbolKind::Method => ScipSymbolKind::Method,
@@ -208,14 +208,47 @@ fn scip_symbol_for_source(
     }
 }
 
-/// Build a human-readable documentation string for a DML symbol.
-fn make_documentation(sym: &crate::analysis::symbols::Symbol,
-                      display_name: &str) -> Vec<String> {
-    let kind_str = format!("{:?}", sym.kind);
-    let typed_str = sym.typed.as_ref()
-        .map(|t| format!(" : {:?}", t))
-        .unwrap_or_default();
-    vec![format!("{} `{}`{}", kind_str, display_name, typed_str)]
+/// Build a short-form declaration signature for a DML symbol.
+///
+/// For composite objects this is just the object kind keyword
+/// (e.g. `"register"`, `"bank"`).
+/// For methods this is the modifier keywords from the declaration
+/// (e.g. `"independent method default"`, `"shared method throws"`).
+/// Other symbol kinds currently produce no documentation.
+fn make_documentation(
+    source: &SymbolSource,
+    container: &StructureContainer,
+) -> Vec<String> {
+    match source {
+        SymbolSource::DMLObject(DMLObject::CompObject(key)) => {
+            if let Some(comp) = container.get(*key) {
+                vec![comp.kind.kind_name().to_string()]
+            } else {
+                vec![]
+            }
+        }
+        SymbolSource::Method(_, methref) => {
+            let decl = methref.get_decl();
+            let mut parts = Vec::new();
+            if decl.independent {
+                parts.push("independent");
+            }
+            match decl.modifier {
+                MethodModifier::Shared => parts.push("shared"),
+                MethodModifier::Inline => parts.push("inline"),
+                MethodModifier::None => {}
+            }
+            parts.push("method");
+            if decl.default {
+                parts.push("default");
+            }
+            if decl.throws {
+                parts.push("throws");
+            }
+            vec![parts.join(" ")]
+        }
+        _ => vec![],
+    }
 }
 
 /// Build a map from definition/declaration name locations to their
@@ -320,7 +353,7 @@ fn device_analysis_to_documents(
                sym.references.len(), sym.implementations.len());
 
         let kind = dml_kind_to_scip_kind(&sym.kind);
-        let documentation = make_documentation(&sym, &display_name);
+        let documentation = make_documentation(&sym.source, container);
         let enclosing = enclosing_ranges_for_source(&sym.source, container);
 
         // Record the primary location as a definition occurrence

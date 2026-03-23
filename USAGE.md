@@ -145,13 +145,28 @@ DML symbol kinds are mapped to SCIP `SymbolInformation.Kind` as follows:
 - `Constant` — Parameter, Constant, Loggroup
 - `Variable` — Extern, Saved, Session, Local
 - `Parameter` — MethodArg
-- `Function` — Hook
+- `Event` — Hook
 - `Method` — Method
 - `Class` — Template
 - `TypeAlias` — Typedef
-- `Namespace` — All composite objects (Device, Bank, Register, Field, Group, Port, Connect, Attribute, Event, Subdevice)
-- `Struct` — Implement
+- `Object` — All composite objects (Device, Bank, Register, Field, Group, Port, Connect, Attribute, Event, Subdevice, Implement)
 - `Interface` — Interface
+
+Note: SCIP's `Object` kind is used for DML composite objects because they are
+instantiated structural components in the device hierarchy, not types or
+namespaces. `Event` is used for DML hooks because they represent named event
+points that can be sent or listened to.
+
+Since SCIP's `Kind` enum is too coarse to distinguish between the various DML
+composite object kinds (e.g. `register` vs `bank` vs `attribute`), the
+`SymbolInformation.documentation` field carries a short-form declaration
+signature that disambiguates:
+
+- **Composite objects:** the DML keyword for the object kind, e.g. `register`,
+  `bank`, `attribute`, `group`, `field`, `device`, etc.
+- **Methods:** the DML declaration modifiers, e.g. `method`,
+  `independent method default`, `shared method throws`.
+- **Other symbol kinds:** no documentation is emitted.
 
 #### Symbol Naming Scheme
 
@@ -184,10 +199,31 @@ symbols are scoped to a single document and are not navigable across files.
 
 #### Occurrence Roles
 
-DML declarations and definitions are both emitted with the SCIP `Definition`
-role, since SCIP does not distinguish between the two. References (including
-template instantiation sites from `is` statements) are emitted with
-`ReadAccess`.
+DML definitions (including the primary symbol location) are emitted with the
+SCIP `Definition` role. Declarations that also appear as definitions share
+this role. Declarations that do _not_ define a value (e.g. abstract method
+declarations, or `default` parameter declarations that are overridden) are
+emitted with the `ForwardDefinition` role.
+
+References (including template instantiation sites from `is` statements) are
+emitted as plain references with no additional role flags. Access-kind
+refinement (`ReadAccess` / `WriteAccess`) is not yet tracked.
+
+#### Enclosing Ranges
+
+For composite object definitions and method declarations, each `Definition`
+or `ForwardDefinition` occurrence includes an `enclosing_range` that spans
+the full AST node (e.g. the complete `register r1 is ... { ... }` block or
+the full method body). This allows consumers to associate the definition site
+with the extent of the construct it names.
+
+#### Deduplication and Determinism
+
+When multiple device analyses share source files (e.g. common library code),
+the SCIP export deduplicates occurrences and symbol information so that each
+(symbol, range, role) triple and each symbol entry appears at most once.
+All output is sorted deterministically: documents by relative path,
+occurrences by range, symbols by symbol string, and relationships by symbol.
 
 #### Relationships
 
