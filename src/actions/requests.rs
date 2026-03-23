@@ -1064,6 +1064,13 @@ impl RequestAction for ExportScipRequest {
 
         info!("Exporting SCIP for {} device(s)", devices.len());
 
+        // Extract import resolution data for the SCIP export
+        let import_data = crate::scip::extract_import_data(
+            &analysis.isolated_analysis,
+            &analysis.import_map,
+            &devices,
+        );
+
         // Determine project root from workspaces
         let project_root = ctx.workspace_roots
             .lock()
@@ -1072,7 +1079,8 @@ impl RequestAction for ExportScipRequest {
             .and_then(|ws| parse_file_path!(&ws.uri, "ExportScip").ok())
             .unwrap_or_else(|| std::path::PathBuf::from("."));
 
-        let index = crate::scip::build_scip_index(&devices, &project_root);
+        let index = crate::scip::build_scip_index(&devices, &project_root,
+                                                   &import_data);
         let doc_count = index.documents.len();
 
         let output = std::path::Path::new(&params.output_path);
