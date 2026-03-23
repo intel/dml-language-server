@@ -358,9 +358,14 @@ fn device_analysis_to_documents(
             let mut occ = Occurrence::new();
             occ.range = span_to_scip_range(decl_span);
             occ.symbol = scip_symbol.clone();
-            // Declarations get the Definition role in SCIP
-            // (SCIP doesn't distinguish declaration vs definition)
-            occ.symbol_roles = SymbolRole::Definition.value();
+            // If this declaration site also appears in definitions,
+            // it defines a value and gets the Definition role.
+            // Otherwise it's an abstract/forward declaration.
+            if sym.definitions.contains(decl_span) {
+                occ.symbol_roles = SymbolRole::Definition.value();
+            } else {
+                occ.symbol_roles = SymbolRole::ForwardDefinition.value();
+            }
             data.add_occurrence(occ);
         }
 
