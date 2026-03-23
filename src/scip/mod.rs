@@ -372,7 +372,10 @@ fn device_analysis_to_documents(
             let mut occ = Occurrence::new();
             occ.range = span_to_scip_range(ref_span);
             occ.symbol = scip_symbol.clone();
-            occ.symbol_roles = SymbolRole::ReadAccess.value();
+            // Plain reference (no Definition/ReadAccess/WriteAccess role).
+            // TODO: narrow down to ReadAccess/WriteAccess once the
+            // analysis tracks access kinds.
+            occ.symbol_roles = 0;
             data.add_occurrence(occ);
         }
 
@@ -387,7 +390,9 @@ fn device_analysis_to_documents(
             let mut occ = Occurrence::new();
             occ.range = span_to_scip_range(impl_span);
             occ.symbol = scip_symbol.clone();
-            occ.symbol_roles = SymbolRole::ReadAccess.value();
+            // Plain reference — the implementation relationship is
+            // expressed via Relationship entries, not occurrence roles.
+            occ.symbol_roles = 0;
             data.add_occurrence(occ);
         }
     }
