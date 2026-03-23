@@ -5,7 +5,7 @@
 //! This module converts DLS analysis data (DeviceAnalysis) into
 //! the SCIP index format for use with code intelligence tools.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use protobuf::MessageField;
@@ -620,6 +620,16 @@ fn device_analysis_to_documents(
             }
         }
     }
+
+    // Remove from external_symbols any symbol that already appears
+    // in a document. This can happen when multiple internal Symbol
+    // objects (e.g. from different templates) produce the same SCIP
+    // symbol string but have their primary locations in different
+    // files — one in-project and one external.
+    let doc_symbol_strings: HashSet<&str> = documents.iter()
+        .flat_map(|doc| doc.symbols.iter().map(|s| s.symbol.as_str()))
+        .collect();
+    external_symbols.retain(|s| !doc_symbol_strings.contains(s.symbol.as_str()));
 
     (documents, external_symbols)
 }
