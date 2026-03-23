@@ -218,6 +218,38 @@ fn make_documentation(sym: &crate::analysis::symbols::Symbol,
     vec![format!("{} `{}`{}", kind_str, display_name, typed_str)]
 }
 
+/// Build a map from definition/declaration name locations to their
+/// enclosing AST spans, for use as SCIP `enclosing_range`.
+///
+/// For composite objects, each ObjectSpec has a `loc` (name span) and
+/// a `span` (full `group foo is bar { ... }` range). For methods,
+/// the MethodDecl has a name location and a full declaration span.
+fn enclosing_ranges_for_source(
+    source: &SymbolSource,
+    container: &StructureContainer,
+) -> HashMap<ZeroSpan, ZeroSpan> {
+    let mut map = HashMap::new();
+    match source {
+        SymbolSource::DMLObject(DMLObject::CompObject(key)) => {
+            if let Some(comp) = container.get(*key) {
+                for spec in &comp.all_decls {
+                    map.insert(spec.loc, spec.span);
+                }
+                // definitions may include specs not in all_decls
+                for spec in &comp.definitions {
+                    map.entry(spec.loc).or_insert(spec.span);
+                }
+            }
+        }
+        SymbolSource::Method(_, methref) => {
+            let decl = methref.get_decl();
+            map.insert(decl.name.span, decl.span);
+        }
+        _ => {}
+    }
+    map
+}
+
 /// Holds per-file occurrence and symbol information data
 /// that will be assembled into SCIP Documents.
 ///
@@ -289,6 +321,7 @@ fn device_analysis_to_documents(
 
         let kind = dml_kind_to_scip_kind(&sym.kind);
         let documentation = make_documentation(&sym, &display_name);
+        let enclosing = enclosing_ranges_for_source(&sym.source, container);
 
         // Record the primary location as a definition occurrence
         {
@@ -300,6 +333,9 @@ fn device_analysis_to_documents(
             occ.range = span_to_scip_range(loc);
             occ.symbol = scip_symbol.clone();
             occ.symbol_roles = SymbolRole::Definition.value();
+            if let Some(enc) = enclosing.get(loc) {
+                occ.enclosing_range = span_to_scip_range(enc);
+            }
 
             data.add_occurrence(occ);
 
@@ -344,6 +380,9 @@ fn device_analysis_to_documents(
             occ.range = span_to_scip_range(def_span);
             occ.symbol = scip_symbol.clone();
             occ.symbol_roles = SymbolRole::Definition.value();
+            if let Some(enc) = enclosing.get(def_span) {
+                occ.enclosing_range = span_to_scip_range(enc);
+            }
             data.add_occurrence(occ);
         }
 
@@ -365,6 +404,9 @@ fn device_analysis_to_documents(
                 occ.symbol_roles = SymbolRole::Definition.value();
             } else {
                 occ.symbol_roles = SymbolRole::ForwardDefinition.value();
+            }
+            if let Some(enc) = enclosing.get(decl_span) {
+                occ.enclosing_range = span_to_scip_range(enc);
             }
             data.add_occurrence(occ);
         }
