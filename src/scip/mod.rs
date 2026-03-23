@@ -130,7 +130,8 @@ fn make_global_symbol(device_name: &str, qualified_path: &str,
                 }
             }
         } else {
-            // Intermediate segments are namespace-like
+            // Intermediate segments are enclosing object instances
+            // (device, bank, register, ...) — use term descriptor
             descriptors.push_str(&sanitized);
             descriptors.push('.');
         }
