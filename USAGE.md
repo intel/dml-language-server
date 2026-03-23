@@ -230,3 +230,20 @@ occurrences by range, symbols by symbol string, and relationships by symbol.
 Composite objects that instantiate templates (via `is some_template`) emit
 SCIP `Relationship` entries with `is_implementation = true` pointing to the
 template symbol.
+
+#### File Symbols and Imports
+
+Each source file involved in the analysis gets a dedicated SCIP symbol of kind
+`File`. A `Definition` occurrence is emitted at line 0 of each file so that
+navigation to the file symbol opens the file itself.
+
+For each `import "..."` statement, an `Import` occurrence is emitted at the
+import statement's span, referencing the imported file's symbol. This lets
+consumers navigate from import statements to the imported file and visualize
+file-level dependency graphs.
+
+File symbols use the format:
+```
+dml simics . . path/to/file_dml.
+```
+where path segments are separated by term descriptors (`.`).

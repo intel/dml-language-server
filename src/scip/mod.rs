@@ -23,9 +23,17 @@ use crate::analysis::templating::objects::{
     DMLHierarchyMember, DMLNamedMember, DMLObject, StructureContainer,
 };
 use crate::analysis::DeviceAnalysis;
+use crate::analysis::IsolatedAnalysis;
 use crate::Span as ZeroSpan;
+use crate::file_management::CanonPath;
 
 use log::debug;
+
+/// Per-file import resolution data for SCIP export.
+///
+/// Maps each source file (canonical path) to its list of
+/// (import_statement_span, resolved_target_canonical_path) pairs.
+pub type FileImportData = HashMap<CanonPath, Vec<(ZeroSpan, CanonPath)>>;
 
 /// Convert a ZeroSpan range into the SCIP occurrence range format.
 ///
@@ -78,6 +86,74 @@ fn sanitize_name(name: &str) -> String {
     name.chars()
         .map(|c| if c.is_ascii_alphanumeric() || c == '_' { c } else { '_' })
         .collect()
+}
+
+/// Build a SCIP symbol string representing a DML source file.
+///
+/// File symbols use the path relative to the project root (or the
+/// full path for external files) as the descriptor, with dots and
+/// slashes sanitized.
+fn make_file_symbol(path: &Path, project_root: &Path) -> String {
+    let display = path.strip_prefix(project_root)
+        .unwrap_or(path)
+        .to_string_lossy();
+    let sanitized = display.chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '_' { c }
+             else if c == '/' || c == '\\' { '/' }
+             else { '_' })
+        .collect::<String>();
+    // Use the path segments as nested term descriptors
+    let descriptors: String = sanitized.split('/')
+        .filter(|s| !s.is_empty())
+        .map(|s| format!("{}.", s))
+        .collect();
+    format!("dml simics . . {}", descriptors)
+}
+
+/// Extract import resolution data from an AnalysisStorage for a set
+/// of device analyses.
+///
+/// For each file involved in any of the given devices, collects the
+/// (import_span, resolved_path) pairs from the IsolatedAnalysis
+/// import data and the import_map resolution data.
+pub fn extract_import_data(
+    isolated_analyses: &HashMap<CanonPath,
+        crate::actions::analysis_storage::TimestampedStorage<IsolatedAnalysis>>,
+    import_map: &HashMap<CanonPath,
+        HashMap<Option<CanonPath>,
+                HashMap<crate::analysis::structure::objects::Import, String>>>,
+    devices: &[&DeviceAnalysis],
+) -> FileImportData {
+    let mut result = FileImportData::new();
+    for device in devices {
+        let device_context = Some(device.path.clone());
+        for file_path in &device.dependant_files {
+            if result.contains_key(file_path) {
+                continue;
+            }
+            let mut imports = Vec::new();
+            if let Some(analysis) = isolated_analyses.get(file_path) {
+                let context_map = import_map.get(file_path);
+                let resolved = context_map
+                    .and_then(|cm| cm.get(&device_context))
+                    .or_else(|| context_map.and_then(|cm| cm.get(&None)));
+                for import_decl in analysis.stored.get_imports() {
+                    let import = &import_decl.obj;
+                    if let Some(resolved_map) = resolved {
+                        if let Some(resolved_str) = resolved_map.get(import) {
+                            if let Some(canon) =
+                                CanonPath::from_path_buf(
+                                    PathBuf::from(resolved_str)) {
+                                imports.push((import.span, canon));
+                            }
+                        }
+                    }
+                }
+            }
+            result.insert(file_path.clone(), imports);
+        }
+    }
+    result
 }
 
 /// Build a `local` SCIP symbol string (document-scoped).
@@ -330,6 +406,7 @@ impl FileData {
 fn device_analysis_to_documents(
     device: &DeviceAnalysis,
     project_root: &Path,
+    import_data: &FileImportData,
 ) -> (Vec<Document>, Vec<SymbolInformation>) {
     let mut file_data: HashMap<PathBuf, FileData> = HashMap::new();
     let container = &device.objects;
@@ -477,6 +554,48 @@ fn device_analysis_to_documents(
         }
     }
 
+    // Emit file-level symbols and import occurrences.
+    //
+    // For each file in the device analysis, we create a file-level
+    // symbol (with a Definition occurrence at line 0) and then emit
+    // Import occurrences at each `import "..."` statement pointing
+    // to the imported file's symbol.
+    for dep_path in &device.dependant_files {
+        let file_pathbuf: PathBuf = dep_path.clone().into();
+        let file_sym = make_file_symbol(&file_pathbuf, project_root);
+
+        // Definition occurrence at line 0 of the file
+        let data = file_data.entry(file_pathbuf.clone()).or_default();
+        let mut def_occ = Occurrence::new();
+        def_occ.range = vec![0, 0, 0]; // line 0, char 0, end char 0
+        def_occ.symbol = file_sym.clone();
+        def_occ.symbol_roles = SymbolRole::Definition.value();
+        data.add_occurrence(def_occ);
+
+        // SymbolInformation for the file
+        let mut sym_info = SymbolInformation::new();
+        sym_info.symbol = file_sym.clone();
+        sym_info.kind = ScipSymbolKind::File.into();
+        sym_info.display_name = file_pathbuf.file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+        data.add_symbol_info(sym_info);
+
+        // Import occurrences for each `import "..."` in this file
+        if let Some(imports) = import_data.get(dep_path) {
+            for (import_span, resolved_path) in imports {
+                let target_pathbuf: PathBuf = resolved_path.clone().into();
+                let target_sym = make_file_symbol(&target_pathbuf, project_root);
+
+                let mut imp_occ = Occurrence::new();
+                imp_occ.range = span_to_scip_range(import_span);
+                imp_occ.symbol = target_sym;
+                imp_occ.symbol_roles = SymbolRole::Import.value();
+                data.add_occurrence(imp_occ);
+            }
+        }
+    }
+
     // Assemble Documents, separating in-project from external files.
     let mut documents = Vec::new();
     let mut external_symbols = Vec::new();
@@ -513,6 +632,7 @@ fn device_analysis_to_documents(
 pub fn build_scip_index(
     devices: &[&DeviceAnalysis],
     project_root: &Path,
+    import_data: &FileImportData,
 ) -> Index {
     debug!("Building SCIP index for {} device(s) rooted at {:?}",
            devices.len(), project_root);
@@ -539,7 +659,7 @@ pub fn build_scip_index(
     let mut ext_dedup = FileData::default();
 
     for device in devices {
-        let (docs, ext_syms) = device_analysis_to_documents(device, project_root);
+        let (docs, ext_syms) = device_analysis_to_documents(device, project_root, import_data);
         for doc in docs {
             let (_, dedup) = merged
                 .entry(doc.relative_path.clone())
