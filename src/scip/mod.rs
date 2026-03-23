@@ -219,10 +219,37 @@ fn make_documentation(sym: &crate::analysis::symbols::Symbol,
 
 /// Holds per-file occurrence and symbol information data
 /// that will be assembled into SCIP Documents.
+///
+/// Uses HashMaps keyed by dedup keys so that duplicate entries
+/// from multiple device analyses are naturally collapsed.
 #[derive(Default)]
 struct FileData {
-    occurrences: Vec<Occurrence>,
-    symbols: Vec<SymbolInformation>,
+    /// Occurrences keyed by (symbol, range, roles) to avoid duplicates.
+    occurrences: HashMap<(String, Vec<i32>, i32), Occurrence>,
+    /// SymbolInformation keyed by SCIP symbol string.
+    symbols: HashMap<String, SymbolInformation>,
+}
+
+impl FileData {
+    /// Insert an occurrence, deduplicating by (symbol, range, roles).
+    fn add_occurrence(&mut self, occ: Occurrence) {
+        let key = (
+            occ.symbol.clone(),
+            occ.range.clone(),
+            occ.symbol_roles,
+        );
+        self.occurrences.entry(key).or_insert(occ);
+    }
+
+    /// Insert a SymbolInformation entry, deduplicating by symbol string.
+    fn add_symbol_info(&mut self, sym_info: SymbolInformation) {
+        self.symbols.entry(sym_info.symbol.clone()).or_insert(sym_info);
+    }
+
+    fn into_vecs(self) -> (Vec<Occurrence>, Vec<SymbolInformation>) {
+        (self.occurrences.into_values().collect(),
+         self.symbols.into_values().collect())
+    }
 }
 
 /// Convert a single DeviceAnalysis into SCIP Documents.
@@ -270,7 +297,7 @@ fn device_analysis_to_documents(
             occ.symbol = scip_symbol.clone();
             occ.symbol_roles = SymbolRole::Definition.value();
 
-            data.occurrences.push(occ);
+            data.add_occurrence(occ);
 
             // Add SymbolInformation for this symbol (only once, at def site)
             let mut sym_info = SymbolInformation::new();
@@ -296,7 +323,7 @@ fn device_analysis_to_documents(
                 }
             }
 
-            data.symbols.push(sym_info);
+            data.add_symbol_info(sym_info);
         }
 
         // Record additional definitions
@@ -312,7 +339,7 @@ fn device_analysis_to_documents(
             occ.range = span_to_scip_range(def_span);
             occ.symbol = scip_symbol.clone();
             occ.symbol_roles = SymbolRole::Definition.value();
-            data.occurrences.push(occ);
+            data.add_occurrence(occ);
         }
 
         // Record declarations
@@ -329,7 +356,7 @@ fn device_analysis_to_documents(
             // Declarations get the Definition role in SCIP
             // (SCIP doesn't distinguish declaration vs definition)
             occ.symbol_roles = SymbolRole::Definition.value();
-            data.occurrences.push(occ);
+            data.add_occurrence(occ);
         }
 
         // Record references (read accesses)
@@ -341,7 +368,7 @@ fn device_analysis_to_documents(
             occ.range = span_to_scip_range(ref_span);
             occ.symbol = scip_symbol.clone();
             occ.symbol_roles = SymbolRole::ReadAccess.value();
-            data.occurrences.push(occ);
+            data.add_occurrence(occ);
         }
 
         // Record implementation sites (`is template` occurrences)
@@ -356,7 +383,7 @@ fn device_analysis_to_documents(
             occ.range = span_to_scip_range(impl_span);
             occ.symbol = scip_symbol.clone();
             occ.symbol_roles = SymbolRole::ReadAccess.value();
-            data.occurrences.push(occ);
+            data.add_occurrence(occ);
         }
     }
 
@@ -365,6 +392,7 @@ fn device_analysis_to_documents(
     let mut external_symbols = Vec::new();
 
     for (path, data) in file_data {
+        let (occs, syms) = data.into_vecs();
         match path.strip_prefix(project_root) {
             Ok(rel) => {
                 let mut doc = Document::new();
@@ -372,14 +400,14 @@ fn device_analysis_to_documents(
                 doc.language = "dml".to_string();
                 doc.position_encoding =
                     PositionEncoding::UTF16CodeUnitOffsetFromLineStart.into();
-                doc.occurrences = data.occurrences;
-                doc.symbols = data.symbols;
+                doc.occurrences = occs;
+                doc.symbols = syms;
                 documents.push(doc);
             }
             Err(_) => {
                 // External file: keep symbol info for hover/navigation
                 // but don't emit a document or occurrences
-                external_symbols.extend(data.symbols);
+                external_symbols.extend(syms);
             }
         }
     }
@@ -413,31 +441,50 @@ pub fn build_scip_index(
     };
     metadata.text_document_encoding = scip::types::TextEncoding::UTF8.into();
 
-    // Collect documents from all devices, merging by relative_path
-    let mut merged_docs: HashMap<String, Document> = HashMap::new();
-    let mut all_external_symbols: Vec<SymbolInformation> = Vec::new();
+    // Collect documents from all devices, merging by relative_path.
+    // We use FileData for deduplication across devices: the same symbol
+    // or occurrence can appear in multiple DeviceAnalyses when they
+    // share source files (e.g. common library code).
+    let mut merged: HashMap<String, (Document, FileData)> = HashMap::new();
+    let mut ext_dedup = FileData::default();
 
     for device in devices {
         let (docs, ext_syms) = device_analysis_to_documents(device, project_root);
         for doc in docs {
-            let entry = merged_docs.entry(doc.relative_path.clone())
+            let (_, dedup) = merged
+                .entry(doc.relative_path.clone())
                 .or_insert_with(|| {
                     let mut d = Document::new();
                     d.relative_path = doc.relative_path.clone();
                     d.language = doc.language.clone();
                     d.position_encoding = doc.position_encoding;
-                    d
+                    (d, FileData::default())
                 });
-            entry.occurrences.extend(doc.occurrences);
-            entry.symbols.extend(doc.symbols);
+            for occ in doc.occurrences {
+                dedup.add_occurrence(occ);
+            }
+            for sym in doc.symbols {
+                dedup.add_symbol_info(sym);
+            }
         }
-        all_external_symbols.extend(ext_syms);
+        for sym in ext_syms {
+            ext_dedup.add_symbol_info(sym);
+        }
     }
+
+    // Move deduplicated data into the final documents
+    let documents: Vec<Document> = merged.into_values().map(|(mut doc, dedup)| {
+        let (occs, syms) = dedup.into_vecs();
+        doc.occurrences = occs;
+        doc.symbols = syms;
+        doc
+    }).collect();
 
     let mut index = Index::new();
     index.metadata = MessageField::some(metadata);
-    index.documents = merged_docs.into_values().collect();
-    index.external_symbols = all_external_symbols;
+    index.documents = documents;
+    let (_, ext_syms) = ext_dedup.into_vecs();
+    index.external_symbols = ext_syms;
 
     debug!("SCIP index built with {} document(s)", index.documents.len());
     index
