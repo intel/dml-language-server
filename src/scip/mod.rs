@@ -248,8 +248,11 @@ impl FileData {
     }
 
     fn into_vecs(self) -> (Vec<Occurrence>, Vec<SymbolInformation>) {
-        (self.occurrences.into_values().collect(),
-         self.symbols.into_values().collect())
+        let mut occs: Vec<_> = self.occurrences.into_values().collect();
+        occs.sort_by(|a, b| a.range.cmp(&b.range));
+        let mut syms: Vec<_> = self.symbols.into_values().collect();
+        syms.sort_by(|a, b| a.symbol.cmp(&b.symbol));
+        (occs, syms)
     }
 }
 
@@ -324,6 +327,7 @@ fn device_analysis_to_documents(
                 }
             }
 
+            sym_info.relationships.sort_by(|a, b| a.symbol.cmp(&b.symbol));
             data.add_symbol_info(sym_info);
         }
 
@@ -473,18 +477,21 @@ pub fn build_scip_index(
         }
     }
 
-    // Move deduplicated data into the final documents
-    let documents: Vec<Document> = merged.into_values().map(|(mut doc, dedup)| {
+    // Move deduplicated data into the final documents, sorted for
+    // deterministic output.
+    let mut documents: Vec<Document> = merged.into_values().map(|(mut doc, dedup)| {
         let (occs, syms) = dedup.into_vecs();
         doc.occurrences = occs;
         doc.symbols = syms;
         doc
     }).collect();
+    documents.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
 
     let mut index = Index::new();
     index.metadata = MessageField::some(metadata);
     index.documents = documents;
-    let (_, ext_syms) = ext_dedup.into_vecs();
+    let (_, mut ext_syms) = ext_dedup.into_vecs();
+    ext_syms.sort_by(|a, b| a.symbol.cmp(&b.symbol));
     index.external_symbols = ext_syms;
 
     debug!("SCIP index built with {} document(s)", index.documents.len());
