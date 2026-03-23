@@ -371,7 +371,7 @@ fn device_analysis_to_documents(
                 doc.relative_path = rel.to_string_lossy().to_string();
                 doc.language = "dml".to_string();
                 doc.position_encoding =
-                    PositionEncoding::UTF8CodeUnitOffsetFromLineStart.into();
+                    PositionEncoding::UTF16CodeUnitOffsetFromLineStart.into();
                 doc.occurrences = data.occurrences;
                 doc.symbols = data.symbols;
                 documents.push(doc);
