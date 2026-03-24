@@ -475,6 +475,37 @@ fn device_analysis_to_documents(
                         rel.is_implementation = true;
                         sym_info.relationships.push(rel);
                     }
+
+                    // For connects, emit is_implementation pointing
+                    // to each interface object nested under its
+                    // implement children.
+                    if comp.kind == CompObjectKind::Connect {
+                        for child_obj in comp.components.values() {
+                            if let DMLObject::CompObject(impl_key) = child_obj {
+                                if let Some(impl_obj) = container.get(*impl_key) {
+                                    if impl_obj.kind != CompObjectKind::Implement {
+                                        continue;
+                                    }
+                                    for grandchild in impl_obj.components.values() {
+                                        if let DMLObject::CompObject(iface_key) = grandchild {
+                                            if let Some(iface_obj) = container.get(*iface_key) {
+                                                if iface_obj.kind == CompObjectKind::Interface {
+                                                    let iface_qname = iface_obj.qualified_name(container);
+                                                    let iface_sym = make_global_symbol(
+                                                        device_name, &iface_qname,
+                                                        &DMLSymbolKind::CompObject(CompObjectKind::Interface));
+                                                    let mut rel = Relationship::new();
+                                                    rel.symbol = iface_sym;
+                                                    rel.is_implementation = true;
+                                                    sym_info.relationships.push(rel);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
