@@ -627,28 +627,39 @@ fn device_analysis_to_documents(
         def_occ.symbol_roles = SymbolRole::Definition.value();
         data.add_occurrence(def_occ);
 
-        // SymbolInformation for the file
+        // SymbolInformation for the file, with is_reference
+        // relationships to each imported file's symbol.
         let mut sym_info = SymbolInformation::new();
         sym_info.symbol = file_sym.clone();
         sym_info.kind = ScipSymbolKind::File.into();
         sym_info.display_name = file_pathbuf.file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_default();
-        data.add_symbol_info(sym_info);
 
-        // Import occurrences for each `import "..."` in this file
+        // Import occurrences for each `import "..."` in this file,
+        // plus is_reference relationships on the file symbol.
         if let Some(imports) = import_data.get(dep_path) {
+            let mut seen_targets = HashSet::new();
             for (import_span, resolved_path) in imports {
                 let target_pathbuf: PathBuf = resolved_path.clone().into();
                 let target_sym = make_file_symbol(&target_pathbuf, project_root);
 
                 let mut imp_occ = Occurrence::new();
                 imp_occ.range = span_to_scip_range(import_span);
-                imp_occ.symbol = target_sym;
+                imp_occ.symbol = target_sym.clone();
                 imp_occ.symbol_roles = SymbolRole::Import.value();
                 data.add_occurrence(imp_occ);
+
+                if seen_targets.insert(target_sym.clone()) {
+                    let mut rel = Relationship::new();
+                    rel.symbol = target_sym;
+                    rel.is_reference = true;
+                    sym_info.relationships.push(rel);
+                }
             }
         }
+        sym_info.relationships.sort_by(|a, b| a.symbol.cmp(&b.symbol));
+        data.add_symbol_info(sym_info);
     }
 
     // Assemble Documents, separating in-project from external files.
