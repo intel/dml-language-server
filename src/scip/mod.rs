@@ -354,6 +354,11 @@ fn enclosing_ranges_for_source(
             let decl = methref.get_decl();
             map.insert(decl.name.span, decl.span);
         }
+        SymbolSource::Template(templ) => {
+            if let Some(loc) = templ.location {
+                map.insert(loc, templ.spec.span);
+            }
+        }
         _ => {}
     }
     map
