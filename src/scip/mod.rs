@@ -79,33 +79,52 @@ fn dml_kind_to_scip_kind(kind: &DMLSymbolKind) -> ScipSymbolKind {
 
 /// Sanitize a name for use in SCIP symbol strings.
 ///
-/// SCIP descriptors use backtick-escaping for names that contain
-/// non-identifier characters, but to keep things simple we sanitize
-/// to `[a-zA-Z0-9_]+`.
+/// Check whether a character is a SCIP identifier character.
+///
+/// Per the SCIP symbol grammar:
+///   `<identifier-character> ::= '_' | '+' | '-' | '$' | ASCII letter or digit`
+fn is_scip_identifier_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || matches!(c, '_' | '+' | '-' | '$')
+}
+
+/// Encode a name as a SCIP descriptor identifier.
+///
+/// Names consisting entirely of SCIP identifier characters are emitted
+/// as-is (a "simple identifier").  Names that contain other characters
+/// (e.g. dots, spaces) are backtick-escaped, with interior backticks
+/// doubled.
 fn sanitize_name(name: &str) -> String {
-    name.chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '_' { c } else { '_' })
-        .collect()
+    if !name.is_empty() && name.chars().all(is_scip_identifier_char) {
+        name.to_string()
+    } else {
+        // Escaped identifier: `<escaped-character>+`
+        // Interior backticks are escaped by doubling them.
+        let mut out = String::new();
+        out.push('`');
+        for c in name.chars() {
+            if c == '`' {
+                out.push_str("``");
+            } else {
+                out.push(c);
+            }
+        }
+        out.push('`');
+        out
+    }
 }
 
 /// Build a SCIP symbol string representing a DML source file.
 ///
 /// File symbols use the path relative to the project root (or the
-/// full path for external files) as the descriptor, with dots and
-/// slashes sanitized.
+/// full path for external files) as the descriptor.  Each path
+/// component becomes a term descriptor with proper SCIP escaping.
 fn make_file_symbol(path: &Path, project_root: &Path) -> String {
-    let display = path.strip_prefix(project_root)
-        .unwrap_or(path)
-        .to_string_lossy();
-    let sanitized = display.chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '_' { c }
-             else if c == '/' || c == '\\' { '/' }
-             else { '_' })
-        .collect::<String>();
-    // Use the path segments as nested term descriptors
-    let descriptors: String = sanitized.split('/')
-        .filter(|s| !s.is_empty())
-        .map(|s| format!("{}.", s))
+    let rel = path.strip_prefix(project_root).unwrap_or(path);
+    let descriptors: String = rel.components()
+        .filter_map(|c| {
+            let s = c.as_os_str().to_str()?;
+            Some(format!("{}.", sanitize_name(s)))
+        })
         .collect();
     format!("dml simics . . {}", descriptors)
 }
