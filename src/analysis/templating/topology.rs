@@ -390,7 +390,7 @@ impl <'t> TemplateRefKind<'t> {
 
     pub fn span(&self) -> &'t ZeroSpan {
         match self {
-            TemplateRefKind::Template(objspec) => &objspec.obj.object.name.span,
+            TemplateRefKind::Template(objspec) => objspec.obj.span(),
             TemplateRefKind::File(file) => &file.filespan,
         }
     }
