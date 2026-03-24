@@ -42,16 +42,12 @@ pub type FileImportData = HashMap<CanonPath, Vec<(ZeroSpan, CanonPath)>>;
 /// All values are 0-based.
 fn span_to_scip_range(span: &ZeroSpan) -> Vec<i32> {
     let r = &span.range;
-    let start_line = r.row_start.0 as i32;
-    let start_char = r.col_start.0 as i32;
-    let end_line = r.row_end.0 as i32;
-    let end_char = r.col_end.0 as i32;
-
-    if start_line == end_line {
-        vec![start_line, start_char, end_char]
-    } else {
-        vec![start_line, start_char, end_line, end_char]
-    }
+    vec![
+        r.row_start.0 as i32,
+        r.col_start.0 as i32,
+        r.row_end.0 as i32,
+        r.col_end.0 as i32,
+    ]
 }
 
 /// Map a DMLSymbolKind to a SCIP SymbolInformation Kind.
