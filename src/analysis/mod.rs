@@ -1454,30 +1454,8 @@ impl DeviceAnalysis {
         method_structure: &HashMap<ZeroSpan, RangeEntry>,
         reference_cache: &Mutex<ReferenceCache>)
         -> ReferenceMatches {
-        let mut recursive_cache = HashSet::default();
-        self.find_target_for_reference_without_loop(in_object,
-                                                    reference,
-                                                    method_structure,
-                                                    reference_cache,
-                                                    &mut recursive_cache)
-    }
-
-    fn find_target_for_reference_without_loop<'t>(
-        &self,
-        in_object: Option<&'t DMLObject>,
-        reference: &'t VariableReference,
-        method_structure: &HashMap<ZeroSpan, RangeEntry>,
-        reference_cache: &Mutex<ReferenceCache>,
-        recursive_cache: &'t mut HashSet<(String, &'t VariableReference)>)
-        -> ReferenceMatches {
-        // Prevent us from calling into the exact same reference lookup twice
-        // within one lookup.
-        let path_name = object_to_path_name(in_object, &self.objects);
-        if !recursive_cache.insert((path_name, reference)) {
-            internal_error!("Recursive reference lookup detected at \
-                             {:?} under {:?}", reference, in_object);
-            return ReferenceMatches::new();
-        }
+        // NOTE: There was previously a check here to detect infinite recursion loops in reference
+        // lookups, but it was discarded for being overly memory-intensive
         let index_key = (in_object, reference.clone());
         {
             if let Some(cached_result) = reference_cache.lock().unwrap()
