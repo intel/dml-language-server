@@ -323,13 +323,16 @@ impl<O: Output> LsService<O> {
     pub fn run(mut self) -> i32 {
         let client_reader_send = self.server_send.clone();
         let client_reader_output = self.output.clone();
-        let client_reader_msg_reader = Arc::clone(&self.msg_reader);
+        let client_reader_msg_reader = Arc::downgrade(&self.msg_reader);
         // Start client reader thread
         thread::spawn(move || {
-            let msg_reader = client_reader_msg_reader;
+            let msg_reader_weak = client_reader_msg_reader;
             let output = client_reader_output;
             let send = client_reader_send;
             loop {
+                let Some(msg_reader) = msg_reader_weak.upgrade() else {
+                    return;
+                };
                 trace!("Awaiting message");
                 let msg_string = match msg_reader.read_message() {
                     Some(m) => m,
