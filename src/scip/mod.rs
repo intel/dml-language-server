@@ -432,6 +432,12 @@ fn device_analysis_to_documents(
     let container = &device.objects;
     let device_name = &device.name;
 
+    // Track method declaration locations → SCIP symbol strings so we
+    // can wire up override relationships in a second pass.
+    let mut method_span_to_scip_sym: HashMap<ZeroSpan, String> = HashMap::new();
+    // Collect (file_path, overriding_symbol, overridden_locations) edges.
+    let mut override_edges: Vec<(PathBuf, String, Vec<ZeroSpan>)> = Vec::new();
+
     // Iterate over all symbols in the device analysis
     for symbol_ref in device.symbol_info.all_symbols() {
         let sym = symbol_ref.symbol.lock().unwrap();
@@ -448,6 +454,26 @@ fn device_analysis_to_documents(
                sym.id, sym.kind, &scip_symbol,
                sym.definitions.len(), sym.declarations.len(),
                sym.references.len(), sym.implementations.len());
+
+        // Track method symbols for override relationship resolution.
+        if let SymbolSource::Method(_, methref) = &sym.source {
+            method_span_to_scip_sym.insert(
+                *methref.location(), scip_symbol.clone());
+            if let Some(default_call) = methref.get_default() {
+                let overridden_locs: Vec<ZeroSpan> = default_call
+                    .flat_refs()
+                    .iter()
+                    .map(|r| *r.location())
+                    .collect();
+                if !overridden_locs.is_empty() {
+                    override_edges.push((
+                        sym.loc.path(),
+                        scip_symbol.clone(),
+                        overridden_locs,
+                    ));
+                }
+            }
+        }
 
         let kind = dml_kind_to_scip_kind(&sym.kind);
         let documentation = make_documentation(&sym.source, container);
@@ -602,6 +628,31 @@ fn device_analysis_to_documents(
             // expressed via Relationship entries, not occurrence roles.
             occ.symbol_roles = 0;
             data.add_occurrence(occ);
+        }
+    }
+
+    // Add override relationships to method SymbolInformation entries.
+    // A method that overrides a default/abstract method from a template
+    // gets an is_implementation relationship pointing to the overridden
+    // method's SCIP symbol.
+    for (def_file, overriding_sym, overridden_locs) in &override_edges {
+        if let Some(data) = file_data.get_mut(def_file) {
+            if let Some(sym_info) = data.symbols.get_mut(overriding_sym) {
+                for loc in overridden_locs {
+                    if let Some(overridden_sym) =
+                        method_span_to_scip_sym.get(loc)
+                    {
+                        if overridden_sym != overriding_sym {
+                            let mut rel = Relationship::new();
+                            rel.symbol = overridden_sym.clone();
+                            rel.is_implementation = true;
+                            sym_info.relationships.push(rel);
+                        }
+                    }
+                }
+                sym_info.relationships
+                    .sort_by(|a, b| a.symbol.cmp(&b.symbol));
+            }
         }
     }
 

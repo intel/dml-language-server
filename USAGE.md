@@ -235,6 +235,13 @@ Connect objects additionally emit `is_implementation` relationships pointing to
 each interface symbol nested under their implement children. This captures the
 semantic link between a connect and the interfaces it provides.
 
+Methods that override a default or abstract method from a template also emit
+`is_implementation` relationships pointing to the overridden method's symbol.
+For example, if template `foo` defines `method a` as `default` and object `b`
+implements `foo` with its own definition of `method a`, then `b.a` will carry
+an `is_implementation` relationship to `foo.a`. This lets consumers identify
+which method version is the active override and navigate the override chain.
+
 #### File Symbols and Imports
 
 Each source file involved in the analysis gets a dedicated SCIP symbol of kind
