@@ -38,6 +38,7 @@ struct Args {
     test: bool,
     quiet: bool,
     scip_output: Option<PathBuf>,
+    object_hierarchy_output: Option<PathBuf>,
 }
 
 fn parse_args() -> Args {
@@ -98,6 +99,11 @@ fn parse_args() -> Args {
              .action(ArgAction::Set)
              .value_parser(clap::value_parser!(PathBuf))
              .required(false))
+        .arg(Arg::new("object-hierarchy").long("object-hierarchy")
+             .help("Export device object hierarchy as JSON to the specified file after analysis")
+             .action(ArgAction::Set)
+             .value_parser(clap::value_parser!(PathBuf))
+             .required(false))
         .arg(arg!(<PATH> ... "DML files to analyze")
              .value_parser(clap::value_parser!(PathBuf)))
         .arg_required_else_help(false)
@@ -123,6 +129,8 @@ fn parse_args() -> Args {
         lint_cfg_path: args.get_one::<PathBuf>("lint-cfg-path")
             .cloned(),
         scip_output: args.get_one::<PathBuf>("scip-output")
+            .cloned(),
+        object_hierarchy_output: args.get_one::<PathBuf>("object-hierarchy")
             .cloned(),
     }
 }
@@ -208,6 +216,36 @@ fn main_inner() -> Result<(), i32> {
                 },
                 Err(e) => {
                     eprintln!("SCIP export request failed: {}", e);
+                    exit_code = Err(1);
+                }
+            }
+        }
+
+        // Export object hierarchy if requested
+        if let Some(hierarchy_path) = &arg.object_hierarchy_output {
+            println!("Exporting object hierarchy to {:?}", hierarchy_path);
+            let hierarchy_output_str = hierarchy_path.to_string_lossy().to_string();
+            let device_paths: Vec<String> = arg.files.iter()
+                .filter_map(|f| f.canonicalize().ok())
+                .map(|p| p.to_string_lossy().to_string())
+                .collect();
+            match dlsclient.export_object_hierarchy(
+                device_paths, hierarchy_output_str)
+            {
+                Ok(result) => {
+                    if result.success {
+                        println!("Object hierarchy export complete: \
+                                  {} device(s) written",
+                                 result.device_count);
+                    } else {
+                        let err_msg = result.error.unwrap_or_else(
+                            || "Unknown error".to_string());
+                        eprintln!("Object hierarchy export failed: {}", err_msg);
+                        exit_code = Err(1);
+                    }
+                },
+                Err(e) => {
+                    eprintln!("Object hierarchy export request failed: {}", e);
                     exit_code = Err(1);
                 }
             }

@@ -1065,7 +1065,7 @@ impl RequestAction for ExportScipRequest {
         info!("Exporting SCIP for {} device(s)", devices.len());
 
         // Extract import resolution data for the SCIP export
-        let import_data = crate::scip::extract_import_data(
+        let import_data = crate::backends::scip::extract_import_data(
             &analysis.isolated_analysis,
             &analysis.import_map,
             &devices,
@@ -1092,12 +1092,12 @@ impl RequestAction for ExportScipRequest {
             .and_then(|ws| parse_file_path!(&ws.uri, "ExportScip").ok())
             .unwrap_or_else(|| std::path::PathBuf::from("."));
 
-        let index = crate::scip::build_scip_index(
+        let index = crate::backends::scip::build_scip_index(
             &isolated_map, &project_root, Some(&import_data), &devices);
         let doc_count = index.documents.len();
 
         let output = std::path::Path::new(&params.output_path);
-        match crate::scip::write_scip_to_file(index, output) {
+        match crate::backends::scip::write_scip_to_file(index, output) {
             Ok(()) => {
                 info!("SCIP export complete: {} documents written to {}",
                       doc_count, params.output_path);
@@ -1112,6 +1112,157 @@ impl RequestAction for ExportScipRequest {
                 Ok(ExportScipResult {
                     success: false,
                     document_count: 0,
+                    error: Some(e),
+                })
+            }
+        }
+    }
+}
+
+// ---- Object Hierarchy Export Request ----
+
+#[derive(Debug, Clone)]
+pub struct ExportObjectHierarchyRequest;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExportObjectHierarchyParams {
+    /// Device paths to export hierarchy for. If empty, exports all known devices.
+    pub devices: Option<Vec<lsp_types::Uri>>,
+    /// The file path where the JSON hierarchy should be written.
+    pub output_path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExportObjectHierarchyResult {
+    /// Whether the export succeeded.
+    pub success: bool,
+    /// Number of devices in the exported hierarchy.
+    pub device_count: usize,
+    /// Error message, if any.
+    pub error: Option<String>,
+}
+
+impl LSPRequest for ExportObjectHierarchyRequest {
+    type Params = ExportObjectHierarchyParams;
+    type Result = ExportObjectHierarchyResult;
+
+    const METHOD: &'static str = "$/exportObjectHierarchy";
+}
+
+impl RequestAction for ExportObjectHierarchyRequest {
+    type Response = ExportObjectHierarchyResult;
+
+    fn timeout() -> std::time::Duration {
+        crate::server::dispatch::DEFAULT_REQUEST_TIMEOUT * 30
+    }
+
+    fn fallback_response() -> Result<Self::Response, ResponseError> {
+        Ok(ExportObjectHierarchyResult {
+            success: false,
+            device_count: 0,
+            error: Some("Request timed out".to_string()),
+        })
+    }
+
+    fn get_identifier(params: &Self::Params) -> String {
+        Self::request_identifier(&params.output_path)
+    }
+
+    fn handle<O: Output>(
+        ctx: InitActionContext<O>,
+        params: Self::Params,
+    ) -> Result<Self::Response, ResponseError> {
+        info!("Handling object hierarchy export request to {}", params.output_path);
+
+        let device_paths: Vec<CanonPath> =
+            if let Some(devices) = params.devices {
+                devices.iter().filter_map(
+                    |uri| parse_file_path!(&uri, "ExportObjectHierarchy")
+                        .ok()
+                        .and_then(CanonPath::from_path_buf))
+                    .collect()
+            } else {
+                vec![]
+            };
+
+        if !device_paths.is_empty() {
+            ctx.wait_for_state(
+                AnalysisProgressKind::Device,
+                AnalysisWaitKind::Work,
+                AnalysisCoverageSpec::Paths(device_paths.clone())).ok();
+        } else {
+            ctx.wait_for_state(
+                AnalysisProgressKind::Device,
+                AnalysisWaitKind::Work,
+                AnalysisCoverageSpec::All).ok();
+        }
+
+        let analysis = ctx.analysis.lock().unwrap();
+
+        let devices: Vec<&crate::analysis::DeviceAnalysis> =
+            if device_paths.is_empty() {
+                analysis.device_analysis.values()
+                    .map(|ts| &ts.stored)
+                    .collect()
+            } else {
+                device_paths.iter().filter_map(|path| {
+                    analysis.get_device_analysis(path).ok()
+                }).collect()
+            };
+
+        if devices.is_empty() {
+            return Ok(ExportObjectHierarchyResult {
+                success: false,
+                device_count: 0,
+                error: Some("No device analyses found".to_string()),
+            });
+        }
+
+        info!("Exporting object hierarchy for {} device(s)", devices.len());
+
+        // Build the SCIP span→symbol map so the hierarchy can use
+        // full SCIP symbol paths for scip_name fields.
+        let mut isolated_map = std::collections::HashMap::new();
+        for device in &devices {
+            for file_path in &device.dependant_files {
+                if !isolated_map.contains_key(file_path) {
+                    if let Some(ts) = analysis.isolated_analysis.get(file_path) {
+                        isolated_map.insert(file_path.clone(), &ts.stored);
+                    }
+                }
+            }
+        }
+
+        let project_root = ctx.workspace_roots
+            .lock()
+            .unwrap()
+            .first()
+            .and_then(|ws| parse_file_path!(&ws.uri, "ExportObjectHierarchy").ok())
+            .unwrap_or_else(|| std::path::PathBuf::from("."));
+
+        let span_map = crate::backends::scip::build_span_symbol_map(
+            &isolated_map, &project_root);
+
+        let hierarchy = crate::backends::hierarchy::build_hierarchy(
+            &devices, &span_map);
+        let device_count = hierarchy.len();
+
+        let output = std::path::Path::new(&params.output_path);
+        match crate::backends::hierarchy::write_hierarchy_to_file(&hierarchy, output) {
+            Ok(()) => {
+                info!("Object hierarchy export complete: {} device(s) written to {}",
+                      device_count, params.output_path);
+                Ok(ExportObjectHierarchyResult {
+                    success: true,
+                    device_count,
+                    error: None,
+                })
+            },
+            Err(e) => {
+                error!("Object hierarchy export failed: {}", e);
+                Ok(ExportObjectHierarchyResult {
+                    success: false,
+                    device_count: 0,
                     error: Some(e),
                 })
             }

@@ -259,3 +259,124 @@ File symbols use the format:
 dml simics . . path/to/file_dml.
 ```
 where path segments are separated by term descriptors (`.`).
+
+## Device Object Hierarchy Export
+
+The DLS can export a JSON representation of the device-semantic object
+hierarchy for analyzed DML devices. This gives a structured view of the
+instantiated device tree — the composite objects, parameters, and methods
+that make up the device after all templates have been merged — rather than
+the raw syntactic AST.
+
+### Invocation
+
+Object hierarchy export is available through the DFA binary via the
+`--object-hierarchy <path>` flag:
+
+```
+dfa <dls_binary> --workspace <project_root> --object-hierarchy output.json <device files ...>
+```
+
+This can be combined with other flags such as `--compile-info`,
+`--scip-output`, etc.
+
+### Output Format
+
+The output is a JSON file whose top-level keys are device names (one per
+analysed device). Each device maps to a recursive object hierarchy:
+
+```json
+{
+  "sample_device": {
+    "scip_name": "dml simics . . src. sample.dml. sample_device.",
+    "kind": "device",
+    "parameters": {
+      "register_size": {
+        "scip_name": "dml simics . . src. sample.dml. sample_device. register_size.",
+        "value_expression": "4",
+        "type": "int"
+      }
+    },
+    "methods": {
+      "init": {
+        "scip_name_of_method_used": "dml simics . . src. sample.dml. sample_device. init().",
+        "arg_list": [],
+        "return_types": [],
+        "modifiers": ["default"]
+      }
+    },
+    "objects": {
+      "regs": {
+        "scip_name": "dml simics . . src. sample.dml. regs.",
+        "kind": "bank",
+        "parameters": { ... },
+        "methods": { ... },
+        "objects": {
+          "r0": {
+            "scip_name": "...",
+            "kind": "register",
+            ...
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+### Schema Reference
+
+#### Top Level
+
+A map from device short name (string) to a **HierarchyObject**.
+
+#### HierarchyObject
+
+| Field        | Type                                  | Description |
+|--------------|---------------------------------------|-------------|
+| `scip_name`  | string                                | Full SCIP symbol path for this object. |
+| `kind`       | string                                | DML composite object kind (`device`, `bank`, `register`, `field`, `group`, `port`, `connect`, `attribute`, `event`, `subdevice`, `implement`, `interface`). |
+| `parameters` | map\<string, HierarchyParameter\>     | Parameters declared on this object, keyed by short name. Omitted when empty. |
+| `methods`    | map\<string, HierarchyMethod\>        | Methods declared on this object, keyed by short name. Omitted when empty. |
+| `objects`    | map\<string, HierarchyObject\>        | Child composite objects, keyed by short name. Omitted when empty. |
+
+#### HierarchyParameter
+
+| Field              | Type            | Description |
+|--------------------|-----------------|-------------|
+| `scip_name`        | string          | Full SCIP symbol path for this parameter. |
+| `value_expression` | string or null  | Source text of the parameter value expression (e.g. `0x100`, `"hello"`), or `"auto"` for auto-parameters. Null if abstract. |
+| `type`             | string or null  | Source text of the declared type annotation (e.g. `uint64`). Null if untyped. |
+
+#### HierarchyMethod
+
+| Field                      | Type                       | Description |
+|----------------------------|----------------------------|-------------|
+| `scip_name_of_method_used` | string                     | Full SCIP symbol path of the concrete method definition used. |
+| `arg_list`                 | array of HierarchyMethodArg | Method arguments in declaration order. |
+| `return_types`             | array of string            | Source text of each return type. |
+| `modifiers`                | array of string            | Applicable modifiers: `shared`, `inline`, `independent`, `default`, `throws`. |
+
+#### HierarchyMethodArg
+
+| Field  | Type   | Description |
+|--------|--------|-------------|
+| `name` | string | Argument name. |
+| `type` | string | Source text of the argument type, or `"inline"` for untyped inline arguments. |
+
+### Relationship to SCIP
+
+The `scip_name` fields in the hierarchy correspond directly to the SCIP symbol
+strings produced by the SCIP export (see previous section). This allows
+consumers to cross-reference the hierarchy with the SCIP index — for example,
+looking up the precise source location of a parameter via its SCIP symbol, or
+navigating override chains for methods.
+
+Auto-generated parameters that are synthesised during device analysis (such as
+`_ident`, `indices`, `qname`, `parent`, `obj`) do not have a source-level
+declaration of their own. Their `scip_name` is resolved by walking the
+parameter's definition/declaration chain (used definitions → overridden
+definitions → declarations) looking for the nearest declaration that has a SCIP
+symbol — for example, the declaration in a built-in template. If no declaration
+in the chain has a SCIP symbol, the short identity name is used (e.g.
+`_ident`).

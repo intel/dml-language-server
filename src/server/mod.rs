@@ -595,7 +595,8 @@ impl<O: Output> LsService<O> {
                 requests::Completion,
                 requests::CodeLensRequest,
                 requests::GetKnownContextsRequest,
-                requests::ExportScipRequest;
+                requests::ExportScipRequest,
+                requests::ExportObjectHierarchyRequest;
         );
         Ok(())
     }

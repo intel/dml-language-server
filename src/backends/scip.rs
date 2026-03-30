@@ -995,6 +995,21 @@ pub fn build_scip_index(
     index
 }
 
+/// Build just the span→SCIP-symbol map without producing the full index.
+///
+/// This is useful for other backends (e.g. object hierarchy) that need
+/// to look up SCIP symbol paths for declarations.
+pub fn build_span_symbol_map(
+    analyses: &HashMap<CanonPath, &IsolatedAnalysis>,
+    project_root: &Path,
+) -> SpanSymbolMap {
+    let mut span_map = SpanSymbolMap::new();
+    for (_, analysis) in analyses {
+        process_file(analysis, project_root, None, &mut span_map);
+    }
+    span_map
+}
+
 /// Write a SCIP index to a file.
 pub fn write_scip_to_file(index: Index, output_path: &Path)
                           -> Result<(), String> {
