@@ -2,25 +2,38 @@
 //  SPDX-License-Identifier: Apache-2.0 and MIT
 //! SCIP (Source Code Intelligence Protocol) export support.
 //!
-//! This module converts DLS analysis data (DeviceAnalysis) into
-//! the SCIP index format for use with code intelligence tools.
+//! This module walks the structural tree of each `IsolatedAnalysis`
+//! to produce SCIP symbols based on code namespaces.
+//!
+//! For example, a method `foo` inside template `t` in file
+//! `src/dev.dml` gets the symbol:
+//!
+//! ```text
+//! dml simics . . src. `dev.dml`. t# foo().
+//! ```
+//!
+//! The symbol path is: file path segments (as term descriptors) →
+//! template/object nesting (as type/term descriptors) → leaf symbol.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use protobuf::MessageField;
 use protobuf::Enum;
+use protobuf::MessageField;
 
 use scip::types::{
-    Document, Index, Metadata, Occurrence, PositionEncoding,
-    Relationship, SymbolInformation, SymbolRole, ToolInfo,
+    Document, Index, Metadata, Occurrence, PositionEncoding, Relationship,
+    SymbolInformation, SymbolRole, ToolInfo,
     symbol_information::Kind as ScipSymbolKind,
 };
 
+use crate::analysis::structure::objects::{
+    CompObjectKind, DMLObjectCommon, MethodArgument, MethodModifier,
+};
+use crate::analysis::structure::toplevel::{ObjectDecl, StatementSpec};
 use crate::analysis::symbols::{DMLSymbolKind, SymbolSource};
-use crate::analysis::structure::objects::{CompObjectKind, MethodModifier};
 use crate::analysis::templating::objects::{
-    DMLHierarchyMember, DMLNamedMember, DMLObject, StructureContainer,
+    DMLNamedMember, DMLObject,
 };
 use crate::analysis::DeviceAnalysis;
 use crate::analysis::IsolatedAnalysis;
@@ -29,11 +42,143 @@ use crate::file_management::CanonPath;
 
 use log::debug;
 
+// ---------------------------------------------------------------------------
+// Shared types and utilities
+// ---------------------------------------------------------------------------
+
 /// Per-file import resolution data for SCIP export.
 ///
 /// Maps each source file (canonical path) to its list of
 /// (import_statement_span, resolved_target_canonical_path) pairs.
 pub type FileImportData = HashMap<CanonPath, Vec<(ZeroSpan, CanonPath)>>;
+
+/// Map from declaration name spans to the SCIP symbol strings
+/// emitted during the structural walk.  Built in the first pass
+/// and consumed by the relationship-extraction pass to resolve
+/// both source and target symbols from actual emitted data.
+pub type SpanSymbolMap = HashMap<ZeroSpan, String>;
+
+/// Extract relationship data from DeviceAnalysis semantic models.
+///
+/// Uses the `span_map` (built during the structural walk) to resolve
+/// both source and target SCIP symbols from their declaration spans.
+/// Returns a map from source SCIP symbol string → relationships,
+/// which can be applied to SymbolInformation entries in the final index.
+///
+/// This covers:
+/// - Template instantiation: composite objects → templates they `is`
+/// - Method overrides: methods → the method they override via `default`
+fn extract_relationships(
+    devices: &[&DeviceAnalysis],
+    span_map: &SpanSymbolMap,
+) -> HashMap<String, Vec<Relationship>> {
+    let mut result: HashMap<String, Vec<Relationship>> = HashMap::new();
+
+    for device in devices {
+        let container = &device.objects;
+
+        // --- Composite object → template instantiation ---
+        for (key, sym_ref) in &device.symbol_info.object_symbols {
+            let sym = sym_ref.symbol.lock().unwrap();
+            let source_span = &sym.loc;
+
+            // Look up the SCIP symbol emitted for this object
+            let Some(source_scip) = span_map.get(source_span) else {
+                continue;
+            };
+
+            if let Some(comp_obj) = container.get(*key) {
+                let mut rels: Vec<Relationship> = Vec::new();
+
+                // Template instantiation relationships
+                for (_templ_name, templ_arc) in &comp_obj.templates {
+                    if let Some(loc) = &templ_arc.location {
+                        // Look up the template's emitted SCIP symbol
+                        if let Some(target_scip) = span_map.get(loc) {
+                            let mut rel = Relationship::new();
+                            rel.symbol = target_scip.clone();
+                            rel.is_implementation = true;
+                            rels.push(rel);
+                        }
+                    }
+                }
+
+                // Connect → Interface relationships
+                if comp_obj.kind == CompObjectKind::Connect {
+                    for child_obj in comp_obj.components.values() {
+                        if let DMLObject::CompObject(impl_key) = child_obj {
+                            if let Some(impl_obj) = container.get(*impl_key) {
+                                if impl_obj.kind != CompObjectKind::Implement {
+                                    continue;
+                                }
+                                for grandchild in impl_obj.components.values() {
+                                    if let DMLObject::CompObject(iface_key) = grandchild {
+                                        if let Some(iface_obj) = container.get(*iface_key) {
+                                            if iface_obj.kind == CompObjectKind::Interface {
+                                                let iface_span = &iface_obj.declloc;
+                                                if let Some(target_scip) = span_map.get(iface_span) {
+                                                    let mut rel = Relationship::new();
+                                                    rel.symbol = target_scip.clone();
+                                                    rel.is_implementation = true;
+                                                    rels.push(rel);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if !rels.is_empty() {
+                    rels.sort_by(|a, b| a.symbol.cmp(&b.symbol));
+                    rels.dedup_by(|a, b| a.symbol == b.symbol);
+                    result.entry(source_scip.clone())
+                        .or_default()
+                        .extend(rels);
+                }
+            }
+        }
+
+        // --- Method → override relationships ---
+        for key_map in device.symbol_info.method_symbols.values() {
+            for sym_ref in key_map.values() {
+                let sym = sym_ref.symbol.lock().unwrap();
+                if let SymbolSource::Method(_, methref) = &sym.source {
+                    let source_span = methref.location();
+                    let Some(source_scip) = span_map.get(source_span) else {
+                        continue;
+                    };
+
+                    if let Some(default_call) = methref.get_default() {
+                        let mut rels: Vec<Relationship> = Vec::new();
+                        for overridden in default_call.flat_refs() {
+                            let target_span = overridden.location();
+                            if let Some(target_scip) = span_map.get(target_span) {
+                                if target_scip != source_scip {
+                                    let mut rel = Relationship::new();
+                                    rel.symbol = target_scip.clone();
+                                    rel.is_implementation = true;
+                                    rels.push(rel);
+                                }
+                            }
+                        }
+                        if !rels.is_empty() {
+                            rels.sort_by(|a, b| a.symbol.cmp(&b.symbol));
+                            rels.dedup_by(|a, b| a.symbol == b.symbol);
+                            result.entry(source_scip.clone())
+                                .or_default()
+                                .extend(rels);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    result
+}
 
 /// Convert a ZeroSpan range into the SCIP occurrence range format.
 ///
@@ -73,8 +218,6 @@ fn dml_kind_to_scip_kind(kind: &DMLSymbolKind) -> ScipSymbolKind {
     }
 }
 
-/// Sanitize a name for use in SCIP symbol strings.
-///
 /// Check whether a character is a SCIP identifier character.
 ///
 /// Per the SCIP symbol grammar:
@@ -93,8 +236,6 @@ fn sanitize_name(name: &str) -> String {
     if !name.is_empty() && name.chars().all(is_scip_identifier_char) {
         name.to_string()
     } else {
-        // Escaped identifier: `<escaped-character>+`
-        // Interior backticks are escaped by doubling them.
         let mut out = String::new();
         out.push('`');
         for c in name.chars() {
@@ -171,214 +312,6 @@ pub fn extract_import_data(
     result
 }
 
-/// Build a `local` SCIP symbol string (document-scoped).
-///
-/// Used for method arguments, method locals, and other symbols that
-/// are only visible within a single file scope.
-fn make_local_symbol(name: &str, id: u64) -> String {
-    format!("local {}_{}", sanitize_name(name), id)
-}
-
-/// Build a global SCIP symbol string from a qualified path.
-///
-/// Global symbols use the format:
-///   `scheme ' ' manager ' ' package ' ' version ' ' descriptors...`
-///
-/// We use:
-/// - scheme: `dml`
-/// - manager: `simics`
-/// - package: device name
-/// - version: `.` (single dot = no version)
-/// - descriptors: built from the qualified path segments
-///
-/// SCIP descriptor suffixes:
-/// - `.` = namespace/term (banks, groups, etc.)
-/// - `#` = type (templates, comp objects)
-/// - `()` = method
-fn make_global_symbol(device_name: &str, qualified_path: &str,
-                      kind: &DMLSymbolKind) -> String {
-    let segments: Vec<&str> = qualified_path.split('.').collect();
-    let mut descriptors = String::new();
-    for (i, seg) in segments.iter().enumerate() {
-        let sanitized = sanitize_name(seg);
-        if i == segments.len() - 1 {
-            // Last segment gets suffix based on kind
-            match kind {
-                DMLSymbolKind::Method => {
-                    descriptors.push_str(&sanitized);
-                    descriptors.push_str("().");
-                }
-                DMLSymbolKind::Template => {
-                    // Templates are the type-like concept in DML
-                    descriptors.push_str(&sanitized);
-                    descriptors.push('#');
-                }
-                _ => {
-                    // Composite objects (device, bank, register, ...)
-                    // are instances, not types — use term descriptor
-                    descriptors.push_str(&sanitized);
-                    descriptors.push('.');
-                }
-            }
-        } else {
-            // Intermediate segments are enclosing object instances
-            // (device, bank, register, ...) — use term descriptor
-            descriptors.push_str(&sanitized);
-            descriptors.push('.');
-        }
-    }
-    format!("dml simics {} . {}", sanitize_name(device_name), descriptors)
-}
-
-/// Build the SCIP symbol string for a given SymbolSource.
-///
-/// - DMLObject (comp or shallow): uses global symbol with qualified_name()
-/// - Method: uses global symbol with parent's qualified_name + method name
-/// - Template: uses global symbol at top level
-/// - MethodArg / MethodLocal: uses local symbol
-/// - Type: returns None (these are skipped)
-fn scip_symbol_for_source(
-    source: &SymbolSource,
-    kind: &DMLSymbolKind,
-    id: u64,
-    device_name: &str,
-    container: &StructureContainer,
-) -> Option<(String, String)> {
-    // Returns Some((scip_symbol, display_name))
-    match source {
-        SymbolSource::DMLObject(dml_obj) => {
-            match dml_obj {
-                DMLObject::CompObject(key) => {
-                    if let Some(comp) = container.get(*key) {
-                        let qname = comp.qualified_name(container);
-                        let display = comp.identity().to_string();
-                        let sym = make_global_symbol(device_name,
-                                                     &qname, kind);
-                        Some((sym, display))
-                    } else {
-                        None
-                    }
-                }
-                DMLObject::ShallowObject(shallow) => {
-                    let qname = shallow.qualified_name(container);
-                    let display = shallow.identity().to_string();
-                    let sym = make_global_symbol(device_name,
-                                                 &qname, kind);
-                    Some((sym, display))
-                }
-            }
-        }
-        SymbolSource::Method(parent_key, methref) => {
-            let parent_qname = container.get(*parent_key)
-                .map(|p| p.qualified_name(container))
-                .unwrap_or_default();
-            let method_name = methref.identity();
-            let qname = if parent_qname.is_empty() {
-                method_name.to_string()
-            } else {
-                format!("{}.{}", parent_qname, method_name)
-            };
-            let sym = make_global_symbol(
-                device_name, &qname, &DMLSymbolKind::Method);
-            Some((sym, method_name.to_string()))
-        }
-        SymbolSource::Template(templ) => {
-            let sym = make_global_symbol(
-                device_name, &templ.name, &DMLSymbolKind::Template);
-            Some((sym, templ.name.clone()))
-        }
-        SymbolSource::MethodArg(_, name) => {
-            let sym = make_local_symbol(&name.val, id);
-            Some((sym, name.val.clone()))
-        }
-        SymbolSource::MethodLocal(_, name) => {
-            let sym = make_local_symbol(&name.val, id);
-            Some((sym, name.val.clone()))
-        }
-        SymbolSource::Type(_) => None,
-    }
-}
-
-/// Build a short-form declaration signature for a DML symbol.
-///
-/// For composite objects this is just the object kind keyword
-/// (e.g. `"register"`, `"bank"`).
-/// For methods this is the modifier keywords from the declaration
-/// (e.g. `"independent method default"`, `"shared method throws"`).
-/// Other symbol kinds currently produce no documentation.
-fn make_documentation(
-    source: &SymbolSource,
-    container: &StructureContainer,
-) -> Vec<String> {
-    match source {
-        SymbolSource::DMLObject(DMLObject::CompObject(key)) => {
-            if let Some(comp) = container.get(*key) {
-                vec![comp.kind.kind_name().to_string()]
-            } else {
-                vec![]
-            }
-        }
-        SymbolSource::Method(_, methref) => {
-            let decl = methref.get_decl();
-            let mut parts = Vec::new();
-            if decl.independent {
-                parts.push("independent");
-            }
-            match decl.modifier {
-                MethodModifier::Shared => parts.push("shared"),
-                MethodModifier::Inline => parts.push("inline"),
-                MethodModifier::None => {}
-            }
-            parts.push("method");
-            if decl.default {
-                parts.push("default");
-            }
-            if decl.throws {
-                parts.push("throws");
-            }
-            vec![parts.join(" ")]
-        }
-        _ => vec![],
-    }
-}
-
-/// Build a map from definition/declaration name locations to their
-/// enclosing AST spans, for use as SCIP `enclosing_range`.
-///
-/// For composite objects, each ObjectSpec has a `loc` (name span) and
-/// a `span` (full `group foo is bar { ... }` range). For methods,
-/// the MethodDecl has a name location and a full declaration span.
-fn enclosing_ranges_for_source(
-    source: &SymbolSource,
-    container: &StructureContainer,
-) -> HashMap<ZeroSpan, ZeroSpan> {
-    let mut map = HashMap::new();
-    match source {
-        SymbolSource::DMLObject(DMLObject::CompObject(key)) => {
-            if let Some(comp) = container.get(*key) {
-                for spec in &comp.all_decls {
-                    map.insert(spec.loc, spec.span);
-                }
-                // definitions may include specs not in all_decls
-                for spec in &comp.definitions {
-                    map.entry(spec.loc).or_insert(spec.span);
-                }
-            }
-        }
-        SymbolSource::Method(_, methref) => {
-            let decl = methref.get_decl();
-            map.insert(decl.name.span, decl.span);
-        }
-        SymbolSource::Template(templ) => {
-            if let Some(loc) = templ.location {
-                map.insert(loc, templ.spec.span);
-            }
-        }
-        _ => {}
-    }
-    map
-}
-
 /// Holds per-file occurrence and symbol information data
 /// that will be assembled into SCIP Documents.
 ///
@@ -417,276 +350,450 @@ impl FileData {
     }
 }
 
-/// Convert a single DeviceAnalysis into SCIP Documents.
+// ---------------------------------------------------------------------------
+// Namespace path construction
+// ---------------------------------------------------------------------------
+
+/// Descriptor suffix for SCIP symbol construction.
+#[derive(Debug, Clone, Copy)]
+enum DescriptorSuffix {
+    /// Term descriptor: `name.`
+    Term,
+    /// Type descriptor: `name#`
+    Type,
+    /// Method descriptor: `name().`
+    Method,
+}
+
+impl DescriptorSuffix {
+    fn as_str(self) -> &'static str {
+        match self {
+            DescriptorSuffix::Term => ".",
+            DescriptorSuffix::Type => "#",
+            DescriptorSuffix::Method => "().",
+        }
+    }
+}
+
+/// A single segment of the code-namespace path embedded in a SCIP
+/// symbol string.
+struct NamespaceSegment {
+    name: String,
+    suffix: DescriptorSuffix,
+}
+
+/// Build a global SCIP symbol string from file-relative path and
+/// a chain of namespace segments.
 ///
-/// Returns a tuple of (documents, external_symbols). Files under the
-/// project root become Documents with relative paths; files outside
-/// (e.g. Simics builtins) contribute only their SymbolInformation to
-/// `external_symbols` for hover/navigation support.
-fn device_analysis_to_documents(
-    device: &DeviceAnalysis,
+/// Format:
+///   `dml simics . . <file_path_descriptors> <namespace_descriptors>`
+fn make_namespace_symbol(
+    file_path: &Path,
     project_root: &Path,
-    import_data: &FileImportData,
-) -> (Vec<Document>, Vec<SymbolInformation>) {
-    let mut file_data: HashMap<PathBuf, FileData> = HashMap::new();
-    let container = &device.objects;
-    let device_name = &device.name;
+    namespace: &[NamespaceSegment],
+) -> String {
+    let rel = file_path.strip_prefix(project_root).unwrap_or(file_path);
+    let mut descriptors = String::new();
 
-    // Track method declaration locations → SCIP symbol strings so we
-    // can wire up override relationships in a second pass.
-    let mut method_span_to_scip_sym: HashMap<ZeroSpan, String> = HashMap::new();
-    // Collect (file_path, overriding_symbol, overridden_locations) edges.
-    let mut override_edges: Vec<(PathBuf, String, Vec<ZeroSpan>)> = Vec::new();
+    // File path components as term descriptors
+    for component in rel.components() {
+        if let Some(s) = component.as_os_str().to_str() {
+            descriptors.push_str(&sanitize_name(s));
+            descriptors.push('.');
+        }
+    }
 
-    // Iterate over all symbols in the device analysis
-    for symbol_ref in device.symbol_info.all_symbols() {
-        let sym = symbol_ref.symbol.lock().unwrap();
+    // Code-level namespace descriptors
+    for seg in namespace {
+        descriptors.push_str(&sanitize_name(&seg.name));
+        descriptors.push_str(seg.suffix.as_str());
+    }
 
-        // Build the SCIP symbol and display name from the source
-        let (scip_symbol, display_name) = match scip_symbol_for_source(
-            &sym.source, &sym.kind, sym.id, device_name, container,
-        ) {
-            Some(pair) => pair,
-            None => continue, // Type symbols and unresolvable objects
+    format!("dml simics . . {descriptors}")
+}
+
+/// Build a document-local SCIP symbol for a method argument or local.
+fn make_local_symbol(name: &str, id: u64) -> String {
+    format!("local {}_{}", sanitize_name(name), id)
+}
+
+// ---------------------------------------------------------------------------
+// Symbol emission helpers
+// ---------------------------------------------------------------------------
+
+/// Emit a definition occurrence + SymbolInformation for a named
+/// declaration whose SCIP symbol uses a term descriptor.
+fn emit_term_symbol(
+    object: &DMLObjectCommon,
+    scip_kind: ScipSymbolKind,
+    doc_text: &str,
+    file_path: &Path,
+    project_root: &Path,
+    namespace: &mut Vec<NamespaceSegment>,
+    file_data: &mut FileData,
+    span_map: &mut SpanSymbolMap,
+) {
+    let name = object.name.val.clone();
+    let name_span = &object.name.span;
+    let full_span = &object.span;
+
+    namespace.push(NamespaceSegment {
+        name: name.clone(),
+        suffix: DescriptorSuffix::Term,
+    });
+
+    let sym = make_namespace_symbol(file_path, project_root, namespace);
+
+    span_map.insert(*name_span, sym.clone());
+
+    let mut occ = Occurrence::new();
+    occ.range = span_to_scip_range(name_span);
+    occ.symbol = sym.clone();
+    occ.symbol_roles = SymbolRole::Definition.value();
+    occ.enclosing_range = span_to_scip_range(full_span);
+    file_data.add_occurrence(occ);
+
+    let mut sym_info = SymbolInformation::new();
+    sym_info.symbol = sym;
+    sym_info.kind = scip_kind.into();
+    sym_info.display_name = name;
+    sym_info.documentation = vec![doc_text.to_string()];
+    file_data.add_symbol_info(sym_info);
+
+    namespace.pop();
+}
+
+// ---------------------------------------------------------------------------
+// Recursive structural-tree walk
+// ---------------------------------------------------------------------------
+
+/// Recursively walk a `StatementSpec` and emit SCIP definition
+/// occurrences and SymbolInformation entries for every declaration.
+fn walk_spec(
+    spec: &StatementSpec,
+    file_path: &Path,
+    project_root: &Path,
+    namespace: &mut Vec<NamespaceSegment>,
+    file_data: &mut FileData,
+    local_counter: &mut u64,
+    span_map: &mut SpanSymbolMap,
+) {
+    // --- Templates ---
+    for template_decl in &spec.templates {
+        emit_template(template_decl, file_path, project_root,
+                      namespace, file_data, local_counter, span_map);
+    }
+
+    // --- Composite objects (bank, register, group, …) ---
+    for obj_decl in &spec.objects {
+        emit_composite_object(obj_decl, file_path, project_root,
+                              namespace, file_data, local_counter, span_map);
+    }
+
+    // --- Methods ---
+    for method_decl in &spec.methods {
+        emit_method(method_decl, file_path, project_root,
+                    namespace, file_data, local_counter, span_map);
+    }
+
+    // --- Parameters ---
+    for param_decl in &spec.params {
+        let doc = if param_decl.obj.is_default {
+            "parameter default"
+        } else {
+            "parameter"
+        };
+        emit_term_symbol(
+            &param_decl.obj.object,
+            ScipSymbolKind::Constant,
+            doc,
+            file_path, project_root, namespace, file_data, span_map,
+        );
+    }
+
+    // --- Session variables ---
+    for sess_decl in &spec.sessions {
+        for var_decl in &sess_decl.obj.vars {
+            emit_term_symbol(
+                &var_decl.object,
+                ScipSymbolKind::Variable,
+                "session",
+                file_path, project_root, namespace, file_data, span_map,
+            );
+        }
+    }
+
+    // --- Saved variables ---
+    for saved_decl in &spec.saveds {
+        for var_decl in &saved_decl.obj.vars {
+            emit_term_symbol(
+                &var_decl.object,
+                ScipSymbolKind::Variable,
+                "saved",
+                file_path, project_root, namespace, file_data, span_map,
+            );
+        }
+    }
+
+    // --- Hooks ---
+    for hook_decl in &spec.hooks {
+        let doc = if hook_decl.obj.shared { "shared hook" } else { "hook" };
+        emit_term_symbol(
+            &hook_decl.obj.object,
+            ScipSymbolKind::Event,
+            doc,
+            file_path, project_root, namespace, file_data, span_map,
+        );
+    }
+
+    // --- Constants ---
+    for const_decl in &spec.constants {
+        emit_term_symbol(
+            &const_decl.obj.object,
+            ScipSymbolKind::Constant,
+            "constant",
+            file_path, project_root, namespace, file_data, span_map,
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Per-declaration emitters
+// ---------------------------------------------------------------------------
+
+/// Emit SCIP data for a template declaration and recurse into its body.
+fn emit_template(
+    template_decl: &ObjectDecl<crate::analysis::structure::objects::Template>,
+    file_path: &Path,
+    project_root: &Path,
+    namespace: &mut Vec<NamespaceSegment>,
+    file_data: &mut FileData,
+    local_counter: &mut u64,
+    span_map: &mut SpanSymbolMap,
+) {
+    let tmpl = &template_decl.obj;
+    let name = tmpl.object.name.val.clone();
+    let name_span = &tmpl.object.name.span;
+    let full_span = &tmpl.object.span;
+
+    namespace.push(NamespaceSegment {
+        name: name.clone(),
+        suffix: DescriptorSuffix::Type,
+    });
+
+    let sym = make_namespace_symbol(file_path, project_root, namespace);
+
+    span_map.insert(*name_span, sym.clone());
+
+    // Definition occurrence
+    let mut occ = Occurrence::new();
+    occ.range = span_to_scip_range(name_span);
+    occ.symbol = sym.clone();
+    occ.symbol_roles = SymbolRole::Definition.value();
+    occ.enclosing_range = span_to_scip_range(full_span);
+    file_data.add_occurrence(occ);
+
+    // SymbolInformation
+    let mut sym_info = SymbolInformation::new();
+    sym_info.symbol = sym;
+    sym_info.kind = ScipSymbolKind::Class.into();
+    sym_info.display_name = name;
+    sym_info.documentation = vec!["template".to_string()];
+    file_data.add_symbol_info(sym_info);
+
+    // Recurse into the template's flattened spec
+    walk_spec(
+        &template_decl.spec,
+        file_path,
+        project_root,
+        namespace,
+        file_data,
+        local_counter,
+        span_map,
+    );
+
+    namespace.pop();
+}
+
+/// Emit SCIP data for a composite object declaration and recurse.
+fn emit_composite_object(
+    obj_decl: &ObjectDecl<crate::analysis::structure::objects::CompositeObject>,
+    file_path: &Path,
+    project_root: &Path,
+    namespace: &mut Vec<NamespaceSegment>,
+    file_data: &mut FileData,
+    local_counter: &mut u64,
+    span_map: &mut SpanSymbolMap,
+) {
+    let comp = &obj_decl.obj;
+    let name = comp.object.name.val.clone();
+    let name_span = &comp.object.name.span;
+    let full_span = &comp.object.span;
+    let scip_kind = dml_kind_to_scip_kind(
+        &DMLSymbolKind::CompObject(comp.kind.kind));
+
+    namespace.push(NamespaceSegment {
+        name: name.clone(),
+        suffix: DescriptorSuffix::Term,
+    });
+
+    let sym = make_namespace_symbol(file_path, project_root, namespace);
+
+    span_map.insert(*name_span, sym.clone());
+
+    let mut occ = Occurrence::new();
+    occ.range = span_to_scip_range(name_span);
+    occ.symbol = sym.clone();
+    occ.symbol_roles = SymbolRole::Definition.value();
+    occ.enclosing_range = span_to_scip_range(full_span);
+    file_data.add_occurrence(occ);
+
+    let mut sym_info = SymbolInformation::new();
+    sym_info.symbol = sym;
+    sym_info.kind = scip_kind.into();
+    sym_info.display_name = name;
+    sym_info.documentation = vec![comp.kind.kind.kind_name().to_string()];
+    file_data.add_symbol_info(sym_info);
+
+    // Recurse into nested declarations
+    walk_spec(
+        &obj_decl.spec,
+        file_path,
+        project_root,
+        namespace,
+        file_data,
+        local_counter,
+        span_map,
+    );
+
+    namespace.pop();
+}
+
+/// Emit SCIP data for a method declaration, including its arguments.
+fn emit_method(
+    method_decl: &ObjectDecl<crate::analysis::structure::objects::Method>,
+    file_path: &Path,
+    project_root: &Path,
+    namespace: &mut Vec<NamespaceSegment>,
+    file_data: &mut FileData,
+    local_counter: &mut u64,
+    span_map: &mut SpanSymbolMap,
+) {
+    let meth = &method_decl.obj;
+    let name = meth.object.name.val.clone();
+    let name_span = &meth.object.name.span;
+    let full_span = &meth.object.span;
+
+    namespace.push(NamespaceSegment {
+        name: name.clone(),
+        suffix: DescriptorSuffix::Method,
+    });
+
+    let sym = make_namespace_symbol(file_path, project_root, namespace);
+
+    span_map.insert(*name_span, sym.clone());
+
+    // Definition occurrence
+    let mut occ = Occurrence::new();
+    occ.range = span_to_scip_range(name_span);
+    occ.symbol = sym.clone();
+    occ.symbol_roles = SymbolRole::Definition.value();
+    occ.enclosing_range = span_to_scip_range(full_span);
+    file_data.add_occurrence(occ);
+
+    // Documentation: modifier keywords
+    let mut doc_parts: Vec<&str> = Vec::new();
+    if meth.independent {
+        doc_parts.push("independent");
+    }
+    match meth.modifier {
+        MethodModifier::Shared => doc_parts.push("shared"),
+        MethodModifier::Inline => doc_parts.push("inline"),
+        MethodModifier::None => {}
+    }
+    doc_parts.push("method");
+    if meth.default {
+        doc_parts.push("default");
+    }
+    if meth.throws {
+        doc_parts.push("throws");
+    }
+
+    let mut sym_info = SymbolInformation::new();
+    sym_info.symbol = sym;
+    sym_info.kind = ScipSymbolKind::Method.into();
+    sym_info.display_name = name;
+    sym_info.documentation = vec![doc_parts.join(" ")];
+    file_data.add_symbol_info(sym_info);
+
+    // Method arguments as document-local symbols
+    for arg in &meth.arguments {
+        let arg_name_str = match arg {
+            MethodArgument::Typed(n, _) | MethodArgument::Inline(n) => n,
         };
 
-        debug!("SCIP symbol id={} kind={:?} scip={} defs={} decls={} refs={} impls={}",
-               sym.id, sym.kind, &scip_symbol,
-               sym.definitions.len(), sym.declarations.len(),
-               sym.references.len(), sym.implementations.len());
+        *local_counter += 1;
+        let arg_sym = make_local_symbol(&arg_name_str.val, *local_counter);
 
-        // Track method symbols for override relationship resolution.
-        if let SymbolSource::Method(_, methref) = &sym.source {
-            method_span_to_scip_sym.insert(
-                *methref.location(), scip_symbol.clone());
-            if let Some(default_call) = methref.get_default() {
-                let overridden_locs: Vec<ZeroSpan> = default_call
-                    .flat_refs()
-                    .iter()
-                    .map(|r| *r.location())
-                    .collect();
-                if !overridden_locs.is_empty() {
-                    override_edges.push((
-                        sym.loc.path(),
-                        scip_symbol.clone(),
-                        overridden_locs,
-                    ));
-                }
-            }
-        }
+        let mut arg_occ = Occurrence::new();
+        arg_occ.range = span_to_scip_range(&arg_name_str.span);
+        arg_occ.symbol = arg_sym.clone();
+        arg_occ.symbol_roles = SymbolRole::Definition.value();
+        arg_occ.enclosing_range = span_to_scip_range(full_span);
+        file_data.add_occurrence(arg_occ);
 
-        let kind = dml_kind_to_scip_kind(&sym.kind);
-        let documentation = make_documentation(&sym.source, container);
-        let enclosing = enclosing_ranges_for_source(&sym.source, container);
-
-        // Record the primary location as a definition occurrence
-        {
-            let loc = &sym.loc;
-            let file_path = loc.path();
-            let data = file_data.entry(file_path).or_default();
-
-            let mut occ = Occurrence::new();
-            occ.range = span_to_scip_range(loc);
-            occ.symbol = scip_symbol.clone();
-            occ.symbol_roles = SymbolRole::Definition.value();
-            if let Some(enc) = enclosing.get(loc) {
-                occ.enclosing_range = span_to_scip_range(enc);
-            }
-
-            data.add_occurrence(occ);
-
-            // Add SymbolInformation for this symbol (only once, at def site)
-            let mut sym_info = SymbolInformation::new();
-            sym_info.symbol = scip_symbol.clone();
-            sym_info.kind = kind.into();
-            sym_info.display_name = display_name;
-            sym_info.documentation = documentation;
-
-            // For comp objects, add Relationship entries for each
-            // instantiated template (`is` declarations).
-            if let SymbolSource::DMLObject(
-                DMLObject::CompObject(key)) = &sym.source {
-                if let Some(comp) = container.get(*key) {
-                    for templ_name in comp.templates.keys() {
-                        let templ_symbol = make_global_symbol(
-                            device_name, templ_name,
-                            &DMLSymbolKind::Template);
-                        let mut rel = Relationship::new();
-                        rel.symbol = templ_symbol;
-                        rel.is_implementation = true;
-                        sym_info.relationships.push(rel);
-                    }
-
-                    // For connects, emit is_implementation pointing
-                    // to each interface object nested under its
-                    // implement children.
-                    if comp.kind == CompObjectKind::Connect {
-                        for child_obj in comp.components.values() {
-                            if let DMLObject::CompObject(impl_key) = child_obj {
-                                if let Some(impl_obj) = container.get(*impl_key) {
-                                    if impl_obj.kind != CompObjectKind::Implement {
-                                        continue;
-                                    }
-                                    for grandchild in impl_obj.components.values() {
-                                        if let DMLObject::CompObject(iface_key) = grandchild {
-                                            if let Some(iface_obj) = container.get(*iface_key) {
-                                                if iface_obj.kind == CompObjectKind::Interface {
-                                                    let iface_qname = iface_obj.qualified_name(container);
-                                                    let iface_sym = make_global_symbol(
-                                                        device_name, &iface_qname,
-                                                        &DMLSymbolKind::CompObject(CompObjectKind::Interface));
-                                                    let mut rel = Relationship::new();
-                                                    rel.symbol = iface_sym;
-                                                    rel.is_implementation = true;
-                                                    sym_info.relationships.push(rel);
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            sym_info.relationships.sort_by(|a, b| a.symbol.cmp(&b.symbol));
-            data.add_symbol_info(sym_info);
-        }
-
-        // Record additional definitions
-        for def_span in &sym.definitions {
-            // Skip if same as primary loc
-            if *def_span == sym.loc {
-                continue;
-            }
-            let file_path = def_span.path();
-            let data = file_data.entry(file_path).or_default();
-
-            let mut occ = Occurrence::new();
-            occ.range = span_to_scip_range(def_span);
-            occ.symbol = scip_symbol.clone();
-            occ.symbol_roles = SymbolRole::Definition.value();
-            if let Some(enc) = enclosing.get(def_span) {
-                occ.enclosing_range = span_to_scip_range(enc);
-            }
-            data.add_occurrence(occ);
-        }
-
-        // Record declarations
-        for decl_span in &sym.declarations {
-            if *decl_span == sym.loc {
-                continue;
-            }
-            let file_path = decl_span.path();
-            let data = file_data.entry(file_path).or_default();
-
-            let mut occ = Occurrence::new();
-            occ.range = span_to_scip_range(decl_span);
-            occ.symbol = scip_symbol.clone();
-            // If this declaration site also appears in definitions,
-            // it defines a value and gets the Definition role.
-            // Otherwise it's an abstract/forward declaration.
-            if sym.definitions.contains(decl_span) {
-                occ.symbol_roles = SymbolRole::Definition.value();
-            } else {
-                occ.symbol_roles = SymbolRole::ForwardDefinition.value();
-            }
-            if let Some(enc) = enclosing.get(decl_span) {
-                occ.enclosing_range = span_to_scip_range(enc);
-            }
-            data.add_occurrence(occ);
-        }
-
-        // Record references (read accesses)
-        for ref_span in &sym.references {
-            let file_path = ref_span.path();
-            let data = file_data.entry(file_path).or_default();
-
-            let mut occ = Occurrence::new();
-            occ.range = span_to_scip_range(ref_span);
-            occ.symbol = scip_symbol.clone();
-            // Plain reference (no Definition/ReadAccess/WriteAccess role).
-            // TODO: narrow down to ReadAccess/WriteAccess once the
-            // analysis tracks access kinds.
-            occ.symbol_roles = 0;
-            data.add_occurrence(occ);
-        }
-
-        // Record implementation sites (`is template` occurrences)
-        // These are references to the template, not definitions.
-        // The actual implementation relationship is expressed via
-        // Relationship entries on the comp object's SymbolInformation.
-        for impl_span in &sym.implementations {
-            let file_path = impl_span.path();
-            let data = file_data.entry(file_path).or_default();
-
-            let mut occ = Occurrence::new();
-            occ.range = span_to_scip_range(impl_span);
-            occ.symbol = scip_symbol.clone();
-            // Plain reference — the implementation relationship is
-            // expressed via Relationship entries, not occurrence roles.
-            occ.symbol_roles = 0;
-            data.add_occurrence(occ);
-        }
+        let mut arg_info = SymbolInformation::new();
+        arg_info.symbol = arg_sym;
+        arg_info.kind = ScipSymbolKind::Parameter.into();
+        arg_info.display_name = arg_name_str.val.clone();
+        file_data.add_symbol_info(arg_info);
     }
 
-    // Add override relationships to method SymbolInformation entries.
-    // A method that overrides a default/abstract method from a template
-    // gets an is_implementation relationship pointing to the overridden
-    // method's SCIP symbol.
-    for (def_file, overriding_sym, overridden_locs) in &override_edges {
-        if let Some(data) = file_data.get_mut(def_file) {
-            if let Some(sym_info) = data.symbols.get_mut(overriding_sym) {
-                for loc in overridden_locs {
-                    if let Some(overridden_sym) =
-                        method_span_to_scip_sym.get(loc)
-                    {
-                        if overridden_sym != overriding_sym {
-                            let mut rel = Relationship::new();
-                            rel.symbol = overridden_sym.clone();
-                            rel.is_implementation = true;
-                            sym_info.relationships.push(rel);
-                        }
-                    }
-                }
-                sym_info.relationships
-                    .sort_by(|a, b| a.symbol.cmp(&b.symbol));
-            }
-        }
-    }
+    namespace.pop();
+}
 
-    // Emit file-level symbols and import occurrences.
-    //
-    // For each file in the device analysis, we create a file-level
-    // symbol (with a Definition occurrence at line 0) and then emit
-    // Import occurrences at each `import "..."` statement pointing
-    // to the imported file's symbol.
-    for dep_path in &device.dependant_files {
-        let file_pathbuf: PathBuf = dep_path.clone().into();
-        let file_sym = make_file_symbol(&file_pathbuf, project_root);
+// ---------------------------------------------------------------------------
+// Per-file processing
+// ---------------------------------------------------------------------------
 
-        // Definition occurrence at line 0 of the file
-        let data = file_data.entry(file_pathbuf.clone()).or_default();
+/// Process a single `IsolatedAnalysis` into SCIP file data.
+///
+/// Returns a `FileData` containing all occurrences and symbol-info
+/// entries for the file, plus the source path.
+fn process_file(
+    analysis: &IsolatedAnalysis,
+    project_root: &Path,
+    import_data: Option<&FileImportData>,
+    span_map: &mut SpanSymbolMap,
+) -> (PathBuf, FileData) {
+    let file_path: PathBuf = analysis.path.clone().into();
+    let mut file_data = FileData::default();
+    let mut local_counter: u64 = 0;
+    let mut namespace = Vec::new();
+
+    // File-level symbol (definition at line 0)
+    let file_sym = make_file_symbol(&file_path, project_root);
+    {
         let mut def_occ = Occurrence::new();
         def_occ.range = vec![0, 0, 0]; // line 0, char 0, end char 0
         def_occ.symbol = file_sym.clone();
         def_occ.symbol_roles = SymbolRole::Definition.value();
-        data.add_occurrence(def_occ);
+        file_data.add_occurrence(def_occ);
 
-        // SymbolInformation for the file, with is_reference
-        // relationships to each imported file's symbol.
         let mut sym_info = SymbolInformation::new();
         sym_info.symbol = file_sym.clone();
         sym_info.kind = ScipSymbolKind::File.into();
-        sym_info.display_name = file_pathbuf.file_name()
+        sym_info.display_name = file_path
+            .file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_default();
 
-        // Import occurrences for each `import "..."` in this file,
-        // plus is_reference relationships on the file symbol.
-        if let Some(imports) = import_data.get(dep_path) {
-            let mut seen_targets = HashSet::new();
+        // Import occurrences and relationships: for each import statement,
+        // emit an Import-role occurrence referencing the imported file's
+        // symbol, and also record an is_reference Relationship on this
+        // file's SymbolInformation for explicit dependency tracking.
+        let canon = &analysis.path;
+        if let Some(imports) = import_data.and_then(|id| id.get(canon)) {
             for (import_span, resolved_path) in imports {
                 let target_pathbuf: PathBuf = resolved_path.clone().into();
                 let target_sym = make_file_symbol(&target_pathbuf, project_root);
@@ -695,26 +802,167 @@ fn device_analysis_to_documents(
                 imp_occ.range = span_to_scip_range(import_span);
                 imp_occ.symbol = target_sym.clone();
                 imp_occ.symbol_roles = SymbolRole::Import.value();
-                data.add_occurrence(imp_occ);
+                file_data.add_occurrence(imp_occ);
 
-                if seen_targets.insert(target_sym.clone()) {
-                    let mut rel = Relationship::new();
-                    rel.symbol = target_sym;
-                    rel.is_reference = true;
-                    sym_info.relationships.push(rel);
-                }
+                let mut rel = Relationship::new();
+                rel.symbol = target_sym;
+                rel.is_reference = true;
+                sym_info.relationships.push(rel);
             }
         }
-        sym_info.relationships.sort_by(|a, b| a.symbol.cmp(&b.symbol));
-        data.add_symbol_info(sym_info);
+
+        file_data.add_symbol_info(sym_info);
     }
 
-    // Assemble Documents, separating in-project from external files.
+    let tl = &analysis.toplevel;
+
+    // Top-level externs (not in StatementSpec)
+    for ext_var in &tl.externs {
+        for var_decl in &ext_var.vars {
+            emit_term_symbol(
+                &var_decl.object,
+                ScipSymbolKind::Variable,
+                "extern",
+                &file_path,
+                project_root,
+                &mut namespace,
+                &mut file_data,
+                span_map,
+            );
+        }
+    }
+
+    // Top-level typedefs (not in StatementSpec)
+    for typedef in &tl.typedefs {
+        // Typedefs are type-like; use a type descriptor.
+        namespace.push(NamespaceSegment {
+            name: typedef.object.name.val.clone(),
+            suffix: DescriptorSuffix::Type,
+        });
+        let sym = make_namespace_symbol(&file_path, project_root, &namespace);
+
+        let mut occ = Occurrence::new();
+        occ.range = span_to_scip_range(&typedef.object.name.span);
+        occ.symbol = sym.clone();
+        occ.symbol_roles = SymbolRole::Definition.value();
+        occ.enclosing_range = span_to_scip_range(&typedef.object.span);
+        file_data.add_occurrence(occ);
+
+        let mut sym_info = SymbolInformation::new();
+        sym_info.symbol = sym;
+        sym_info.kind = ScipSymbolKind::TypeAlias.into();
+        sym_info.display_name = typedef.object.name.val.clone();
+        sym_info.documentation = vec![if typedef.is_extern {
+            "extern typedef".to_string()
+        } else {
+            "typedef".to_string()
+        }];
+        file_data.add_symbol_info(sym_info);
+
+        namespace.pop();
+    }
+
+    // Top-level loggroups (not in StatementSpec)
+    for loggroup in &tl.loggroups {
+        emit_term_symbol(
+            &DMLObjectCommon {
+                name: loggroup.name.clone(),
+                span: loggroup.span,
+            },
+            ScipSymbolKind::Constant,
+            "loggroup",
+            &file_path,
+            project_root,
+            &mut namespace,
+            &mut file_data,
+            span_map,
+        );
+    }
+
+    // Walk the main StatementSpec (templates, objects, methods, …)
+    walk_spec(
+        &tl.spec,
+        &file_path,
+        project_root,
+        &mut namespace,
+        &mut file_data,
+        &mut local_counter,
+        span_map,
+    );
+
+    (file_path, file_data)
+}
+
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
+
+/// Build a complete SCIP Index from a set of isolated (per-file)
+/// analyses, using code-namespace-based symbol names.
+///
+/// Each `IsolatedAnalysis` contributes one Document in the resulting
+/// index. Symbols are named after their position in the structural
+/// tree (file → template → object → method, etc.) rather than the
+/// merged device hierarchy.
+///
+/// # Arguments
+/// * `analyses` – map from canonical path to the per-file analysis
+/// * `project_root` – workspace root, used to compute relative paths
+/// * `import_data` – optional pre-resolved import data for emitting
+///   import occurrences
+pub fn build_scip_index(
+    analyses: &HashMap<CanonPath, &IsolatedAnalysis>,
+    project_root: &Path,
+    import_data: Option<&FileImportData>,
+    devices: &[&DeviceAnalysis],
+) -> Index {
+    debug!(
+        "Building namespace-based SCIP index for {} file(s) rooted at {:?}",
+        analyses.len(),
+        project_root
+    );
+
+    let mut tool_info = ToolInfo::new();
+    tool_info.name = "dls".to_string();
+    tool_info.version = crate::version();
+
+    let mut metadata = Metadata::new();
+    metadata.tool_info = MessageField::some(tool_info);
+    let root_str = project_root.to_string_lossy();
+    metadata.project_root = if root_str.ends_with('/') {
+        format!("file://{root_str}")
+    } else {
+        format!("file://{root_str}/")
+    };
+    metadata.text_document_encoding = scip::types::TextEncoding::UTF8.into();
+
+    // --- Pass 1: walk all files, emit symbols, build span→symbol map ---
+    let mut span_map = SpanSymbolMap::new();
+    let mut file_results: Vec<(PathBuf, FileData)> = Vec::new();
+
+    for (_, analysis) in analyses {
+        let (path, data) = process_file(
+            analysis, project_root, import_data, &mut span_map);
+        file_results.push((path, data));
+    }
+
+    // --- Pass 2: extract relationships from DeviceAnalysis using span_map ---
+    let sym_rels = extract_relationships(devices, &span_map);
+
+    // --- Pass 3: assemble documents, injecting relationships ---
     let mut documents = Vec::new();
     let mut external_symbols = Vec::new();
 
-    for (path, data) in file_data {
+    for (path, mut data) in file_results {
+        // Apply relationships to SymbolInformation entries
+        for sym_info in data.symbols.values_mut() {
+            if let Some(rels) = sym_rels.get(&sym_info.symbol) {
+                sym_info.relationships = rels.clone();
+            }
+        }
+
         let (occs, syms) = data.into_vecs();
+
         match path.strip_prefix(project_root) {
             Ok(rel) => {
                 let mut doc = Document::new();
@@ -727,102 +975,23 @@ fn device_analysis_to_documents(
                 documents.push(doc);
             }
             Err(_) => {
-                // External file: keep symbol info for hover/navigation
-                // but don't emit a document or occurrences
                 external_symbols.extend(syms);
             }
         }
     }
 
-    // Remove from external_symbols any symbol that already appears
-    // in a document. This can happen when multiple internal Symbol
-    // objects (e.g. from different templates) produce the same SCIP
-    // symbol string but have their primary locations in different
-    // files — one in-project and one external.
-    let doc_symbol_strings: HashSet<&str> = documents.iter()
-        .flat_map(|doc| doc.symbols.iter().map(|s| s.symbol.as_str()))
-        .collect();
-    external_symbols.retain(|s| !doc_symbol_strings.contains(s.symbol.as_str()));
-
-    (documents, external_symbols)
-}
-
-/// Build a complete SCIP Index from one or more DeviceAnalyses.
-///
-/// # Arguments
-/// * `devices` - The device analyses to export
-/// * `project_root` - The workspace root path, used to compute relative paths
-pub fn build_scip_index(
-    devices: &[&DeviceAnalysis],
-    project_root: &Path,
-    import_data: &FileImportData,
-) -> Index {
-    debug!("Building SCIP index for {} device(s) rooted at {:?}",
-           devices.len(), project_root);
-
-    let mut tool_info = ToolInfo::new();
-    tool_info.name = "dls".to_string();
-    tool_info.version = crate::version();
-
-    let mut metadata = Metadata::new();
-    metadata.tool_info = MessageField::some(tool_info);
-    let root_str = project_root.to_string_lossy();
-    metadata.project_root = if root_str.ends_with('/') {
-        format!("file://{}", root_str)
-    } else {
-        format!("file://{}/", root_str)
-    };
-    metadata.text_document_encoding = scip::types::TextEncoding::UTF8.into();
-
-    // Collect documents from all devices, merging by relative_path.
-    // We use FileData for deduplication across devices: the same symbol
-    // or occurrence can appear in multiple DeviceAnalyses when they
-    // share source files (e.g. common library code).
-    let mut merged: HashMap<String, (Document, FileData)> = HashMap::new();
-    let mut ext_dedup = FileData::default();
-
-    for device in devices {
-        let (docs, ext_syms) = device_analysis_to_documents(device, project_root, import_data);
-        for doc in docs {
-            let (_, dedup) = merged
-                .entry(doc.relative_path.clone())
-                .or_insert_with(|| {
-                    let mut d = Document::new();
-                    d.relative_path = doc.relative_path.clone();
-                    d.language = doc.language.clone();
-                    d.position_encoding = doc.position_encoding;
-                    (d, FileData::default())
-                });
-            for occ in doc.occurrences {
-                dedup.add_occurrence(occ);
-            }
-            for sym in doc.symbols {
-                dedup.add_symbol_info(sym);
-            }
-        }
-        for sym in ext_syms {
-            ext_dedup.add_symbol_info(sym);
-        }
-    }
-
-    // Move deduplicated data into the final documents, sorted for
-    // deterministic output.
-    let mut documents: Vec<Document> = merged.into_values().map(|(mut doc, dedup)| {
-        let (occs, syms) = dedup.into_vecs();
-        doc.occurrences = occs;
-        doc.symbols = syms;
-        doc
-    }).collect();
     documents.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
+    external_symbols.sort_by(|a, b| a.symbol.cmp(&b.symbol));
 
     let mut index = Index::new();
     index.metadata = MessageField::some(metadata);
     index.documents = documents;
-    let (_, mut ext_syms) = ext_dedup.into_vecs();
-    ext_syms.sort_by(|a, b| a.symbol.cmp(&b.symbol));
-    index.external_symbols = ext_syms;
+    index.external_symbols = external_symbols;
 
-    debug!("SCIP index built with {} document(s)", index.documents.len());
+    debug!(
+        "Namespace-based SCIP index built with {} document(s)",
+        index.documents.len()
+    );
     index
 }
 

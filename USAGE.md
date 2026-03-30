@@ -249,9 +249,10 @@ Each source file involved in the analysis gets a dedicated SCIP symbol of kind
 navigation to the file symbol opens the file itself.
 
 For each `import "..."` statement, an `Import` occurrence is emitted at the
-import statement's span, referencing the imported file's symbol. This lets
-consumers navigate from import statements to the imported file and visualize
-file-level dependency graphs.
+import statement's span, referencing the imported file's symbol. Additionally,
+the importing file's `SymbolInformation` carries an `is_reference = true`
+`Relationship` entry for each imported file, enabling explicit file-level
+dependency tracking without needing to scan occurrences.
 
 File symbols use the format:
 ```
