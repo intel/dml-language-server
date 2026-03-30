@@ -445,4 +445,35 @@ impl ClientInterface {
             }
         }
     }
+
+    pub fn export_object_hierarchy(&mut self,
+                                   device_paths: Vec<String>,
+                                   output_path: String)
+                                   -> anyhow::Result<crate::actions::requests::ExportObjectHierarchyResult> {
+        debug!("Sending object hierarchy export request for {:?} -> {}", device_paths, output_path);
+        self.send(
+            cmd::export_object_hierarchy(device_paths, output_path).to_string()
+        )?;
+        loop {
+            match self.receive_maybe() {
+                Ok(ServerMessage::Response(value)) => {
+                    let result: crate::actions::requests::ExportObjectHierarchyResult
+                        = serde_json::from_value(value)
+                        .map_err(|e| RpcErrorKind::from(e.to_string()))?;
+                    return Ok(result);
+                },
+                Ok(ServerMessage::Error(e)) => {
+                    return Err(anyhow::anyhow!(
+                        "Server exited during object hierarchy export: {:?}", e));
+                },
+                Ok(_) => {
+                    continue;
+                },
+                Err(e) => {
+                    trace!("Skipping message during hierarchy export wait: {:?}", e);
+                    continue;
+                }
+            }
+        }
+    }
 }
