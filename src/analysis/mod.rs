@@ -19,14 +19,15 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::Mutex;
 
+use hashlink::LinkedHashMap;
 use itertools::Itertools;
 use lsp_types::{DiagnosticSeverity};
 use logos::Logos;
 use log::{debug, error, info, trace};
 use rayon::prelude::*;
 
-use crate::actions::SourcedDMLError;
-use crate::actions::analysis_storage::TimestampedStorage;
+use crate::actions::{SourcedDMLError, DeviceAnalysisJobOptions};
+use crate::actions::analysis_storage::{TimestampedStorage};
 use crate::actions::semantic_lookup::{DLSLimitation, isolated_template_limitation};
 use crate::analysis::symbols::{DMLSymbolKind, SimpleSymbol, StructureSymbol, SymbolContainer, SymbolMaker, SymbolSource};
 pub use crate::analysis::symbols::SymbolRef;
@@ -186,6 +187,12 @@ impl Hash for DMLError {
 }
 
 impl DMLError {
+    fn size_of(&self) -> usize {
+        std::mem::size_of_val(self)
+         + self.description.len()
+         + self.related.iter().fold(0, |a, (_, m)| a + std::mem::size_of::<ZeroSpan>() + m.len())
+    }
+
     pub fn with_source(self, source: &'static str) -> SourcedDMLError {
         SourcedDMLError {
             error: self,
@@ -372,6 +379,7 @@ pub struct DeviceAnalysis {
     pub path: CanonPath,
     pub dependant_files: Vec<CanonPath>,
     pub clientpath: PathBuf,
+    pub reference_cache_max_size : usize,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -381,7 +389,7 @@ pub enum ReferenceMatchKind {
     NotFound,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct ReferenceMatches {
     pub kind: ReferenceMatchKind,
     // How these references are interpreted depends on 'kind',
@@ -403,6 +411,14 @@ impl Default for ReferenceMatches {
 }
 
 impl ReferenceMatches {
+    fn size_of(&self) -> usize {
+        // NOTE: This does NOT count the size of the values under the symbolrefs, as these should be shared with
+        // the analysis
+        std::mem::size_of_val(self)
+         + self.references.len() * std::mem::size_of::<SymbolRef>()
+         + self.messages.iter().fold(0, |a, m| a + m.size_of())
+    }
+
     pub fn add_match(&mut self, reference: SymbolRef) {
         if self.kind != ReferenceMatchKind::MismatchedFind {
             self.kind = ReferenceMatchKind::Found;
@@ -479,10 +495,25 @@ pub type TypeHint = DMLResolvedType;
 // Agnostic reference
 type AgnRef = Vec<String>;
 
-type ReferenceCacheKey = (String, AgnRef, Option<ZeroRange>);
-#[derive(Default)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+struct ReferenceCacheKey {
+    object_path: String,
+    agnostic_reference: AgnRef,
+    method_scope: Option<ZeroRange>,
+}
+
+impl ReferenceCacheKey {
+    fn size_of(&self) -> usize {
+        std::mem::size_of_val(self)
+         + self.object_path.len()
+         + self.agnostic_reference.iter().fold(0, |a, s| a + s.len())
+    }
+}
+
 struct ReferenceCache {
-    underlying_cache: HashMap<ReferenceCacheKey, ReferenceMatches>,
+    underlying_cache: LinkedHashMap<ReferenceCacheKey, ReferenceMatches>,
+    used_size: usize,
+    allowed_size: usize,
 }
 
 fn object_to_path_name(object: Option<&DMLObject>, container: &StructureContainer) -> String {
@@ -502,6 +533,14 @@ fn object_to_path_name_aux(object: Option<&DMLObject>, container: &StructureCont
 }
 
 impl ReferenceCache {
+    fn new(size: usize) -> Self {
+        ReferenceCache {
+            underlying_cache: LinkedHashMap::new(),
+            used_size: 0,
+            allowed_size: size,
+        }
+    }
+
     fn flatten_ref(refr: &NodeRef, agn: &mut Vec<String>) {
         match refr {
             NodeRef::Simple(dmlstring) => agn.push(dmlstring.val.clone()),
@@ -526,16 +565,49 @@ impl ReferenceCache {
         let object_path = object_to_path_name(object, container);
         let mut agnostic_reference = vec![];
         Self::flatten_ref(&refr.reference, &mut agnostic_reference);
-        (object_path, agnostic_reference, method_scope)
+        ReferenceCacheKey {
+            object_path,
+            agnostic_reference,
+            method_scope
+        }
+
     }
 
-    pub fn get(&self,
+    pub fn get(&mut self,
                key: (Option<&DMLObject>, VariableReference),
                container: &StructureContainer,
                method_structure: &HashMap<ZeroSpan, RangeEntry>)
                -> Option<&ReferenceMatches> {
         let agn_key = Self::convert_to_key(key, container, method_structure);
-        self.underlying_cache.get(&agn_key)
+        match self.underlying_cache.raw_entry_mut().from_key(&agn_key) {
+            hashlink::linked_hash_map::RawEntryMut::Occupied(mut e) => {
+                // Update cache entry to be recently used
+                e.to_back();
+                Some(e.into_mut())
+            },
+            _ => None,
+        }
+    }
+
+    fn size_of_key_val(key: &ReferenceCacheKey, val: &ReferenceMatches) -> usize {
+        key.size_of() + val.size_of()
+    }
+
+    fn remove_oldest(&mut self) {
+        // Unwrap is guaranteed by caller, a.k.a. do not speculatively call this function
+        let (oldest_key, oldest_val) = self.underlying_cache.pop_front().unwrap();
+        let removed_size = Self::size_of_key_val(&oldest_key, &oldest_val);
+        self.used_size -= removed_size;
+    }
+
+    fn prepare_space(&mut self, added_size: usize) -> Result<(), &'static str>{
+        if added_size > self.allowed_size {
+            return Err("Not enough space allowed in cache");
+        }
+        while self.used_size + added_size > self.allowed_size {
+            self.remove_oldest();
+        }
+        Ok(())
     }
 
     pub fn insert(&mut self,
@@ -545,6 +617,18 @@ impl ReferenceCache {
                   method_structure: &HashMap<ZeroSpan, RangeEntry>)
     {
         let agn_key = Self::convert_to_key(key, container, method_structure);
+        if let Some(previous_result) = self.underlying_cache.get(&agn_key) {
+            if val != *previous_result {
+                internal_error!("Invariant broken: agnostic keys resulted in different matches, old: {:?}, new: {:?}", previous_result, val);
+            }
+            return;
+        }
+        let added_size = Self::size_of_key_val(&agn_key, &val);
+        if let Err(e) = self.prepare_space(added_size) {
+            internal_error!("Failed to insert '{:?}' into reference cache: {}", agn_key, e);
+            return;
+        }
+        self.used_size += added_size;
         self.underlying_cache.insert(agn_key, val);
     }
 }
@@ -1449,7 +1533,7 @@ impl DeviceAnalysis {
         let current_scope = scope_chain.last().unwrap();
         let context_chain: Vec<ContextKey> = scope_chain
             .iter().map(|s|s.create_context()).collect();
-        let objects_of_scope = 
+        let objects_of_scope =
             if context_chain.len() == 1 {
                 // Must be device object
                 vec![self.get_device_obj().clone()]
@@ -2227,7 +2311,9 @@ impl DeviceAnalysis {
                         errors: &mut Vec<DMLError>,
                         status: &AliveStatus) {
         info!("Match references");
-        let reference_cache: Mutex<ReferenceCache> = Mutex::default();
+        let reference_cache: Mutex<ReferenceCache> = Mutex::new(
+            ReferenceCache::new(self.reference_cache_max_size)
+        );
         for scope_chain in all_scopes(bases) {
             debug!("Got scope at {:?}", scope_chain.last()
                    .map(|s|s.span().start_position()));
@@ -2270,6 +2356,7 @@ impl DeviceAnalysis {
     pub fn new(root: IsolatedAnalysis,
                timed_bases: Vec<TimestampedStorage<IsolatedAnalysis>>,
                imp_map: HashMap<Import, String>,
+               device_job_options: DeviceAnalysisJobOptions,
                status: AliveStatus)
                -> Result<DeviceAnalysis, Error> {
         info!("device analysis: {:?}", root.path);
@@ -2400,6 +2487,7 @@ impl DeviceAnalysis {
             path: root.path.clone(),
             clientpath: root.path.clone().into(),
             dependant_files: bases.iter().map(|b|&b.path).cloned().collect(),
+            reference_cache_max_size: device_job_options.max_reference_cache_size,
         };
         status.assert_alive();
         device.match_references(&bases,

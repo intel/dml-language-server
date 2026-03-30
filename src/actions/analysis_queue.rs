@@ -13,6 +13,8 @@ use std::sync::{Arc, Mutex};
 use std::sync::atomic::AtomicBool;
 use std::thread::{self, Thread};
 use std::time::SystemTime;
+
+use crate::actions::DeviceAnalysisJobOptions;
 use crate::lint::LintCfg;
 use crate::lint::LinterAnalysis;
 
@@ -119,8 +121,9 @@ impl AnalysisQueue {
                               storage: &mut AnalysisStorage,
                               device: &CanonPath,
                               bases: HashSet<CanonPath>,
-                              tracking_token: JobToken) -> bool {
-        match DeviceAnalysisJob::new(tracking_token, storage, bases, device) {
+                              tracking_token: JobToken,
+                              device_analysis_options: DeviceAnalysisJobOptions) -> bool {
+        match DeviceAnalysisJob::new(tracking_token, storage, bases, device, device_analysis_options) {
             Ok(newjob) => {
                 if let Some((_, previous_bases)) = self.device_tracker
                     .lock().unwrap()
@@ -484,13 +487,15 @@ pub struct DeviceAnalysisJob {
     notify: channel::Sender<ServerToHandle>,
     hash: u64,
     token: JobToken,
+    device_analysis_options: DeviceAnalysisJobOptions,
 }
 
 impl DeviceAnalysisJob {
     fn new(token: JobToken,
            analysis: &mut AnalysisStorage,
            bases: HashSet<CanonPath>,
-           root: &CanonPath)
+           root: &CanonPath,
+           device_analysis_options: DeviceAnalysisJobOptions)
            -> Result<DeviceAnalysisJob, String> {
         info!("Creating a device analysis job of {:?}", root);
         // TODO: Use some sort of timestamp from VFS instead of systemtime
@@ -543,6 +548,7 @@ impl DeviceAnalysisJob {
             notify: analysis.notify.clone(),
             hash,
             token,
+            device_analysis_options,
         })
     }
 
@@ -554,6 +560,7 @@ impl DeviceAnalysisJob {
         match DeviceAnalysis::new(self.root,
                                   self.bases,
                                   self.import_sources,
+                                  self.device_analysis_options,
                                   self.token.status) {
             Ok(analysis) => {
                 info!("Finished device analysis of {:?}", analysis.name);

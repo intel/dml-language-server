@@ -137,6 +137,9 @@ pub struct Config {
     pub compile_info_path: Option<PathBuf>,
     pub analysis_retain_duration: Option<f64>,
     pub new_device_context_mode: DeviceContextMode,
+    /// Max size of the data in the reference cache while resolving references,
+    /// does not include cache overhead
+    pub max_reference_cache_size: usize,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -222,6 +225,7 @@ impl Default for Config {
             compile_info_path: None,
             analysis_retain_duration: None,
             new_device_context_mode: DeviceContextMode::Always,
+            max_reference_cache_size: 500_000_000,
         }
     }
 }

@@ -362,6 +362,11 @@ impl SourcedDMLError {
 
 pub type ActiveDeviceContexts = HashSet<ContextDefinition>;
 
+#[derive(Debug, Clone)]
+pub struct DeviceAnalysisJobOptions {
+    pub max_reference_cache_size: usize,
+}
+
 impl <O: Output> InitActionContext<O> {
     fn new(
         analysis: Arc<Mutex<AnalysisStorage>>,
@@ -862,13 +867,19 @@ impl <O: Output> InitActionContext<O> {
         let (job, token) = ConcurrentJob::new();
         let job_ident = Self::device_job_id(device.as_str());
         let locked_analysis = &mut self.analysis.lock().unwrap();
+        let device_job_options =
+            DeviceAnalysisJobOptions {
+                    max_reference_cache_size:
+                        self.config.lock().unwrap().max_reference_cache_size,
+            };
         let dependencies = locked_analysis.all_dependencies(device,
                                                             Some(device));
         if self.analysis_queue.enqueue_device_job(
             locked_analysis,
             device,
             dependencies,
-            token) {
+            token,
+            device_job_options) {
             self.add_job(job_ident, job);
         }
     }
