@@ -1071,6 +1071,19 @@ impl RequestAction for ExportScipRequest {
             &devices,
         );
 
+        // Collect per-file isolated analyses from all device
+        // dependant files (deduplicates via HashMap key).
+        let mut isolated_map = std::collections::HashMap::new();
+        for device in &devices {
+            for file_path in &device.dependant_files {
+                if !isolated_map.contains_key(file_path) {
+                    if let Some(ts) = analysis.isolated_analysis.get(file_path) {
+                        isolated_map.insert(file_path.clone(), &ts.stored);
+                    }
+                }
+            }
+        }
+
         // Determine project root from workspaces
         let project_root = ctx.workspace_roots
             .lock()
@@ -1079,8 +1092,8 @@ impl RequestAction for ExportScipRequest {
             .and_then(|ws| parse_file_path!(&ws.uri, "ExportScip").ok())
             .unwrap_or_else(|| std::path::PathBuf::from("."));
 
-        let index = crate::scip::build_scip_index(&devices, &project_root,
-                                                   &import_data);
+        let index = crate::scip::build_scip_index(
+            &isolated_map, &project_root, Some(&import_data), &devices);
         let doc_count = index.documents.len();
 
         let output = std::path::Path::new(&params.output_path);
