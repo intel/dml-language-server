@@ -22,7 +22,7 @@ use itertools::{Either, Itertools};
 
 use crate::actions::analysis_storage::{AnalysisStorage, ResultChannel,
                                        TimestampedStorage, timestamp_is_newer};
-use crate::analysis::{DeviceAnalysis, IsolatedAnalysis};
+use crate::analysis::{AnalysisError, DeviceAnalysis, IsolatedAnalysis};
 use crate::analysis::structure::objects::Import;
 
 use crate::concurrency::JobToken;
@@ -468,9 +468,12 @@ impl IsolatedAnalysisJob {
                     import_paths
                 )).ok();
             },
-            Err(e) => {
-                trace!("Failed to create isolated analysis: {}", e);
+            Err(AnalysisError::VFSError(e)) => {
+                error!("Failed to create isolated analysis: {}", e);
                 // TODO: perhaps collect this for reporting to server
+            },
+            Err(AnalysisError::Cancelled) => {
+                debug!("Isolated analysis of {} was cancelled", self.path.as_str());
             }
         }
     }
@@ -553,6 +556,7 @@ impl DeviceAnalysisJob {
     }
 
     fn process(self) {
+        let root_path = self.root.path.clone();
         info!("Started work on deviceanalysis of {:?}, depending on {:?}",
               self.root.path,
               self.bases.iter().map(|i|&i.stored.path)
@@ -571,9 +575,12 @@ impl DeviceAnalysisJob {
                     analysis)).ok();
             },
             // In general, an analysis shouldn't fail to be created
-            Err(e) => {
-                trace!("Failed to create device analysis: {}", e);
+            Err(AnalysisError::VFSError(e)) => {
+                error!("Failed to create device analysis: {}", e);
                 // TODO: perhaps collect this for reporting to server
+            },
+            Err(AnalysisError::Cancelled) => {
+                debug!("Device analysis of {} was cancelled", root_path.as_str());
             }
         }
     }
@@ -636,8 +643,11 @@ impl LinterJob {
                 self.notify.send(ServerToHandle::LinterDone(
                     self.file.clone())).ok();
             },
-            Err(e) => {
-                debug!("Failed to create isolated linter analysis: {}", e);
+            Err(AnalysisError::VFSError(e)) => {
+                error!("Failed to create isolated linter analysis: {}", e);
+            },
+            Err(AnalysisError::Cancelled) => {
+                debug!("Linter analysis of {} was cancelled", self.file.as_str());
             }
         }
     }

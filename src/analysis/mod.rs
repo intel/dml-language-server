@@ -67,7 +67,7 @@ use crate::analysis::templating::types::DMLResolvedType;
 use crate::concurrency::AliveStatus;
 use crate::file_management::{PathResolver, CanonPath};
 
-use crate::vfs::{TextFile, Error};
+use crate::vfs::{TextFile, Error as VFSError};
 
 #[derive(Clone, Copy)]
 pub struct FileSpec<'a> {
@@ -654,6 +654,25 @@ fn gather_scopes<'c>(next_scopes: Vec<&'c dyn Scope>,
         gather_scopes(scope.defined_scopes(),
                       new_chain,
                       collected_scopes);
+    }
+}
+
+pub enum AnalysisError {
+    VFSError(VFSError),
+    Cancelled,
+}
+
+pub type AnalysisProcessResult<T> = Result<T, AnalysisError>;
+
+impl From<VFSError> for AnalysisError {
+    fn from(e: VFSError) -> Self {
+        AnalysisError::VFSError(e)
+    }
+}
+
+impl From<AnalysisError> for AnalysisProcessResult<()> {
+    fn from(e: AnalysisError) -> Self {
+        Err(e)
     }
 }
 
@@ -1525,10 +1544,10 @@ impl DeviceAnalysis {
         report: &mut Vec<DMLError>,
         method_structure: &HashMap<ZeroSpan, RangeEntry>,
         reference_cache: &Mutex<ReferenceCache>,
-        status: &AliveStatus) {
+        status: &AliveStatus) -> AnalysisProcessResult<()> {
         if scope_chain.is_empty() {
             internal_error!("Attempted to match references in empty scope chain");
-            return;
+            return Ok(());
         }
         let current_scope = scope_chain.last().unwrap();
         let context_chain: Vec<ContextKey> = scope_chain
@@ -1548,25 +1567,26 @@ impl DeviceAnalysis {
                         Err(e) => {
                             internal_error!("Failed to resolve context chain {:?}: {:?}",
                                             context_chain, e);
-                            return;
+                            return Ok(());
                         }
                     }
             };
         // NOTE: chunk number is arbitrarily picked that benches well
-        report.extend(current_scope.defined_references().par_chunks(25).flat_map(|references|{
-            status.assert_alive();
-            let mut local_reports = vec![];
-            for reference in references {
-                for object in &objects_of_scope {
-                    trace!("In {:?}, Matching {:?}", object, reference);
-                    let symbol_lookup = match &reference.variant {
-                        ReferenceVariant::Variable(var) => self.find_target_for_reference(
-                            Some(object),
-                            var,
-                            method_structure,
-                            reference_cache),
-                            ReferenceVariant::Global(glob) =>
-                            self.lookup_global_from_ref(glob),
+        let errs: AnalysisProcessResult<Vec<_>> = current_scope.defined_references().par_chunks(25).
+            try_fold(|| Vec::new(),
+            |mut local_reports, references|{
+                status.check_alive()?;
+                for reference in references {
+                    for object in &objects_of_scope {
+                        trace!("In {:?}, Matching {:?}", object, reference);
+                        let symbol_lookup = match &reference.variant {
+                            ReferenceVariant::Variable(var) => self.find_target_for_reference(
+                                Some(object),
+                                var,
+                                method_structure,
+                                reference_cache),
+                                ReferenceVariant::Global(glob) =>
+                                self.lookup_global_from_ref(glob),
                         };
 
                         match symbol_lookup.kind {
@@ -1596,15 +1616,18 @@ impl DeviceAnalysis {
                         local_reports.extend(symbol_lookup.messages);
                     }
                 }
-            local_reports.into_par_iter()
-        }).collect::<Vec<_>>());
+                Ok(local_reports)
+            })
+            .try_reduce(Vec::new, |mut vec1, vec2|{ vec1.extend(vec2); Ok(vec1) });
+        report.extend(errs?);
+        Ok(())
     }
 }
 
 pub fn parse_file(path: &Path, file: FileSpec<'_>)
                   -> Result<(parsing::structure::TopAst,
                              ProvisionalsManager,
-                             Vec<DMLError>), Error>
+                             Vec<DMLError>), VFSError>
 {
     let content = &file.file.text;
     let lexer = TokenKind::lexer(content);
@@ -1664,14 +1687,14 @@ impl IsolatedAnalysis {
                clientpath: &PathBuf,
                file: TextFile,
                status: AliveStatus)
-               -> Result<IsolatedAnalysis, Error> {
+               -> AnalysisProcessResult<IsolatedAnalysis> {
         trace!("local analysis: {} at {}", path.as_str(), path.as_str());
-        status.assert_alive();
+        status.check_alive()?;
         let filespec = FileSpec {
             path, file: &file
         };
         let (mut ast, provisionals, mut errors) = parse_file(path, filespec)?;
-        status.assert_alive();
+        status.check_alive()?;
         // Add invalid provisionals to errors
         for duped_provisional in &provisionals.duped_provisionals {
             errors.push(DMLError {
@@ -1727,7 +1750,7 @@ impl IsolatedAnalysis {
 
         let toplevel = collect_toplevel(path, &ast,
                                         &mut errors, filespec);
-        status.assert_alive();
+        status.check_alive()?;
         // sanity, clientpath and path should be the same file
         if CanonPath::from_path_buf(clientpath.clone()).is_none_or(
             |cp|&cp != path) {
@@ -1735,8 +1758,8 @@ impl IsolatedAnalysis {
                     file as the actual path; {:?} vs {:?}",
                    path,
                    clientpath);
-            return Err(Error::InternalError(
-                "Clientpath did not describe the same file as path"));
+            return Err(VFSError::InternalError(
+                "Clientpath did not describe the same file as path").into());
         }
         let top_context = toplevel.to_context();
         let res = IsolatedAnalysis {
@@ -1747,7 +1770,6 @@ impl IsolatedAnalysis {
             clientpath: clientpath.clone(),
             errors,
         };
-        status.assert_alive();
         info!("Produced an isolated analysis of {:?}", res.path);
         debug!("Produced an isolated analysis: {}", res);
         Ok(res)
@@ -2309,7 +2331,7 @@ impl DeviceAnalysis {
                         bases: &Vec<IsolatedAnalysis>,
                         method_structure: &HashMap<ZeroSpan, RangeEntry>,
                         errors: &mut Vec<DMLError>,
-                        status: &AliveStatus) {
+                        status: &AliveStatus) -> AnalysisProcessResult<()> {
         info!("Match references");
         let reference_cache: Mutex<ReferenceCache> = Mutex::new(
             ReferenceCache::new(self.reference_cache_max_size)
@@ -2321,8 +2343,9 @@ impl DeviceAnalysis {
                                            errors,
                                            method_structure,
                                            &reference_cache,
-                                           status);
+                                           status)?;
         }
+        Ok(())
     }
 
     fn template_object_map(tt_info: &TemplateTraitInfo,
@@ -2358,13 +2381,13 @@ impl DeviceAnalysis {
                imp_map: HashMap<Import, String>,
                device_job_options: DeviceAnalysisJobOptions,
                status: AliveStatus)
-               -> Result<DeviceAnalysis, Error> {
+               -> AnalysisProcessResult<DeviceAnalysis> {
         info!("device analysis: {:?}", root.path);
-        status.assert_alive();
+        status.check_alive()?;
 
         if root.toplevel.device.is_none() {
-            return Err(Error::InternalError(
-                "Attempted to device analyze a file without device decl"));
+            return Err(VFSError::InternalError(
+                "Attempted to device analyze a file without device decl").into());
         }
 
         let mut bases: Vec<_> =
@@ -2396,7 +2419,7 @@ impl DeviceAnalysis {
                              .expect("write string error");
                          s
                      }));
-        status.assert_alive();
+        status.check_alive()?;
         let mut errors = vec![];
 
         // Remove duplicate templates
@@ -2432,7 +2455,7 @@ impl DeviceAnalysis {
             trace!("Tracked file {} as template",
                    base.path.to_str().unwrap_or("no path"));
         }
-        status.assert_alive();
+        status.check_alive()?;
         let mut rank_maker = RankMaker::new();
         let tt_info = Self::make_templates_traits(&root.toplevel.start_of_file,
                                                   &mut rank_maker,
@@ -2440,7 +2463,7 @@ impl DeviceAnalysis {
                                                   &files,
                                                   &imp_map,
                                                   &mut errors);
-        status.assert_alive();
+        status.check_alive()?;
         // TODO: catch typedef/traitname overlaps
 
         // TODO: this is where we would do type resolution
@@ -2449,11 +2472,11 @@ impl DeviceAnalysis {
         let device_key = make_device(root.path.as_str(), &root.toplevel,
                                      &tt_info, imp_map, &mut container,
                                      &mut rank_maker, &mut errors).key;
-        status.assert_alive();
+        status.check_alive()?;
         // maps template declaration loc to objects
         let template_object_implementation_map =
             Self::template_object_map(&tt_info, &container);
-        status.assert_alive();
+        status.check_alive()?;
         info!("Generate symbols");
         // Used to handle scoping in methods when looking up local symbols,
         // NOTE: if this meta-information becomes relevant later, move this
@@ -2471,7 +2494,7 @@ impl DeviceAnalysis {
         // symbol order is not correlated to the object iteration order
         bind_method_implementations(&mut symbol_info.method_symbols);
 
-        status.assert_alive();
+        status.check_alive()?;
         // TODO: how do we store type info?
         extend_with_templates(&maker, &mut symbol_info, &tt_info);
         //extend_with_types(&mut symbols, ??)
@@ -2489,11 +2512,11 @@ impl DeviceAnalysis {
             dependant_files: bases.iter().map(|b|&b.path).cloned().collect(),
             reference_cache_max_size: device_job_options.max_reference_cache_size,
         };
-        status.assert_alive();
+        status.check_alive()?;
         device.match_references(&bases,
                                 &method_structure,
                                 &mut errors,
-                                &status);
+                                &status)?;
 
         // NOTE: This is when we previously pre-calculated the ref->symbol map,
         // however the up-front analysis cost of this was too heavy
@@ -2510,7 +2533,7 @@ impl DeviceAnalysis {
                 .push(error);
         }
         trace!("Errors are {:?}", device.errors);
-        status.assert_alive();
+        status.check_alive()?;
         info!("Done with device");
         Ok(device)
     }
