@@ -6,7 +6,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use lazy_static::lazy_static;
-use log::{debug, error, trace};
+use crate::logging::{debug, error, trace};
 use rules::linelength::{BreakBeforeBinaryOpOptions,
     BreakFuncCallOpenParenOptions,
     BreakMethodOutputOptions,

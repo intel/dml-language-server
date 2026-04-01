@@ -2,7 +2,7 @@
 //  SPDX-License-Identifier: Apache-2.0 and MIT
 //! Stores currently completed analysis.
 
-use log::{debug, info, trace};
+use crate::logging::{debug, trace, info};
 
 use crossbeam::channel;
 

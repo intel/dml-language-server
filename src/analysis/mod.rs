@@ -23,7 +23,7 @@ use hashlink::LinkedHashMap;
 use itertools::Itertools;
 use lsp_types::{DiagnosticSeverity};
 use logos::Logos;
-use log::{debug, error, info, trace};
+use crate::logging::{debug, error, info, trace};
 use rayon::prelude::*;
 
 use crate::actions::{SourcedDMLError, DeviceAnalysisJobOptions};
@@ -1592,7 +1592,7 @@ impl DeviceAnalysis {
                                 (),
                         }
                         local_reports.extend(symbol_lookup.messages);
-                    }
+                    }  
                 }
                 Ok(local_reports)
             })

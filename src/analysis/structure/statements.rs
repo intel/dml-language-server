@@ -1,6 +1,6 @@
 //  © 2024 Intel Corporation
 //  SPDX-License-Identifier: Apache-2.0 and MIT
-use log::error;
+use crate::logging::error;
 
 use crate::analysis::{DeclarationSpan,
                       LocalDMLError};

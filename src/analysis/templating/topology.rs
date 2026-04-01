@@ -10,7 +10,7 @@ use std::sync::Mutex;
 
 use itertools::Itertools;
 use lazy_static::lazy_static;
-use log::{debug, error, trace};
+use crate::logging::{debug, error, trace};
 use lsp_types::DiagnosticSeverity;
 
 use crate::analysis::DeclarationSpan;

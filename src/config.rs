@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use serde::de::Deserializer;
 use serde::{Deserialize, Serialize};
 
-use log::{error, trace};
+use crate::logging::{error, trace};
 
 use crate::lsp_data::SerializeError;
 

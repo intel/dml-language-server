@@ -41,7 +41,7 @@ use std::time::{Duration, Instant};
 use serde_json;
 use lazy_static::lazy_static;
 
-use log::debug;
+use crate::logging::debug;
 
 /// Runs the DLS in command line mode.
 pub fn run(compile_info_path: Option<PathBuf>,

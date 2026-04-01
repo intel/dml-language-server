@@ -2,7 +2,7 @@
 //  SPDX-License-Identifier: Apache-2.0 and MIT
 //! Stores currently completed analysis.
 
-use log::{debug, error};
+use crate::logging::{debug, error};
 
 use std::collections::HashSet;
 use std::{fmt, mem};
