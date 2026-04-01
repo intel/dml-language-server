@@ -1,0 +1,131 @@
+//  © 2024 Intel Corporation
+//  SPDX-License-Identifier: Apache-2.0 and MIT
+dml 1.4;
+
+device test_device;
+
+// @loc[10]=simple_tmpl
+template simple_template { // @goto-ref[10]->bank1_inst,bank2_inst,reg_inst @goto-impl[10]->bank1_inst,bank2_inst,reg_inst
+    param value default 0;
+}
+
+// @loc[15]=bank1_inst
+bank bank1 is simple_template { // @goto-def[15]->simple_tmpl
+    param value default 10;
+}
+
+// @loc[15]=bank2_inst
+bank bank2 is simple_template { // @goto-def[15]->simple_tmpl
+    param value default 20;
+}
+
+bank container_bank {
+    // @loc[35]=reg_inst
+    register reg1 size 4 @ 0x0 is simple_template { // @goto-def[35]->simple_tmpl
+        param value default 30;
+    }
+}
+
+// @loc[10]=multi_use_tmpl
+template multi_use_template { // @goto-impl[10]->bank_multi_inst,group_multi_inst,reg_multi_inst @goto-ref[10]->bank_multi_inst,group_multi_inst,reg_multi_inst,!multi_use_template_as_type_1,!multi_use_template_as_type_2
+    param common default 42;
+}
+
+// @loc[20]=bank_multi_inst
+bank bank_multi is multi_use_template { // @goto-def[20]->multi_use_tmpl
+}
+
+// @loc[22]=group_multi_inst
+group group_multi is multi_use_template { // @goto-def[22]->multi_use_tmpl
+}
+
+bank container_for_register {
+    // @loc[40]=reg_multi_inst
+    register reg_multi size 4 @ 0x0 is multi_use_template { // @goto-def[40]->multi_use_tmpl
+    }
+}
+
+// Make sure goto-impl on template does not find template as type reference
+method m() {
+    // TODO: Type references currently do not work
+    // @loc[11]=multi_use_template_as_type_1 @loc[52]=multi_use_template_as_type_2
+    local multi_use_template m = cast(group_multi, multi_use_template); // @goto-def-decl[11]->!multi_use_tmpl @goto-def-decl[52]->!multi_use_tmpl 
+}
+
+// Test 3: Multi-template in each - requires ALL templates
+template multi_test_a {
+    param a_val default 1;
+}
+
+template multi_test_b {
+    param b_val default 2;
+}
+
+template multi_test_c {
+    param c_val default 3;
+}
+
+// Positive: Object with both templates A and B
+// @loc[6]=both_single
+bank both_templates is (multi_test_a, multi_test_b) { // @goto-impl[6]->both_ab_ineach,split_ineach
+    param single_custom default 300;
+}
+
+// @loc[1]=both_ab_ineach
+in each (multi_test_a, multi_test_b) {
+    param another_shared default 201;
+}
+
+// Positive: Object with all three templates
+// @loc[6]=has_three
+bank has_all_three is (multi_test_a, multi_test_b, multi_test_c) { // @goto-impl[6]->three_ineach,both_ab_ineach,split_ineach
+    param complete default 888;
+}
+
+// @loc[1]=three_ineach
+in each (multi_test_a, multi_test_b, multi_test_c) {
+    param needs_all_three default 777;
+}
+
+// Negative: Object with only one template (missing multi_test_b)
+// @loc[6]=only_a
+bank only_one_template is multi_test_a { // @goto-impl[6]->
+    param only_a_param default 400;
+}
+
+// Negative: Object with two templates but missing the third
+// @loc[6]=has_two
+bank has_only_two is (multi_test_a, multi_test_b) { // @goto-impl[6]->both_ab_ineach,split_ineach
+    param incomplete default 666;
+}
+
+// Test 4: Split object declaration with multiple templates
+// @loc[7]=split_grp
+group split_group is multi_test_a { // // @goto-impl[7]->both_ab_ineach,split_ineach
+    param first_part default 100;
+}
+
+group split_group is multi_test_b {
+    param second_part default 200;
+}
+
+// @loc[1]=split_ineach
+in each (multi_test_a, multi_test_b) {
+    param split_shared default 333;
+}
+
+// Test 5: Objects with no template instantiations - verify goto-impl returns nothing
+// @loc[6]=lonely
+bank lonely_bank { // @goto-impl[6]->
+    param lonely_param default 0;
+}
+
+// @loc[11]=test_iface
+interface test_interface { // @goto-impl[11]->
+    param interface_param default 77;
+}
+
+// @loc[9]=test_conn
+connect test_connect { // @goto-impl[9]->
+    param connect_param default 88;
+}

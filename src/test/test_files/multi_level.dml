@@ -1,0 +1,145 @@
+//  © 2024 Intel Corporation
+//  SPDX-License-Identifier: Apache-2.0 and MIT
+dml 1.4;
+
+device multi_level_test;
+
+// Test multiple levels of template inheritance (3 levels)
+// @loc[10]=level_0_template
+
+template shared_level_template {
+    // @loc[19]=shared_level_method
+    shared method level_0_method(); // @goto-impl[19]->level_0_method, level_1_level_0_method, level_2_level_0_method
+}
+
+template level_0_template is shared_level_template{
+    // @loc[11]=level_0_param
+    param level_0_param default 0;
+    // @loc[12]=level_0_method
+    method level_0_method() default { // @goto-impl[12]->level_0_method, level_1_level_0_method, level_2_level_0_method @goto-decl[12]->shared_level_method
+        log info: "level_0";
+        // TODO: for some reason, declaring 'default' here breaks the default binding order for other methods towards this one
+        // Check incorrect default has no def or decl
+        // default(); // Uncommenting this breaks goto-def from the default in the override to us, see issue #207
+    }
+}
+
+// @loc[10]=level_1_template
+template level_1_template is level_0_template {
+    param level_0_param default 1;
+    // @loc[11]=level_1_param
+    param level_1_param default 10;
+    // @loc[12]=level_1_level_0_method
+    method level_0_method() default { // @goto-decl[12]->shared_level_method // @goto-impl->level_1_level_0_method, level_2_level_0_method
+        log info: "level_1";
+    }
+    // @loc[12]=level_1_method
+    method level_1_method() default { // @goto-decl[12]->level_1_method @goto-impl[12]->level_1_method, level_2_level_1_method
+        log info: "level_1_method";
+        //default(); // Uncommenting this breaks goto-def from the default in the override to us, see issue #207
+    }
+}
+
+// @loc[10]=level_2_template
+template level_2_template is level_1_template { // @goto-ref[10]->reg1_level_2_template_use, reg2_level_2_template_use @goto-def-decl[30]->level_1_template
+    // @loc[11]=level_2_level_0_param
+    param level_0_param default 2; // @goto-ref[11] -> reg1_level_0_param_ref, reg1_level_1_param_ref
+    // @loc[11]=level_2_level_1_param
+    // @loc[33]=upwards_this_ref
+    // @loc[38]=upwards_param_ref
+    param level_1_param default this.upwards_param; // @goto-def-decl[33]->reg1_def, reg2_def @goto-def-decl[38]->upwards_param_def_1, upwards_param_def_2 @goto-ref[11]->reg_1_level_1_param_ref,reg_2_level_1_param_ref
+    // @loc[11]=level_2_param
+    param level_2_param default 100; // @goto-ref[11]->reg_1_level_2_param_ref,reg_2_level_2_param_ref
+    // @loc[12]=level_2_level_0_method
+    method level_0_method() { // @goto-decl[12]-> shared_level_method // @goto-impl->level_2_level_0_method
+        default(); // @goto-def[9]->level_1_level_0_method @goto-decl[9]->shared_level_method
+    }
+    // @loc[12]=level_2_level_1_method
+    method level_1_method() { // @goto-decl[12]->level_1_method
+        default(); // @goto-def[9]->level_1_method
+    }
+    // @loc[12]=level_2_method
+    method level_2_method() {
+        default(); // @goto-def[9]->
+    }
+}
+
+// Test multiple objects instantiating same template
+bank multi_instance_bank {
+    // @loc[14]=reg1_def
+    // @loc[22]=reg1_level_2_template_use
+    register reg1 is level_2_template { // @goto-ref[14]->upwards_this_ref, reg1_this_ref @goto-def-decl[22]->level_2_template
+        // @loc[15]=upwards_param_def_1
+        param upwards_param = 2;
+        method use_param() {
+            // Reference to template param - goto-def should go to template
+            // @loc[27]=reg1_this_ref
+            // @loc[32]=reg1_level_0_param_ref
+            local int x = this.level_0_param; // @goto-def[37]->level_2_level_0_param @goto-decl[37]->level_0_param
+            // @loc[18]=reg_1_level_1_param_ref;
+            x += level_1_param; // @goto-def[18]->level_2_level_1_param @goto-decl[18]->level_1_param
+            // @loc[18]=reg_1_level_2_param_ref;
+            x -= level_2_param; // @goto-def-decl[18]->level_2_param
+        }
+    }
+    // @loc[14]=reg2_def
+    // @loc[22]=reg2_level_2_template_use
+    register reg2 is level_2_template { // @goto-ref[14]->upwards_this_ref, reg2_this_ref @goto-def-decl[22]->level_2_template
+        // @loc[15]=upwards_param_def_2
+        param upwards_param = 4;
+        method use_param() {
+            // Reference to template param - goto-def should go to template
+            // @loc[27]=reg2_this_ref
+            // @loc[32]=reg2_level_0_param_ref
+            local int x = this.level_0_param; // @goto-def[37]->level_2_level_0_param @goto-decl[37]->level_0_param
+            // @loc[18]=reg_2_level_1_param_ref;
+            x += level_1_param; // @goto-def[18]->level_2_level_1_param @goto-decl[18]->level_1_param
+            // @loc[18]=reg_2_level_2_param_ref;
+            x -= level_2_param; // @goto-def-decl[18]->level_2_param
+        }
+    }
+}
+
+// Test method composition
+// @loc[10]=shared_decl_template
+template shared_decl_template {
+    // @loc[19]=shared_method_decl
+    shared method shared_method(); // @goto-impl[19]->shared_method_def @goto-def[19]=shared_method_def @goto-ref[19]->
+    // @loc[19]=late_shared_method_decl
+    shared method late_shared_method(); // @goto-impl[19]->late_shared_template_def, late_shared_method_override @goto-def[19]->late_shared_template_def @goto-ref[19]->
+    // @loc[12]=late_shared_template_def
+    method late_shared_method() default {} // @goto-impl[12]->late_shared_template_def, late_shared_method_override @goto-decl[19]->late_shared_method_decl @goto-ref[19]->late_shared_default_call
+}
+
+bank shared_methods_bank is shared_decl_template {
+    // @loc[12]=shared_method_def
+    method shared_method() { // @goto-decl[12]->shared_method_decl @goto-ref[12]->shared_method_call
+    }
+
+    // @loc[12]=late_shared_method_override
+    method late_shared_method() { // @goto-decl[12]->late_shared_method_decl @goto-ref[12]->late_shared_method_call
+        // @loc[9]=late_shared_default_call
+        default(); // @goto-def[10]->late_shared_template_def @goto-decl[10]->late_shared_method_decl
+    }
+    
+    method caller() {
+        // Call to the composed method - should find both declaration and definition
+        // @loc[9]=shared_method_call
+        shared_method(); // @goto-def[9]->shared_method_def
+        // @loc[9]=late_shared_method_call
+        late_shared_method(); // @goto-def[9]->late_shared_method_override @goto-decl[14]->late_shared_method_decl
+        // @loc[9]=split_shared_call
+        split_shared_method(); // @goto-def[9]->split_shared_def @goto-decl[9]->!split_shared_decl, ?split_shared_def
+    }
+
+    is (split_shared_1, split_shared_2);
+}
+
+template split_shared_1 {
+    // @loc[19]=split_shared_decl
+    shared method split_shared_method(); // @goto-impl[19]->!split_shared_def
+}
+template split_shared_2 {
+    // @loc[12]=split_shared_def
+    method split_shared_method() {  } // @goto-decl[12]->!split_shared_decl, ?split_shared_def @goto-ref[12]->split_shared_call
+}

@@ -1,0 +1,38 @@
+dml 1.4;
+
+device test;
+
+// Simple test with symbolic names
+// @loc[10]=base_tmpl
+template base_template {
+    // @loc[11]=base_p1
+    param p1 default 0;
+    // @loc[12]=base_m1
+    method m1() {
+        log info: "base_m1";
+    }
+}
+
+bank test_bank is base_template { // @goto-def[19]->base_tmpl
+    param p1 default 5; // @goto-decl[11]->base_p1
+    
+    // @loc[12]=m1_override
+    method m1() { // @goto-decl[12]->base_m1
+        log info: "override";
+        default(); // @goto-def[9]->base_m1
+    }
+    
+    method caller() {
+        this.m1(); // @goto-def[14]->m1_override
+    }
+}
+
+// === Expected-failure tests (nonexistent symbols) ===
+
+template phantom_tmpl is missing_template { // @goto-def[26]->
+    param phantom_val default 0;
+}
+
+method phantom_sym_calls() {
+    no_such_method(); // @goto-def[5]->
+}
