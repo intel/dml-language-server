@@ -156,7 +156,15 @@ fn get_refs_and_syms_at_fp<'t>(
     
     let context_sym_at_pos = context_symbol_at_pos(analysis_info.isolated_analysis, fp);
     let symbols_at_fp = context_sym_at_pos.map(|cs| {
-        analysis_info.device_analysises.iter().map(|a|(*a, a.lookup_symbols(&cs, relevant_limitations))).collect::<Vec<_>>()
+        analysis_info.device_analysises.iter().map(
+            |a|(*a, match a.lookup_symbols(&cs, relevant_limitations) {
+                Ok(syms) => syms,
+                Err(e) => {
+                    internal_error!("failed to find context symbol at {:?}: {}", fp, e);
+                    vec![]
+                }
+            }))
+        .collect::<Vec<_>>()
     });
     if let Some(syms) = symbols_at_fp {
         if ref_at_pos.is_some() {

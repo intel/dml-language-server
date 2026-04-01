@@ -19,6 +19,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::Mutex;
 
+use itertools::Itertools;
 use lsp_types::{DiagnosticSeverity};
 use logos::Logos;
 use log::{debug, error, info, trace};
@@ -574,16 +575,16 @@ fn gather_scopes<'c>(next_scopes: Vec<&'c dyn Scope>,
 
 impl DeviceAnalysis {
     pub fn lookup_symbols<'t>(&self, context_sym: &ContextedSymbol<'t>, limitations: &mut HashSet<DLSLimitation>)
-        -> Vec<SymbolRef> {
+        -> Result<Vec<SymbolRef>, String> {
         trace!("Looking up symbols at {:?}", context_sym);
 
         // Special handling for methods, since each method decl has its
         // own symbol
         if context_sym.kind() == DMLSymbolKind::Method {
-            return self.symbol_info.method_symbols
+            return Ok(self.symbol_info.method_symbols
                 .get(context_sym.loc_span())
                 .map(|m|m.values().cloned())
-                .into_iter().flatten().collect();
+                .into_iter().flatten().collect());
         }
         self.lookup_symbols_by_contexted_symbol(context_sym, limitations)
     }
@@ -671,23 +672,23 @@ impl DeviceAnalysis {
                         curr_objs: Vec<DMLObject>,
                         context_chain: &[ContextKey],
                         limitations: &mut HashSet<DLSLimitation>)
-                        -> Option<Vec<DMLObject>> {
+                        -> Result<Vec<DMLObject>, String> {
         if context_chain.is_empty() {
-            Some(curr_objs)
+            Ok(curr_objs)
         } else {
             self.contexts_to_objs_aux(
-                curr_objs.into_iter().filter_map(
+                curr_objs.into_iter().map(
                     |obj|match obj.resolve(&self.objects) {
-                        DMLResolvedObject::CompObject(robj) => Some(robj),
+                        DMLResolvedObject::CompObject(robj) => Ok(robj),
                         DMLResolvedObject::ShallowObject(sobj) => {
-                            internal_error!(
+                            Err(format!(
                                 "Internal Error: \
                                  Wanted to find context {:?} in {:?} \
                                  which is not \
-                                 a composite object", sobj, context_chain);
-                            None
+                                 a composite object", sobj, context_chain))
                         }
-                    }).collect(),
+                    })
+                    .collect::<Result<Vec<_>, String>>()?,
                 context_chain,
                 limitations)
         }
@@ -697,15 +698,11 @@ impl DeviceAnalysis {
                             curr_objs: Vec<&DMLCompositeObject>,
                             context_chain: &[ContextKey],
                             limitations: &mut HashSet<DLSLimitation>)
-                            -> Option<Vec<DMLObject>> {
-        let result: Vec<DMLObject> = curr_objs.into_iter()
-            .filter_map(|o|self.context_to_objs(o, context_chain, limitations))
-            .flatten().collect();
-        if result.is_empty() {
-            None
-        } else {
-            Some(result)
-        }
+                            -> Result<Vec<DMLObject>, String> {
+        // Note: failing to find here is not actually an error
+        curr_objs.into_iter()
+            .map(|o|self.context_to_objs(o, context_chain, limitations))
+            .process_results(|r|r.flatten().collect())
     }
 
     // TODO: This function is called from two contexts, and this is a reoccuring pain-point
@@ -717,19 +714,22 @@ impl DeviceAnalysis {
                        curr_obj: &DMLCompositeObject,
                        context_chain: &[ContextKey],
                        limitations: &mut HashSet<DLSLimitation>)
-                       -> Option<Vec<DMLObject>> {
+                       -> Result<Vec<DMLObject>, String> {
         // Should be guaranteed by caller responsibility
         if context_chain.is_empty() {
-            internal_error!(
-                "context chain invariant broken at {:?}",
-                curr_obj.identity());
+            return Err(format!("context chain invariant broken at {:?}", curr_obj.identity()));
         }
 
         let (first, rest) = context_chain.split_first().unwrap();
         let next_objs = match first {
-            ContextKey::Structure(sym) =>
-                curr_obj.get_object(sym.name_ref()).cloned()
-                .into_iter().collect(),
+            ContextKey::Structure(sym) => {
+                let res: Vec<_> = curr_obj.get_object(sym.name_ref()).cloned()
+                    .into_iter().collect();
+                if res.is_empty() {
+                    return Err(format!("Failed to find structural object corresponding to {:?} at {:?}", first, curr_obj.identity()));
+                }
+                res
+            },
             ContextKey::Method(sym) => {
                 if let Some(found_obj)
                     = curr_obj.get_object(sym.name_ref()) {
@@ -740,17 +740,16 @@ impl DeviceAnalysis {
                                 vec![found_obj.clone()]
                             }
                         else {
-                            internal_error!(
+                            return Err(format!(
                                 "Context chain suggested {:?} should be a \
                                  method, but it wasn't",
-                                found_obj.resolve(&self.objects));
-                            vec![]
+                                found_obj.resolve(&self.objects)));
                         }
                     }
                 else {
                     // If it is an error to not find an result, handle
                     // it higher up in stack
-                    return None;
+                    return Err(format!("Failed to find method object corresponding to {:?} at {:?}", first, curr_obj.identity()));
                 }
             },
             ContextKey::Template(sym) =>
@@ -765,26 +764,25 @@ impl DeviceAnalysis {
                             limitations.insert(
                                 isolated_template_limitation(&templ.name)
                             );
+                            return Ok(vec![]);
+                        } else {
+                            return self.contexts_to_objs(
+                                templ_impls
+                                    .iter()
+                                    .map(|key|DMLObject::CompObject(*key))
+                                    .collect(),
+                                rest,
+                                limitations);
                         }
-                        return self.contexts_to_objs(
-                            templ_impls
-                                .iter()
-                                .map(|key|DMLObject::CompObject(*key))
-                                .collect(),
-                            rest,
-                            limitations);
                     }
                     else {
-                        internal_error!(
-                            "No template->objects map for {:?}", sym);
-                        vec![]
+                        return Err(format!("No template->objects map for {:?}", sym));
                     }
                 } else {
-                    internal_error!(
+                    return Err(format!(
                         "Wanted to find context {:?} in {:?} which is not \
                          a known template object",
-                        first, curr_obj);
-                    return None;
+                        first, curr_obj));
                 },
             ContextKey::AllWithTemplate(_, templates) =>
                 return self.contexts_to_objs(
@@ -1020,7 +1018,7 @@ impl DeviceAnalysis {
             }
     }
 
-    fn lookup_global_sym(&self, sym: &SimpleSymbol) -> Vec<SymbolRef> {
+    fn lookup_global_sym(&self, sym: &SimpleSymbol) -> Result<Vec<SymbolRef>, String> {
         //TODO: being able to fail a re-match here feels silly. consider
         // adding sub-enum for DMLGlobalSymbolKind
         match sym.kind {
@@ -1029,21 +1027,18 @@ impl DeviceAnalysis {
                     sym.name.as_str()) {
                     // This _should_ be guaranteed, since the SimpleSymbol
                     // ref comes from structure
-                    vec![Arc::clone(self.symbol_info.template_symbols.get(
-                        templ.location.as_ref().unwrap()).unwrap())]
+                    Ok(vec![Arc::clone(self.symbol_info.template_symbols.get(
+                        templ.location.as_ref().unwrap()).unwrap())])
                 } else {
-                    error!("Unexpectedly missing template matching {:?}", sym);
-                    vec![]
+                    Err(format!("Unexpectedly missing template matching {:?}", sym))
                 }
             },
             // TODO: DMLType lookup
-            DMLSymbolKind::Typedef => vec![],
+            DMLSymbolKind::Typedef => Ok(vec![]),
             // TODO: Extern lookup
-            DMLSymbolKind::Extern => vec![],
+            DMLSymbolKind::Extern => Ok(vec![]),
             e => {
-                error!("Internal error: Unexpected symbol kind of global \
-                        symbol: {:?}", e);
-                vec![]
+                Err(format!("Unexpected symbol kind of global symbol: {:?}", e))
             },
         }
     }
@@ -1052,7 +1047,7 @@ impl DeviceAnalysis {
     pub fn lookup_symbols_by_contexted_symbol<'t>(&self,
                                                   sym: &ContextedSymbol<'t>,
                                                   limitations: &mut HashSet<DLSLimitation>)
-        -> Vec<SymbolRef> {
+        -> Result<Vec<SymbolRef>, String> {
         if matches!(sym.symbol.kind, DMLSymbolKind::Template |
                     DMLSymbolKind::Typedef | DMLSymbolKind::Extern)
         {
@@ -1061,36 +1056,28 @@ impl DeviceAnalysis {
 
         debug!("Looking up {:?} in device tree", sym);
 
-        let mb_objs = if sym.contexts.is_empty() {
-            Some(vec![self.get_device_obj().clone()])
+        let objs = if sym.contexts.is_empty() {
+            vec![self.get_device_obj().clone()]
         } else {
             self.context_to_objs(self.get_device_comp_obj(),
                                  sym.contexts.iter()
                                  .cloned().cloned()
                                  .collect::<Vec<ContextKey>>()
                                  .as_slice(),
-                                 limitations)
+                                 limitations)?
         };
 
-        if let Some(objs) = mb_objs {
-            trace!("Found {:?}", objs);
-            let mut refs = ReferenceMatches::new();
-            let _: Vec<_> = objs.into_iter()
-                .map(|o|self.lookup_def_in_obj(&o, sym.symbol, &mut refs))
-                .collect();
-            // We can ignore messages from lookup defs here, as this lookup is
-            // live and reporting additional things from here makes no sense
-            if let Some(matches) = refs.as_matches() {
-                matches.into_iter().collect()
-            } else {
-                vec![]
-            }
+        trace!("Found {:?}", objs);
+        let mut refs = ReferenceMatches::new();
+        let _: Vec<_> = objs.into_iter()
+            .map(|o|self.lookup_def_in_obj(&o, sym.symbol, &mut refs))
+            .collect();
+        // We can ignore messages from lookup defs here, as this lookup is
+        // live and reporting additional things from here makes no sense
+        if let Some(matches) = refs.as_matches() {
+            Ok(matches.into_iter().collect())
         } else {
-            // TODO: Do we need to fall back on globals here? Can we get an
-            // identifier from a spot that is generic enough to refer to a
-            // global, but also is in a context where a global makes sense?
-            internal_error!("Failed to find objects matching {:?}", sym);
-            vec![]
+            Ok(vec![])
         }
     }
 
@@ -1462,23 +1449,25 @@ impl DeviceAnalysis {
         let current_scope = scope_chain.last().unwrap();
         let context_chain: Vec<ContextKey> = scope_chain
             .iter().map(|s|s.create_context()).collect();
-        let Some(objects_of_scope) = (
+        let objects_of_scope = 
             if context_chain.len() == 1 {
                 // Must be device object
-                Some(vec![self.get_device_obj().clone()])
+                vec![self.get_device_obj().clone()]
             } else {
-                self.context_to_objs(
+                match self.context_to_objs(
                     self.get_device_comp_obj(),
                     // Skip first context, it's the device one
                     &context_chain[1..],
                     // Intentionally avoid storing limitations
-                    &mut HashSet::new())
-            }
-        )                 
-        else {
-            debug!("Context chain {:?} corresponded to no objects", context_chain);
-            return;
-        };
+                    &mut HashSet::new()) {
+                        Ok(objs) => objs,
+                        Err(e) => {
+                            internal_error!("Failed to resolve context chain {:?}: {:?}",
+                                            context_chain, e);
+                            return;
+                        }
+                    }
+            };
         // NOTE: chunk number is arbitrarily picked that benches well
         report.extend(current_scope.defined_references().par_chunks(25).flat_map(|references|{
             status.assert_alive();
