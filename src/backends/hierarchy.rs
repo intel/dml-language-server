@@ -92,8 +92,10 @@ impl SourceTextCache {
         } else {
             // Multi-line span
             let mut result = String::new();
-            for row in row_start..=row_end.min(lines.len() - 1) {
-                let line = &lines[row];
+            for (row, line) in lines.iter().enumerate()
+                .take(row_end + 1)
+                .skip(row_start)
+            {
                 if row == row_start {
                     let start = col_start.min(line.len());
                     result.push_str(&line[start..]);
