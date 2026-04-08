@@ -32,9 +32,7 @@ use crate::analysis::structure::objects::{
 };
 use crate::analysis::structure::toplevel::{ObjectDecl, StatementSpec};
 use crate::analysis::symbols::{DMLSymbolKind, SymbolSource};
-use crate::analysis::templating::objects::{
-    DMLNamedMember, DMLObject,
-};
+use crate::analysis::templating::objects::DMLNamedMember;
 use crate::analysis::DeviceAnalysis;
 use crate::analysis::IsolatedAnalysis;
 use crate::Span as ZeroSpan;
@@ -57,6 +55,10 @@ pub type FileImportData = HashMap<CanonPath, Vec<(ZeroSpan, CanonPath)>>;
 /// and consumed by the relationship-extraction pass to resolve
 /// both source and target symbols from actual emitted data.
 pub type SpanSymbolMap = HashMap<ZeroSpan, String>;
+
+/// Map from extern typedef name to its SCIP symbol string.
+/// Used to resolve implement/interface → underlying type references.
+type ExternTypedefMap = HashMap<String, String>;
 
 /// Extract relationship data from DeviceAnalysis semantic models.
 ///
@@ -91,7 +93,7 @@ fn extract_relationships(
                 let mut rels: Vec<Relationship> = Vec::new();
 
                 // Template instantiation relationships
-                for (_templ_name, templ_arc) in &comp_obj.templates {
+                for templ_arc in comp_obj.templates.values() {
                     if let Some(loc) = &templ_arc.location {
                         // Look up the template's emitted SCIP symbol
                         if let Some(target_scip) = span_map.get(loc) {
@@ -99,34 +101,6 @@ fn extract_relationships(
                             rel.symbol = target_scip.clone();
                             rel.is_implementation = true;
                             rels.push(rel);
-                        }
-                    }
-                }
-
-                // Connect → Interface relationships
-                if comp_obj.kind == CompObjectKind::Connect {
-                    for child_obj in comp_obj.components.values() {
-                        if let DMLObject::CompObject(impl_key) = child_obj {
-                            if let Some(impl_obj) = container.get(*impl_key) {
-                                if impl_obj.kind != CompObjectKind::Implement {
-                                    continue;
-                                }
-                                for grandchild in impl_obj.components.values() {
-                                    if let DMLObject::CompObject(iface_key) = grandchild {
-                                        if let Some(iface_obj) = container.get(*iface_key) {
-                                            if iface_obj.kind == CompObjectKind::Interface {
-                                                let iface_span = &iface_obj.declloc;
-                                                if let Some(target_scip) = span_map.get(iface_span) {
-                                                    let mut rel = Relationship::new();
-                                                    rel.symbol = target_scip.clone();
-                                                    rel.is_implementation = true;
-                                                    rels.push(rel);
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
                         }
                     }
                 }
@@ -765,6 +739,7 @@ fn process_file(
     project_root: &Path,
     import_data: Option<&FileImportData>,
     span_map: &mut SpanSymbolMap,
+    extern_typedef_map: &mut ExternTypedefMap,
 ) -> (PathBuf, FileData) {
     let file_path: PathBuf = analysis.path.clone().into();
     let mut file_data = FileData::default();
@@ -848,6 +823,11 @@ fn process_file(
         occ.enclosing_range = span_to_scip_range(&typedef.object.span);
         file_data.add_occurrence(occ);
 
+        if typedef.is_extern {
+            extern_typedef_map.insert(
+                typedef.object.name.val.clone(), sym.clone());
+        }
+
         let mut sym_info = SymbolInformation::new();
         sym_info.symbol = sym;
         sym_info.kind = ScipSymbolKind::TypeAlias.into();
@@ -891,6 +871,33 @@ fn process_file(
     );
 
     (file_path, file_data)
+}
+
+// ---------------------------------------------------------------------------
+// Implement/Interface → extern typedef resolution
+// ---------------------------------------------------------------------------
+
+/// Recursively walk a `StatementSpec` tree and collect the name span
+/// and object name of every `implement` or `interface` composite object.
+fn collect_impl_iface_from_spec(
+    spec: &StatementSpec,
+    results: &mut Vec<(ZeroSpan, String)>,
+) {
+    for obj_decl in &spec.objects {
+        let comp = &obj_decl.obj;
+        if comp.comp_kind() == CompObjectKind::Implement
+            || comp.comp_kind() == CompObjectKind::Interface
+        {
+            results.push((
+                comp.object.name.span,
+                comp.object.name.val.clone(),
+            ));
+        }
+        collect_impl_iface_from_spec(&obj_decl.spec, results);
+    }
+    for template_decl in &spec.templates {
+        collect_impl_iface_from_spec(&template_decl.spec, results);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -938,12 +945,34 @@ pub fn build_scip_index(
 
     // --- Pass 1: walk all files, emit symbols, build span→symbol map ---
     let mut span_map = SpanSymbolMap::new();
-    let mut file_results: Vec<(PathBuf, FileData)> = Vec::new();
+    let mut extern_typedef_map = ExternTypedefMap::new();
+    let mut file_results: HashMap<PathBuf, FileData> = HashMap::new();
 
-    for (_, analysis) in analyses {
+    for analysis in analyses.values() {
         let (path, data) = process_file(
-            analysis, project_root, import_data, &mut span_map);
-        file_results.push((path, data));
+            analysis, project_root, import_data, &mut span_map,
+            &mut extern_typedef_map);
+        file_results.insert(path, data);
+    }
+
+    // --- Pass 1b: emit references from implement/interface to extern typedefs ---
+    if !extern_typedef_map.is_empty() {
+        for analysis in analyses.values() {
+            let file_path: PathBuf = analysis.path.clone().into();
+            let mut refs = Vec::new();
+            collect_impl_iface_from_spec(&analysis.toplevel.spec, &mut refs);
+            if let Some(file_data) = file_results.get_mut(&file_path) {
+                for (name_span, obj_name) in refs {
+                    let typedef_name = format!("{}_interface_t", obj_name);
+                    if let Some(typedef_sym) = extern_typedef_map.get(&typedef_name) {
+                        let mut ref_occ = Occurrence::new();
+                        ref_occ.range = span_to_scip_range(&name_span);
+                        ref_occ.symbol = typedef_sym.clone();
+                        file_data.add_occurrence(ref_occ);
+                    }
+                }
+            }
+        }
     }
 
     // --- Pass 2: extract relationships from DeviceAnalysis using span_map ---
@@ -953,7 +982,7 @@ pub fn build_scip_index(
     let mut documents = Vec::new();
     let mut external_symbols = Vec::new();
 
-    for (path, mut data) in file_results {
+    for (path, mut data) in file_results.drain() {
         // Apply relationships to SymbolInformation entries
         for sym_info in data.symbols.values_mut() {
             if let Some(rels) = sym_rels.get(&sym_info.symbol) {
@@ -1004,8 +1033,10 @@ pub fn build_span_symbol_map(
     project_root: &Path,
 ) -> SpanSymbolMap {
     let mut span_map = SpanSymbolMap::new();
-    for (_, analysis) in analyses {
-        process_file(analysis, project_root, None, &mut span_map);
+    let mut extern_typedefs = ExternTypedefMap::new();
+    for analysis in analyses.values() {
+        process_file(analysis, project_root, None, &mut span_map,
+                     &mut extern_typedefs);
     }
     span_map
 }

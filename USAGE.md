@@ -231,10 +231,6 @@ Composite objects that instantiate templates (via `is some_template`) emit
 SCIP `Relationship` entries with `is_implementation = true` pointing to the
 template symbol.
 
-Connect objects additionally emit `is_implementation` relationships pointing to
-each interface symbol nested under their implement children. This captures the
-semantic link between a connect and the interfaces it provides.
-
 Methods that override a default or abstract method from a template also emit
 `is_implementation` relationships pointing to the overridden method's symbol.
 For example, if template `foo` defines `method a` as `default` and object `b`
