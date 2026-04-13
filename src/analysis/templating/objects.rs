@@ -561,7 +561,7 @@ impl DMLHierarchyMember for DMLShallowObject {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum DMLShallowObjectVariant {
     Method(Arc<DMLMethodRef>),
     Session(DMLVariable),
@@ -569,6 +569,44 @@ pub enum DMLShallowObjectVariant {
     Parameter(DMLParameter),
     Constant(Constant),
     Hook(Box<ObjectDecl<Hook>>),
+}
+
+impl std::fmt::Debug for DMLShallowObjectVariant {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DMLShallowObjectVariant::Method(m) => f
+                .debug_struct("Method")
+                .field("name", &m.identity())
+                .field("location", m.location())
+                .field("trait", &m.template_ref.as_ref().map(|t|t.name.to_string()))
+                .finish(),
+            DMLShallowObjectVariant::Session(s) => f
+                .debug_struct("Session")
+                .field("name", s.name())
+                .field("location", s.loc_span())
+                .finish(),
+            DMLShallowObjectVariant::Saved(s) => f
+                .debug_struct("Saved")
+                .field("name", s.name())
+                .field("location", s.loc_span())
+                .finish(),
+            DMLShallowObjectVariant::Parameter(p) => f
+                .debug_struct("Parameter")
+                .field("name", p.name())
+                .field("location", p.loc_span())
+                .finish(),
+            DMLShallowObjectVariant::Constant(c) => f
+                .debug_struct("Constant")
+                .field("name", c.name())
+                .field("location", c.loc_span())
+                .finish(),
+            DMLShallowObjectVariant::Hook(h) => f
+                .debug_struct("Hook")
+                .field("name", h.obj.name())
+                .field("location", h.obj.loc_span())
+                .finish(),
+        }
+    }
 }
 
 impl DMLShallowObjectVariant {

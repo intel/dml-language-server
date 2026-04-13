@@ -517,7 +517,14 @@ struct ReferenceCache {
 }
 
 fn object_to_path_name(object: Option<&DMLObject>, container: &StructureContainer) -> String {
-    object_to_path_name_aux(object, container, String::new())
+    if let Some(obj) = object.map(|o|o.resolve(container)) {
+        let parent = obj.parent().map(DMLObject::CompObject);
+        object_to_path_name_aux(parent.as_ref(),
+                                container,
+                                obj.identity().to_string())
+    } else {
+        String::new()
+    }
 }
 
 fn object_to_path_name_aux(object: Option<&DMLObject>, container: &StructureContainer, acc: String) -> String {
@@ -2055,7 +2062,7 @@ fn add_method_scope_symbols(maker: &SymbolMaker,
     }
     if !entry.is_empty() {
         method_structure.insert(
-            *method.get_decl().location(),
+            *method.location(),
             entry);
     }
 }

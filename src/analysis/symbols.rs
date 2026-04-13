@@ -109,7 +109,7 @@ impl SimpleSymbol {
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq)]
 pub enum SymbolSource {
     DMLObject(DMLObject),
     // (key of containing object, method ref)
@@ -121,6 +121,37 @@ pub enum SymbolSource {
     // TODO: RC this if it's expensive
     Type(DMLResolvedType),
     Template(Arc<DMLTemplate>),
+}
+
+impl std::fmt::Debug for SymbolSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SymbolSource::DMLObject(_) => 
+                f.debug_struct("SymbolSource::DMLObject")
+                .finish_non_exhaustive(),
+            SymbolSource::Method(_, meth) =>
+                f.debug_struct("SymbolSource::Method")
+                .field("name", &meth.concrete_decl.decl.name.val)
+                .finish_non_exhaustive(),
+            SymbolSource::MethodArg(meth, name) => 
+                f.debug_struct("SymbolSource::MethodArg")
+                .field("argument_name", &name.val)
+                .field("method_name", &meth.concrete_decl.decl.name.val)
+                .finish_non_exhaustive(),
+            SymbolSource::MethodLocal(meth, name) => 
+                f.debug_struct("SymbolSource::MethodLocal")
+                .field("name", &name.val)
+                .field("method_name", &meth.concrete_decl.decl.name.val)
+                .finish_non_exhaustive(),
+            SymbolSource::Type(_) => 
+                f.debug_struct("SymbolSource::Type")
+                .finish_non_exhaustive(),
+            SymbolSource::Template(templ) => 
+                f.debug_struct("SymbolSource::Template")
+                .field("name", &templ.name)
+                .finish_non_exhaustive(),
+        }
+    }
 }
 
 impl SymbolSource {
@@ -257,10 +288,22 @@ impl SymbolMaker {
     }
 }
 
-#[derive(Debug)]
 pub struct SymbolRefInner {
     pub id: SymbolID,
     pub symbol: Mutex<Symbol>,
+}
+
+impl std::fmt::Debug for SymbolRefInner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.symbol.lock() {
+            Ok(symbol) => f.debug_tuple("SymbolRef")
+                .field(&symbol.medium_debug_info())
+                .finish(),
+            Err(_) => f.debug_tuple("SymbolRef")
+                .field(&format!("Symbol(id={}) <lock poisoned>", self.id))
+                .finish()
+        }
+    }
 }
 
 pub type SymbolRef = Arc<SymbolRefInner>;
