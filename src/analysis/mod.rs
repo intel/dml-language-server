@@ -292,12 +292,15 @@ impl RangeEntry {
             && self.sub_ranges.iter().all(|sub|sub.is_empty())
     }
     fn find_symbol_for_dmlname(&self, name: &DMLString) -> Option<&SymbolRef> {
+        trace!("Finding symbol for name {:?} at position {:?} in rangeentry {:?}",
+              name.val, name.span.start_position(), self);
         self.find_symbol_for_name(
             &name.val, name.span.start_position().position)
     }
 
     fn find_smallest_scope_around(&self, loc: ZeroPosition)
                                   -> Option<ZeroRange> {
+        trace!("Finding smallest scope around position {:?} in rangeentry {:?}", loc, self);
         if self.range.contains_pos(loc) {
             self.sub_ranges.iter()
                 .find_map(|sub|sub.find_smallest_scope_around(loc))
@@ -564,7 +567,9 @@ impl ReferenceCache {
         let (object, refr) = key;
         let method_scope =
             if let Some(meth) = object.and_then(|o|o.as_shallow()).and_then(|s|s.variant.as_method()) {
-                method_structure.get(meth.location()).and_then(
+                let adjusted_meth = DeviceAnalysis::adjust_method_for_pos(meth, &refr.span().start_position())
+                    .unwrap_or_else(||Arc::clone(meth));
+                method_structure.get(adjusted_meth.location()).and_then(
                         |re|re.find_smallest_scope_around(refr.loc_span().range.start()))
             } else {
                 None
@@ -572,12 +577,13 @@ impl ReferenceCache {
         let object_path = object_to_path_name(object, container);
         let mut agnostic_reference = vec![];
         Self::flatten_ref(&refr.reference, &mut agnostic_reference);
-        ReferenceCacheKey {
+        let res = ReferenceCacheKey {
             object_path,
             agnostic_reference,
             method_scope
-        }
-
+        };
+        trace!("Converted {:?} to agnostic key {:?}", (object, refr), res);
+        res
     }
 
     pub fn get(&mut self,
@@ -626,7 +632,7 @@ impl ReferenceCache {
         let agn_key = Self::convert_to_key(key, container, method_structure);
         if let Some(previous_result) = self.underlying_cache.get(&agn_key) {
             if val != *previous_result {
-                internal_error!("Invariant broken: agnostic keys resulted in different matches, old: {:?}, new: {:?}", previous_result, val);
+                internal_error!("Invariant broken: agnostic keys resulted in different matches, old: {:?}, new: {:?}, agn key: {:?}", previous_result, val, agn_key);
             }
             return;
         }
@@ -1234,6 +1240,32 @@ impl DeviceAnalysis {
         to_ret
     }
 
+    // Returns the method ref in the default chain that contains the loc, if any
+    fn adjust_method_for_pos(method: &Arc<DMLMethodRef>,
+                             pos: &ZeroFilePosition)
+                            -> Option<Arc<DMLMethodRef>> {
+        if !method.span().contains_pos(pos) {
+            match method.get_default() {
+                Some(DefaultCallReference::Valid(defmeth)) => {
+                    return Self::adjust_method_for_pos(defmeth, pos);
+                },
+                Some(DefaultCallReference::Ambiguous(defmeths)) => {
+                    let mut res: Vec<_> = defmeths.iter()
+                        .filter_map(|df|Self::adjust_method_for_pos(df, pos))
+                        .collect();
+                    if res.len() > 1 {
+                        internal_error!("Invariant broken: multiple methods contain the pos {:?} over method {:?}\nhit methods are: {:?}", pos, method, res);
+                    }
+                    return res.pop();
+                },
+                _ => {
+                    trace!("Fell through recursive method noderef resolution for {:?} in method {:?}", pos, method);
+                }
+            }
+        }    
+        None
+    }
+
     fn resolve_simple_noderef_in_method<'c>(&'c self,
                                             parent_key: &StructureKey,
                                             meth: &Arc<DMLMethodRef>,
@@ -1245,37 +1277,10 @@ impl DeviceAnalysis {
         // When resolving a noderef from an overridden method, meth here will be
         // a bottom-most overriding method. So instead find the correct method
         // by recursing to parent
-        if !meth.span().contains_pos(&node.span.start_position()) {
-            match meth.get_default() {
-                Some(DefaultCallReference::Valid(defmeth)) => {
-                    if let Some(defmeth_sym) = self.get_method_symbol(defmeth,
-                                                                     parent_key) {
-                        self.resolve_noderef_in_symbol(
-                            defmeth_sym,
-                            &NodeRef::Simple(node.clone()),
-                            method_structure,
-                            ref_matches);
-                    }
-                },
-                Some(DefaultCallReference::Ambiguous(defmeths)) => {
-                    for defmeth in defmeths {
-                        if let Some(defmeth_sym) = self.get_method_symbol(defmeth,
-                                                                         parent_key) {
-                            self.resolve_noderef_in_symbol(
-                                defmeth_sym,
-                                &NodeRef::Simple(node.clone()),
-                                method_structure,
-                                ref_matches);
-                        }
-                    }
-                },
-                _ => {
-                    trace!("Fell through recursive method noderef resolution for {:?} in method {:?}", node, meth);
-                }
-            }
-            return;
-        }
         trace!("Resolving simple noderef {:?} in method {:?}", node, meth);
+        let Some(adjusted_meth) = Self::adjust_method_for_pos(meth, &node.span().start_position())
+        else { return; };
+        trace!("After adjusting, looking up in {:?}", adjusted_meth);
         match node.val.as_str() {
             "this" =>
                 ref_matches.add_match(Arc::clone(
@@ -1285,7 +1290,7 @@ impl DeviceAnalysis {
             // NOTE: Here we match a default ref to the symbol of the method decl
             // that we directly overrode. Meaning that further lookups on that symbol
             // will be specialized for that overriding chain
-                if let Some(defref) = meth.get_default() {
+                if let Some(defref) = adjusted_meth.get_default() {
                     match defref {
                         DefaultCallReference::Valid(refr) =>  {
                             if let Some(s) = self.get_method_symbol(refr, parent_key) {
@@ -1327,9 +1332,9 @@ impl DeviceAnalysis {
                     // TODO: better error message here, somehow?
                 },
             _ => {
-                let local_sym = method_structure.get(meth.location())
+                let local_sym = method_structure.get(adjusted_meth.location())
                     .and_then(|locals|locals.find_symbol_for_dmlname(node));
-                let arg_sym = meth.args().iter()
+                let arg_sym = adjusted_meth.args().iter()
                     .find(|a|a.name().val == node.val)
                     .map(|a|self.symbol_info.variable_symbols
                          .get(a.loc_span()).unwrap());
