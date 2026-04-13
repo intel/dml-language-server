@@ -8,6 +8,7 @@
 - Added configuration option to control the max cache size while resolving references in semantic analysis, defaulting to 500MB
 - Added environment variable to control max per-log output length for most logging from the DLS, defaulting to 1000 bytes..
 - Fixed a bug in method-local variable lookups which caused inconsistent results when looking up variables within overridden methods
+- Fixed the reporting range for duplicate template names
 
 ## 0.9.18
 - Fixed a rare case where the DLS would crash when reporting device contexts

@@ -2423,12 +2423,12 @@ impl DeviceAnalysis {
             let name = &template.obj.object.name.val;
             if unique_templates.contains_key(name.as_str()) {
                 errors.push(DMLError {
-                    span: template.obj.object.span,
+                    span: *template.obj.object.loc_span(),
                     description: format!("Duplicate template name; '{}'", name),
                     severity: Some(DiagnosticSeverity::ERROR),
                     related: vec![(
-                        unique_templates.get(name.as_str()).unwrap()
-                            .obj.object.span,
+                        *unique_templates.get(name.as_str()).unwrap()
+                            .obj.object.loc_span(),
                         "Previously defined here".to_string()
                     )],
                 });
