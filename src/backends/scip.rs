@@ -33,7 +33,8 @@ use crate::analysis::structure::objects::{
 use crate::analysis::structure::toplevel::{ObjectDecl, StatementSpec};
 use crate::analysis::symbols::{DMLSymbolKind, SymbolSource};
 use crate::analysis::templating::objects::DMLNamedMember;
-use crate::analysis::DeviceAnalysis;
+use crate::analysis::reference::Reference;
+use crate::analysis::{DeviceAnalysis, LocationSpan};
 use crate::analysis::IsolatedAnalysis;
 use crate::Span as ZeroSpan;
 use crate::file_management::CanonPath;
@@ -901,6 +902,29 @@ fn collect_impl_iface_from_spec(
 }
 
 // ---------------------------------------------------------------------------
+// AST reference collection
+// ---------------------------------------------------------------------------
+
+/// Recursively walk a `StatementSpec` tree and collect all `Reference`
+/// objects from templates, composite objects, methods, and in-each blocks.
+fn collect_refs_from_spec(spec: &StatementSpec, results: &mut Vec<Reference>) {
+    for template_decl in &spec.templates {
+        results.extend_from_slice(&template_decl.obj.references);
+        collect_refs_from_spec(&template_decl.spec, results);
+    }
+    for obj_decl in &spec.objects {
+        results.extend_from_slice(&obj_decl.obj.references);
+        collect_refs_from_spec(&obj_decl.spec, results);
+    }
+    for method_decl in &spec.methods {
+        results.extend_from_slice(&method_decl.obj.references);
+    }
+    for ineach_decl in &spec.ineachs {
+        results.extend_from_slice(&ineach_decl.obj.references);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
@@ -977,6 +1001,55 @@ pub fn build_scip_index(
 
     // --- Pass 2: extract relationships from DeviceAnalysis using span_map ---
     let sym_rels = extract_relationships(devices, &span_map);
+
+    // --- Pass 2b: emit reference occurrences from AST references ---
+    // Build a reverse map: reference_span → SCIP symbols, by walking
+    // each device's symbols and their reference/implementation sets.
+    // This is O(symbols × avg_refs) which is much faster than calling
+    // symbols_of_ref (O(refs × symbols)) for each AST reference.
+    let mut ref_span_to_scip: HashMap<ZeroSpan, Vec<String>> = HashMap::new();
+    for device in devices {
+        for sym_ref in device.symbol_info.all_symbols() {
+            let sym = sym_ref.symbol.lock().unwrap();
+            let Some(scip_sym) = span_map.get(&sym.loc) else {
+                continue;
+            };
+            let scip_sym = scip_sym.clone();
+            for ref_span in sym.references.iter()
+                .chain(sym.implementations.iter())
+            {
+                ref_span_to_scip.entry(*ref_span)
+                    .or_default()
+                    .push(scip_sym.clone());
+            }
+        }
+    }
+    // Dedup within each entry
+    for syms in ref_span_to_scip.values_mut() {
+        syms.sort();
+        syms.dedup();
+    }
+    // Now walk the AST to find reference sites and emit occurrences
+    // using the pre-built map.
+    for analysis in analyses.values() {
+        let file_path: PathBuf = analysis.path.clone().into();
+        let mut refs = Vec::new();
+        refs.extend_from_slice(&analysis.toplevel.references);
+        collect_refs_from_spec(&analysis.toplevel.spec, &mut refs);
+        if let Some(file_data) = file_results.get_mut(&file_path) {
+            for ast_ref in &refs {
+                let ref_span = *ast_ref.loc_span();
+                if let Some(scip_syms) = ref_span_to_scip.get(&ref_span) {
+                    for scip_sym in scip_syms {
+                        let mut occ = Occurrence::new();
+                        occ.range = span_to_scip_range(&ref_span);
+                        occ.symbol = scip_sym.clone();
+                        file_data.add_occurrence(occ);
+                    }
+                }
+            }
+        }
+    }
 
     // --- Pass 3: assemble documents, injecting relationships ---
     let mut documents = Vec::new();
