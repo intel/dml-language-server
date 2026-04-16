@@ -283,6 +283,8 @@ pub fn dependencies<'t>(statements: &'t StatementSpec,
             InferiorVariant::Object(obj) => {
                 queue.extend(obj.spec.objects.iter().map(
                     |o|InferiorVariant::Object(o)));
+                queue.push(InferiorVariant::ImplicitIs(
+                    &obj.obj.kind));
                 queue.extend(obj.spec.ineachs.iter().map(
                     |o|InferiorVariant::InEach(o)));
                 queue.extend(obj.spec.instantiations.iter().map(
