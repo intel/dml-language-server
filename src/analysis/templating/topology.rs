@@ -175,6 +175,7 @@ pub fn create_templates_traits<'t>(
     let mut templates = HashMap::default();
     let mut traits = HashMap::default();
     debug!("template order is: {:?}", order);
+
     for templname in order {
         let templ = &template_specs[templname];
         let rankinf = &rank_struct[templname];

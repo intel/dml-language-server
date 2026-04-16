@@ -1889,8 +1889,7 @@ fn extend_with_templates(maker: &SymbolMaker,
 
 fn new_symbol_from_object(maker: &SymbolMaker,
                           object: &DMLCompositeObject) -> SymbolRef {
-    let all_decl_defs: Vec<ZeroSpan> = object.all_decls.iter().map(
-        |spec|*spec.loc_span()).collect();
+    let all_decl_defs = &object.all_decls;
     symbol_ref!(
         maker,
         object.declloc,
@@ -1900,7 +1899,7 @@ fn new_symbol_from_object(maker: &SymbolMaker,
         declarations = all_decl_defs.clone(),
         implementations = object.used_ineach_locs.clone().into_iter().collect(),
         // TODO: this does not follow from the new definition of bases
-        bases = all_decl_defs)
+        bases = all_decl_defs.clone())
 }
 
 fn new_symbol_from_arg(maker: &SymbolMaker,

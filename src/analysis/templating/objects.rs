@@ -321,7 +321,6 @@ pub fn make_device<'t>(path: &str,
         &device_decl.name,
         device_decl.decl.kind,
         vec![],
-        vec![],
         vec![faux_spec],
         &InEachSpec::default(),
         None,
@@ -844,14 +843,12 @@ pub struct DMLCompositeObject {
     pub declloc: ZeroSpan,
     // These are the ranges of the objectspecs declared with the
     // objects name
-    pub all_decls: Vec<Arc<ObjectSpec>>,
+    pub all_decls: Vec<ZeroSpan>,
     pub identity: DMLString,
     // Reference to self, let's us pass obj refs rather than
     // keys to functions unless necessary
     pub key: StructureKey,
     pub kind: CompObjectKind,
-    // These are the full objectspecs used to define this object, non-semantic
-    pub definitions: Vec<Arc<ObjectSpec>>,
     // These are the immediate parents
     pub templates: HashMap<String, Arc<DMLTemplate>>,
     pub parent: Option<StructureKey>,
@@ -1365,7 +1362,7 @@ fn resolve_parameter(obj_loc: &ZeroSpan,
 }
 
 fn create_object_instance(loc: Option<ZeroSpan>,
-                          all_decls: Vec<Arc<ObjectSpec>>,
+                          all_decls: &Vec<Arc<ObjectSpec>>,
                           identity: &DMLString,
                           kind: CompObjectKind,
                           array_info: &[ArrayDim],
@@ -1386,12 +1383,11 @@ fn create_object_instance(loc: Option<ZeroSpan>,
            all_decls);
     let obj = DMLCompositeObject {
         declloc: loc.unwrap_or(identity.span),
-        all_decls,
+        all_decls: all_decls.iter().map(|s|*s.loc_span()).collect(),
         identity: identity.clone(),
         used_ineach_locs: vec![],
         key: StructureKey::null(),
         kind,
-        definitions: vec![],
         templates: HashMap::default(),
         parent: None,
         arraydimvars: array_info.to_vec(),
@@ -1780,7 +1776,6 @@ fn merge_composite_subobj<'c>(name: String,
                 &auth_obj.obj.object.name,
                 *auth_kind,
                 array_info.iter().map(|(d, _)|d).cloned().collect(),
-                specs.iter().map(|(_, s)|Arc::clone(s)).collect(),
                 object_specs,
                 parent_each_stmts,
                 parent_key,
@@ -2266,7 +2261,6 @@ pub fn make_object(loc: ZeroSpan,
                    identity: &DMLString,
                    kind: CompObjectKind,
                    array_info: Vec<ArrayDim>,
-                   merged_obj_specs: Vec<Arc<ObjectSpec>>,
                    mut obj_specs: Vec<Arc<ObjectSpec>>,
                    parent_each_stmts: &InEachSpec,
                    parent_key: Option<StructureKey>,
@@ -2300,7 +2294,7 @@ pub fn make_object(loc: ZeroSpan,
            symbols.keys().map(|k|k.as_str()).collect::<Vec<&str>>());
 
     let new_obj_key = create_object_instance(Some(loc),
-                                             merged_obj_specs,
+                                             &obj_specs,
                                              identity, kind,
                                              &array_info, container);
 
@@ -2310,7 +2304,6 @@ pub fn make_object(loc: ZeroSpan,
 
     {
         let new_obj = container.get_mut(new_obj_key).unwrap();
-        new_obj.definitions = obj_specs.clone();
         new_obj.used_ineach_locs = used_ineach_locs;
         add_templates(new_obj, &obj_specs);
         add_constants(new_obj, constants);
