@@ -568,7 +568,7 @@ impl ReferenceCache {
         let method_scope =
             if let Some(meth) = object.and_then(|o|o.as_shallow()).and_then(|s|s.variant.as_method()) {
                 let adjusted_meth = DeviceAnalysis::adjust_method_for_pos(meth, &refr.span().start_position())
-                    .unwrap_or_else(||Arc::clone(meth));
+                    .unwrap_or(meth);
                 method_structure.get(adjusted_meth.location()).and_then(
                         |re|re.find_smallest_scope_around(refr.loc_span().range.start()))
             } else {
@@ -1241,9 +1241,9 @@ impl DeviceAnalysis {
     }
 
     // Returns the method ref in the default chain that contains the loc, if any
-    fn adjust_method_for_pos(method: &Arc<DMLMethodRef>,
-                             pos: &ZeroFilePosition)
-                            -> Option<Arc<DMLMethodRef>> {
+    fn adjust_method_for_pos<'t>(method: &'t Arc<DMLMethodRef>,
+                                 pos: &ZeroFilePosition)
+                            -> Option<&'t Arc<DMLMethodRef>> {
         if !method.span().contains_pos(pos) {
             match method.get_default() {
                 Some(DefaultCallReference::Valid(defmeth)) => {
@@ -1259,11 +1259,12 @@ impl DeviceAnalysis {
                     return res.pop();
                 },
                 _ => {
-                    trace!("Fell through recursive method noderef resolution for {:?} in method {:?}", pos, method);
+                    internal_error!("Fell through recursive method noderef resolution for {:?} in method {:?}", pos, method);
+                    return None;
                 }
             }
         }    
-        None
+        Some(method)
     }
 
     fn resolve_simple_noderef_in_method<'c>(&'c self,
