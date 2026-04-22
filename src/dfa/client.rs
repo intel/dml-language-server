@@ -417,7 +417,8 @@ impl ClientInterface {
                        device_paths: Vec<String>,
                        output_path: String)
                        -> anyhow::Result<crate::actions::requests::ExportScipResult> {
-        debug!("Sending SCIP export request for {:?} -> {}", device_paths, output_path);
+        debug!("Sending SCIP export request for {:?} -> {}",
+               device_paths, output_path);
         self.send(
             cmd::export_scip(device_paths, output_path).to_string()
         )?;

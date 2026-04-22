@@ -95,7 +95,8 @@ fn parse_args() -> Args {
              .value_parser(clap::value_parser!(PathBuf))
              .required(false))
         .arg(Arg::new("scip-output").long("scip-output")
-             .help("Export SCIP index to the specified file after analysis")
+             .help("Export SCIP index files to the specified directory after analysis. \
+                    Each workspace root produces a <root-name>.scip file.")
              .action(ArgAction::Set)
              .value_parser(clap::value_parser!(PathBuf))
              .required(false))
@@ -196,7 +197,7 @@ fn main_inner() -> Result<(), i32> {
 
         // Export SCIP if requested
         if let Some(scip_path) = &arg.scip_output {
-            println!("Exporting SCIP index to {:?}", scip_path);
+            println!("Exporting SCIP indices to {:?}", scip_path);
             let scip_output_str = scip_path.to_string_lossy().to_string();
             let device_paths: Vec<String> = arg.files.iter()
                 .filter_map(|f| f.canonicalize().ok())
@@ -205,8 +206,11 @@ fn main_inner() -> Result<(), i32> {
             match dlsclient.export_scip(device_paths, scip_output_str) {
                 Ok(result) => {
                     if result.success {
-                        println!("SCIP export complete: {} document(s) written",
-                                 result.document_count);
+                        println!("SCIP export complete: {} document(s) in {} index file(s)",
+                                 result.document_count, result.index_files.len());
+                        for f in &result.index_files {
+                            println!("  -> {}", f);
+                        }
                     } else {
                         let err_msg = result.error.unwrap_or_else(
                             || "Unknown error".to_string());

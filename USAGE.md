@@ -128,12 +128,35 @@ Sourcegraph for cross-repository navigation and code search.
 ### Invocation
 
 SCIP export is available through the DFA (DML File Analyzer) binary via the
-`--scip-output <path>` flag:
+`--scip-output <directory>` flag:
 ```
-dfa --compile-info <compile_commands.json> --workspace <project root> --scip-output <scip_file_name> [list of devices to analyze, ]
+dfa <dls_binary> --compile-info <compile_commands.json> --workspace <project root> --scip-output <output_dir> [list of devices to analyze, ]
 ```
 
-It is worth noting that SCIP format specifies that symbols from documents that are not under the project root (which we define as the workspace) get slotted under external symbols with no occurances tracked.
+The output directory is created if it does not exist. Each workspace root
+produces a separate SCIP index file named `<root-basename>.scip` inside the
+output directory.
+
+#### Multi-root workspaces
+
+Multiple `--workspace` (`-w`) flags can be specified to cover source trees that
+live under different root directories (e.g. project code under one root and
+Simics built-in DML files under another):
+
+```
+dfa <dls_binary> -w /home/user/project -w /opt/simics/linux64 --scip-output ./scip-out device.dml
+```
+
+This produces:
+```
+./scip-out/project.scip
+./scip-out/linux64.scip
+```
+
+Each index contains full `Document` entries (with occurrences) only for files
+that fall under that workspace root. Symbols defined under no root appear as `external_symbols` in files that reference them — providing their `SymbolInformation`
+(kind, documentation, relationships) so that consumers can resolve references
+to them.
 
 ### SCIP schema details
 Here we list how we have mapped DML specifically to the SCIP format.
@@ -173,37 +196,47 @@ signature that disambiguates:
 SCIP symbols follow the format:
 `<scheme> ' ' <manager> ' ' <package> ' ' <version> ' ' <descriptors>`
 
-For DML, the scheme is `dml`, the manager is `simics`, version is `.` (currently we cannot extract simics version here), and the
-package is the device name. Descriptors are built from the fully qualified path
-through the device hierarchy:
+For DML, the scheme is `dml`, the manager is `simics`, and both the package and
+version are `.` (empty). Descriptors are built by concatenating *file-path
+components* (from the file's path relative to its project root) with
+*code-level namespace segments* (the nested DML object names in the source
+file):
 
 ```
-dml simics sample_device . sample_device.regs.r1.offset.
-                                                       ^ term (parameter)
-dml simics sample_device . sample_device.regs.r1.read().
-                                                      ^ method
-dml simics sample_device . bank#
-                              ^ 'type' (template)
+dml simics . . src. `sample_device.dml`. regs. r1. offset.
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+               file path components    code-level names
+```
+
+Path components that contain special characters (such as `.` in file
+extensions) are backtick-escaped per the SCIP spec.
+
+More examples:
+```
+dml simics . . src. `sample_device.dml`. regs. r1. read().
+                                                        ^ method
+dml simics . . src. `sample_device.dml`. bank#
+                                            ^ type (template)
 ```
 
 Descriptor suffixes follow the SCIP standard:
 - `.` (term) — used for composite objects, parameters, and other named values
-- `#` (type) — used only for templates
+- `#` (type) — used for templates and typedefs
 - `().` (method) — used for methods
 
 #### Local Symbols
 
 Method arguments and method-local variables use SCIP local symbols of the form
-`local <name>_<id>`, where `<id>` is the internal symbol identifier. Local
-symbols are scoped to a single document and are not navigable across files.
+`local <name>_<id>`, where `<id>` is a sequential counter scoped to each
+source file (starting at 0). Local symbols are scoped to a single document
+and are not navigable across files.
 
 #### Occurrence Roles
 
 DML definitions (including the primary symbol location) are emitted with the
-SCIP `Definition` role. Declarations that also appear as definitions share
-this role. Declarations that do _not_ define a value (e.g. abstract method
-declarations, or `default` parameter declarations that are overridden) are
-emitted with the `ForwardDefinition` role.
+SCIP `Definition` role. All declarations — including abstract method
+declarations and `default` parameter declarations — currently also receive the
+`Definition` role.
 
 References (including template instantiation sites from `is` statements) are
 emitted as plain references with no additional role flags. Access-kind
@@ -211,11 +244,11 @@ refinement (`ReadAccess` / `WriteAccess`) is not yet tracked.
 
 #### Enclosing Ranges
 
-For composite object definitions and method declarations, each `Definition`
-or `ForwardDefinition` occurrence includes an `enclosing_range` that spans
-the full AST node (e.g. the complete `register r1 is ... { ... }` block or
-the full method body). This allows consumers to associate the definition site
-with the extent of the construct it names.
+For all symbol definitions — composite objects, methods, templates, parameters,
+sessions, saved variables, constants, hooks, typedefs, and method arguments —
+each `Definition` occurrence includes an `enclosing_range` that spans the full
+AST node. This allows consumers to associate the definition site with the
+extent of the construct it names.
 
 #### Deduplication and Determinism
 
@@ -252,9 +285,10 @@ dependency tracking without needing to scan occurrences.
 
 File symbols use the format:
 ```
-dml simics . . path/to/file_dml.
+dml simics . . path. to. `file.dml`.
 ```
-where path segments are separated by term descriptors (`.`).
+where each path component becomes a separate term descriptor (`.`), and
+components containing special characters are backtick-escaped.
 
 ## Device Object Hierarchy Export
 

@@ -15,7 +15,7 @@
 //! The symbol path is: file path segments (as term descriptors) →
 //! template/object nesting (as type/term descriptors) → leaf symbol.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use protobuf::Enum;
@@ -150,6 +150,13 @@ fn extract_relationships(
                 }
             }
         }
+    }
+
+    // Deduplicate relationships across devices (multiple devices
+    // may share source files and produce identical relationships).
+    for rels in result.values_mut() {
+        rels.sort_by(|a, b| a.symbol.cmp(&b.symbol));
+        rels.dedup_by(|a, b| a.symbol == b.symbol);
     }
 
     result
@@ -292,7 +299,7 @@ pub fn extract_import_data(
 ///
 /// Uses HashMaps keyed by dedup keys so that duplicate entries
 /// from multiple device analyses are naturally collapsed.
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct FileData {
     /// Occurrences keyed by (symbol, range, roles) to avoid duplicates.
     occurrences: HashMap<(String, Vec<i32>, i32), Occurrence>,
@@ -738,6 +745,7 @@ fn emit_method(
 fn process_file(
     analysis: &IsolatedAnalysis,
     project_root: &Path,
+    project_roots: &[PathBuf],
     import_data: Option<&FileImportData>,
     span_map: &mut SpanSymbolMap,
     extern_typedef_map: &mut ExternTypedefMap,
@@ -772,7 +780,11 @@ fn process_file(
         if let Some(imports) = import_data.and_then(|id| id.get(canon)) {
             for (import_span, resolved_path) in imports {
                 let target_pathbuf: PathBuf = resolved_path.clone().into();
-                let target_sym = make_file_symbol(&target_pathbuf, project_root);
+                let target_root_idx = closest_root(&target_pathbuf, project_roots);
+                let target_root = target_root_idx
+                    .map(|i| project_roots[i].as_path())
+                    .unwrap_or(project_root);
+                let target_sym = make_file_symbol(&target_pathbuf, target_root);
 
                 let mut imp_occ = Occurrence::new();
                 imp_occ.range = span_to_scip_range(import_span);
@@ -928,44 +940,60 @@ fn collect_refs_from_spec(spec: &StatementSpec, results: &mut Vec<Reference>) {
 // Public API
 // ---------------------------------------------------------------------------
 
-/// Build a complete SCIP Index from a set of isolated (per-file)
-/// analyses, using code-namespace-based symbol names.
+/// Assign a file path to its closest matching project root.
 ///
-/// Each `IsolatedAnalysis` contributes one Document in the resulting
-/// index. Symbols are named after their position in the structural
-/// tree (file → template → object → method, etc.) rather than the
-/// merged device hierarchy.
+/// Returns the index into `roots` of the longest-prefix match,
+/// or `None` if the path doesn't fall under any root.
+fn closest_root(path: &Path, roots: &[PathBuf]) -> Option<usize> {
+    let mut best: Option<(usize, usize)> = None; // (root_idx, component_count)
+    for (i, root) in roots.iter().enumerate() {
+        if path.starts_with(root) {
+            let depth = root.components().count();
+            if best.is_none_or(|(_, d)| depth > d) {
+                best = Some((i, depth));
+            }
+        }
+    }
+    best.map(|(i, _)| i)
+}
+
+/// Build one or more SCIP indices from per-file analyses, partitioned
+/// by project root.
+///
+/// Each file is assigned to its closest matching root (longest prefix
+/// match).  A separate `Index` is produced for every root.  Files
+/// under *other* roots appear as `external_symbols` in each index,
+/// preserving cross-root relationship targets.  Files that don't fall
+/// under any root are placed in `external_symbols` of every index.
+///
+/// Symbol strings are consistent across all indices: they use the
+/// file's *own* root to build the path-based prefix.  This means a
+/// consumer can merge the indices and the symbol identifiers will
+/// agree.
 ///
 /// # Arguments
-/// * `analyses` – map from canonical path to the per-file analysis
-/// * `project_root` – workspace root, used to compute relative paths
-/// * `import_data` – optional pre-resolved import data for emitting
-///   import occurrences
-pub fn build_scip_index(
+/// * `analyses` – map from canonical path to per-file analysis
+/// * `project_roots` – one or more workspace roots; each produces
+///   its own `Index`
+/// * `import_data` – optional pre-resolved import data
+/// * `devices` – device analyses for relationship extraction
+///
+/// # Returns
+/// A vec of `(root_path, Index)` pairs, one per project root that
+/// had at least one file assigned to it.
+pub fn build_scip_indices(
     analyses: &HashMap<CanonPath, &IsolatedAnalysis>,
-    project_root: &Path,
+    project_roots: &[PathBuf],
     import_data: Option<&FileImportData>,
     devices: &[&DeviceAnalysis],
-) -> Index {
+) -> Vec<(PathBuf, Index)> {
+    assert!(!project_roots.is_empty(), "need at least one project root");
+
     debug!(
-        "Building namespace-based SCIP index for {} file(s) rooted at {:?}",
+        "Building namespace-based SCIP index for {} file(s) with {} root(s)",
         analyses.len(),
-        project_root
+        project_roots.len()
     );
-
-    let mut tool_info = ToolInfo::new();
-    tool_info.name = "dls".to_string();
-    tool_info.version = crate::version();
-
-    let mut metadata = Metadata::new();
-    metadata.tool_info = MessageField::some(tool_info);
-    let root_str = project_root.to_string_lossy();
-    metadata.project_root = if root_str.ends_with('/') {
-        format!("file://{root_str}")
-    } else {
-        format!("file://{root_str}/")
-    };
-    metadata.text_document_encoding = scip::types::TextEncoding::UTF8.into();
 
     // --- Pass 1: walk all files, emit symbols, build span→symbol map ---
     let mut span_map = SpanSymbolMap::new();
@@ -973,8 +1001,12 @@ pub fn build_scip_index(
     let mut file_results: HashMap<PathBuf, FileData> = HashMap::new();
 
     for analysis in analyses.values() {
+        let file_path: PathBuf = analysis.path.clone().into();
+        let root_idx = closest_root(&file_path, project_roots);
+        let root = root_idx.map(|i| &project_roots[i])
+            .unwrap_or(&project_roots[0]);
         let (path, data) = process_file(
-            analysis, project_root, import_data, &mut span_map,
+            analysis, root, project_roots, import_data, &mut span_map,
             &mut extern_typedef_map);
         file_results.insert(path, data);
     }
@@ -1003,10 +1035,6 @@ pub fn build_scip_index(
     let sym_rels = extract_relationships(devices, &span_map);
 
     // --- Pass 2b: emit reference occurrences from AST references ---
-    // Build a reverse map: reference_span → SCIP symbols, by walking
-    // each device's symbols and their reference/implementation sets.
-    // This is O(symbols × avg_refs) which is much faster than calling
-    // symbols_of_ref (O(refs × symbols)) for each AST reference.
     let mut ref_span_to_scip: HashMap<ZeroSpan, Vec<String>> = HashMap::new();
     for device in devices {
         for sym_ref in device.symbol_info.all_symbols() {
@@ -1024,13 +1052,10 @@ pub fn build_scip_index(
             }
         }
     }
-    // Dedup within each entry
     for syms in ref_span_to_scip.values_mut() {
         syms.sort();
         syms.dedup();
     }
-    // Now walk the AST to find reference sites and emit occurrences
-    // using the pre-built map.
     for analysis in analyses.values() {
         let file_path: PathBuf = analysis.path.clone().into();
         let mut refs = Vec::new();
@@ -1051,22 +1076,60 @@ pub fn build_scip_index(
         }
     }
 
-    // --- Pass 3: assemble documents, injecting relationships ---
-    let mut documents = Vec::new();
-    let mut external_symbols = Vec::new();
+    // --- Pass 3: inject relationships into SymbolInformation, partition by root ---
 
-    for (path, mut data) in file_results.drain() {
-        // Apply relationships to SymbolInformation entries
+    // Apply relationships first (before partitioning).
+    // Use extend rather than replace so that pre-existing
+    // relationships (e.g. import relationships from process_file)
+    // are preserved.
+    for data in file_results.values_mut() {
         for sym_info in data.symbols.values_mut() {
             if let Some(rels) = sym_rels.get(&sym_info.symbol) {
-                sym_info.relationships = rels.clone();
+                sym_info.relationships.extend(rels.iter().cloned());
             }
         }
+    }
 
-        let (occs, syms) = data.into_vecs();
+    // Partition files into buckets by closest root.
+    // root_idx → Vec<(path, FileData)>.
+    // None-bucket = files not under any root; these "orphan" files
+    // never get a Document in any index (their occurrences are dropped).
+    // Their SymbolInformation is selectively included in each root's
+    // external_symbols if referenced from that root's documents.
+    let mut root_buckets: HashMap<Option<usize>, Vec<(PathBuf, FileData)>> =
+        HashMap::new();
+    for (path, data) in file_results.drain() {
+        let bucket = closest_root(&path, project_roots);
+        root_buckets.entry(bucket).or_default().push((path, data));
+    }
 
-        match path.strip_prefix(project_root) {
-            Ok(rel) => {
+    // For each root, build an Index.
+    let mut results: Vec<(PathBuf, Index)> = Vec::new();
+
+    for (root_idx, root) in project_roots.iter().enumerate() {
+        let mut tool_info = ToolInfo::new();
+        tool_info.name = "dls".to_string();
+        tool_info.version = crate::version();
+
+        let mut metadata = Metadata::new();
+        metadata.tool_info = MessageField::some(tool_info);
+        let root_str = root.to_string_lossy();
+        metadata.project_root = if root_str.ends_with('/') {
+            format!("file://{root_str}")
+        } else {
+            format!("file://{root_str}/")
+        };
+        metadata.text_document_encoding =
+            scip::types::TextEncoding::UTF8.into();
+
+        let mut documents = Vec::new();
+        let mut external_symbols = Vec::new();
+
+        // Files belonging to this root → Documents.
+        if let Some(files) = root_buckets.get(&Some(root_idx)) {
+            for (path, data) in files {
+                let (occs, syms) = data.clone().into_vecs();
+                let rel = path.strip_prefix(root).unwrap();
                 let mut doc = Document::new();
                 doc.relative_path = rel.to_string_lossy().to_string();
                 doc.language = "dml".to_string();
@@ -1076,25 +1139,98 @@ pub fn build_scip_index(
                 doc.symbols = syms;
                 documents.push(doc);
             }
-            Err(_) => {
-                external_symbols.extend(syms);
+        }
+
+        // Collect the set of symbol strings referenced from this
+        // root's documents and the set already defined locally.
+        let mut referenced: HashSet<String> = HashSet::new();
+        let mut defined_locally: HashSet<String> = HashSet::new();
+        for doc in &documents {
+            for occ in &doc.occurrences {
+                if !occ.symbol.is_empty() {
+                    referenced.insert(occ.symbol.clone());
+                }
+            }
+            for sym in &doc.symbols {
+                defined_locally.insert(sym.symbol.clone());
             }
         }
+
+        // Only emit external_symbols for symbols from files that
+        // are NOT under any project root (orphan files). Files
+        // under other roots get their own index, so per the SCIP
+        // spec we leave those out ("the external package will get
+        // indexed separately").
+        // Additionally, only include symbols that are actually
+        // referenced from this root's documents but not already
+        // defined locally.
+        if let Some(orphan_files) = root_buckets.get(&None) {
+            for (_path, data) in orphan_files {
+                let (_, syms) = data.clone().into_vecs();
+                for sym in syms {
+                    if referenced.contains(&sym.symbol)
+                        && !defined_locally.contains(&sym.symbol)
+                    {
+                        external_symbols.push(sym);
+                    }
+                }
+            }
+        }
+
+        documents.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
+        external_symbols.sort_by(|a, b| a.symbol.cmp(&b.symbol));
+        external_symbols.dedup_by(|a, b| a.symbol == b.symbol);
+
+        if documents.is_empty() && external_symbols.is_empty() {
+            continue;
+        }
+
+        let mut index = Index::new();
+        index.metadata = MessageField::some(metadata);
+        index.documents = documents;
+        index.external_symbols = external_symbols;
+
+        debug!(
+            "SCIP index for root {:?}: {} document(s), {} external symbol(s)",
+            root,
+            index.documents.len(),
+            index.external_symbols.len()
+        );
+        results.push((root.clone(), index));
     }
 
-    documents.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
-    external_symbols.sort_by(|a, b| a.symbol.cmp(&b.symbol));
+    results
+}
 
-    let mut index = Index::new();
-    index.metadata = MessageField::some(metadata);
-    index.documents = documents;
-    index.external_symbols = external_symbols;
-
-    debug!(
-        "Namespace-based SCIP index built with {} document(s)",
-        index.documents.len()
-    );
-    index
+/// Build a single SCIP Index using one project root.
+///
+/// Convenience wrapper around `build_scip_indices` for the
+/// single-root case.
+pub fn build_scip_index(
+    analyses: &HashMap<CanonPath, &IsolatedAnalysis>,
+    project_root: &Path,
+    import_data: Option<&FileImportData>,
+    devices: &[&DeviceAnalysis],
+) -> Index {
+    let roots = vec![project_root.to_path_buf()];
+    let mut indices = build_scip_indices(
+        analyses, &roots, import_data, devices);
+    indices.pop().map(|(_, idx)| idx).unwrap_or_else(|| {
+        let mut index = Index::new();
+        let mut tool_info = ToolInfo::new();
+        tool_info.name = "dls".to_string();
+        tool_info.version = crate::version();
+        let mut metadata = Metadata::new();
+        metadata.tool_info = MessageField::some(tool_info);
+        let root_str = project_root.to_string_lossy();
+        metadata.project_root = if root_str.ends_with('/') {
+            format!("file://{root_str}")
+        } else {
+            format!("file://{root_str}/")
+        };
+        index.metadata = MessageField::some(metadata);
+        index
+    })
 }
 
 /// Build just the span→SCIP-symbol map without producing the full index.
@@ -1108,8 +1244,8 @@ pub fn build_span_symbol_map(
     let mut span_map = SpanSymbolMap::new();
     let mut extern_typedefs = ExternTypedefMap::new();
     for analysis in analyses.values() {
-        process_file(analysis, project_root, None, &mut span_map,
-                     &mut extern_typedefs);
+        process_file(analysis, project_root, &[project_root.to_path_buf()],
+                     None, &mut span_map, &mut extern_typedefs);
     }
     span_map
 }
