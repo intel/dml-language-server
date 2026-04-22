@@ -117,3 +117,296 @@ method now_we_can_declare_this_method_with_a_really_really_really_really_long na
 ```
 Will allow 'long_lines' globally, 'nsp_unary' and 'indent_no_tabs' on the
 `param p = (1 ++ *` line, and 'indent_paren_expr' on the `'4);` line.
+
+## SCIP Export
+
+The DLS can export a [SCIP index](https://sourcegraph.com/docs/code-search/code-navigation/scip)
+of analyzed DML devices. SCIP (Source Code Intelligence Protocol) is a
+language-agnostic format for code intelligence data, used by tools such as
+Sourcegraph for cross-repository navigation and code search.
+
+### Invocation
+
+SCIP export is available through the DFA (DML File Analyzer) binary via the
+`--scip-output <directory>` flag:
+```
+dfa <dls_binary> --compile-info <compile_commands.json> --workspace <project root> --scip-output <output_dir> [list of devices to analyze, ]
+```
+
+The output directory is created if it does not exist. Each workspace root
+produces a separate SCIP index file named `<root-basename>.scip` inside the
+output directory.
+
+#### Multi-root workspaces
+
+Multiple `--workspace` (`-w`) flags can be specified to cover source trees that
+live under different root directories (e.g. project code under one root and
+Simics built-in DML files under another):
+
+```
+dfa <dls_binary> -w /home/user/project -w /opt/simics/linux64 --scip-output ./scip-out device.dml
+```
+
+This produces:
+```
+./scip-out/project.scip
+./scip-out/linux64.scip
+```
+
+Each index contains full `Document` entries (with occurrences) only for files
+that fall under that workspace root. Symbols defined under no root appear as `external_symbols` in files that reference them — providing their `SymbolInformation`
+(kind, documentation, relationships) so that consumers can resolve references
+to them.
+
+### SCIP schema details
+Here we list how we have mapped DML specifically to the SCIP format.
+
+#### SCIP symbol kind mappings
+
+DML symbol kinds are mapped to SCIP `SymbolInformation.Kind` as follows:
+
+- `Constant` — Parameter, Constant, Loggroup
+- `Variable` — Extern, Saved, Session, Local
+- `Parameter` — MethodArg
+- `Event` — Hook
+- `Method` — Method
+- `Class` — Template
+- `TypeAlias` — Typedef
+- `Object` — All composite objects (Device, Bank, Register, Field, Group, Port, Connect, Attribute, Event, Subdevice, Implement)
+- `Interface` — Interface
+
+Note: SCIP's `Object` kind is used for DML composite objects because they are
+instantiated structural components in the device hierarchy, not types or
+namespaces. `Event` is used for DML hooks because they represent named event
+points that can be sent or listened to.
+
+Since SCIP's `Kind` enum is too coarse to distinguish between the various DML
+composite object kinds (e.g. `register` vs `bank` vs `attribute`), the
+`SymbolInformation.documentation` field carries a short-form declaration
+signature that disambiguates:
+
+- **Composite objects:** the DML keyword for the object kind, e.g. `register`,
+  `bank`, `attribute`, `group`, `field`, `device`, etc.
+- **Methods:** the DML declaration modifiers, e.g. `method`,
+  `independent method default`, `shared method throws`.
+- **Other symbol kinds:** no documentation is emitted.
+
+#### Symbol Naming Scheme
+
+SCIP symbols follow the format:
+`<scheme> ' ' <manager> ' ' <package> ' ' <version> ' ' <descriptors>`
+
+For DML, the scheme is `dml`, the manager is `simics`, and both the package and
+version are `.` (empty). Descriptors are built by concatenating *file-path
+components* (from the file's path relative to its project root) with
+*code-level namespace segments* (the nested DML object names in the source
+file):
+
+```
+dml simics . . src. `sample_device.dml`. regs. r1. offset.
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+               file path components    code-level names
+```
+
+Path components that contain special characters (such as `.` in file
+extensions) are backtick-escaped per the SCIP spec.
+
+More examples:
+```
+dml simics . . src. `sample_device.dml`. regs. r1. read().
+                                                        ^ method
+dml simics . . src. `sample_device.dml`. bank#
+                                            ^ type (template)
+```
+
+Descriptor suffixes follow the SCIP standard:
+- `.` (term) — used for composite objects, parameters, and other named values
+- `#` (type) — used for templates and typedefs
+- `().` (method) — used for methods
+
+#### Local Symbols
+
+Method arguments and method-local variables use SCIP local symbols of the form
+`local <name>_<id>`, where `<id>` is a sequential counter scoped to each
+source file (starting at 0). Local symbols are scoped to a single document
+and are not navigable across files.
+
+#### Occurrence Roles
+
+DML definitions (including the primary symbol location) are emitted with the
+SCIP `Definition` role. All declarations — including abstract method
+declarations and `default` parameter declarations — currently also receive the
+`Definition` role.
+
+References (including template instantiation sites from `is` statements) are
+emitted as plain references with no additional role flags. Access-kind
+refinement (`ReadAccess` / `WriteAccess`) is not yet tracked.
+
+#### Enclosing Ranges
+
+For all symbol definitions — composite objects, methods, templates, parameters,
+sessions, saved variables, constants, hooks, typedefs, and method arguments —
+each `Definition` occurrence includes an `enclosing_range` that spans the full
+AST node. This allows consumers to associate the definition site with the
+extent of the construct it names.
+
+#### Deduplication and Determinism
+
+When multiple device analyses share source files (e.g. common library code),
+the SCIP export deduplicates occurrences and symbol information so that each
+(symbol, range, role) triple and each symbol entry appears at most once.
+All output is sorted deterministically: documents by relative path,
+occurrences by range, symbols by symbol string, and relationships by symbol.
+
+#### Relationships
+
+Composite objects that instantiate templates (via `is some_template`) emit
+SCIP `Relationship` entries with `is_implementation = true` pointing to the
+template symbol.
+
+Methods that override a default or abstract method from a template also emit
+`is_implementation` relationships pointing to the overridden method's symbol.
+For example, if template `foo` defines `method a` as `default` and object `b`
+implements `foo` with its own definition of `method a`, then `b.a` will carry
+an `is_implementation` relationship to `foo.a`. This lets consumers identify
+which method version is the active override and navigate the override chain.
+
+#### File Symbols and Imports
+
+Each source file involved in the analysis gets a dedicated SCIP symbol of kind
+`File`. A `Definition` occurrence is emitted at line 0 of each file so that
+navigation to the file symbol opens the file itself.
+
+For each `import "..."` statement, an `Import` occurrence is emitted at the
+import statement's span, referencing the imported file's symbol. Additionally,
+the importing file's `SymbolInformation` carries an `is_reference = true`
+`Relationship` entry for each imported file, enabling explicit file-level
+dependency tracking without needing to scan occurrences.
+
+File symbols use the format:
+```
+dml simics . . path. to. `file.dml`.
+```
+where each path component becomes a separate term descriptor (`.`), and
+components containing special characters are backtick-escaped.
+
+## Device Object Hierarchy Export
+
+The DLS can export a JSON representation of the device-semantic object
+hierarchy for analyzed DML devices. This gives a structured view of the
+instantiated device tree — the composite objects, parameters, and methods
+that make up the device after all templates have been merged — rather than
+the raw syntactic AST.
+
+### Invocation
+
+Object hierarchy export is available through the DFA binary via the
+`--object-hierarchy <path>` flag:
+
+```
+dfa <dls_binary> --workspace <project_root> --object-hierarchy output.json <device files ...>
+```
+
+This can be combined with other flags such as `--compile-info`,
+`--scip-output`, etc.
+
+### Output Format
+
+The output is a JSON file whose top-level keys are device names (one per
+analysed device). Each device maps to a recursive object hierarchy:
+
+```json
+{
+  "sample_device": {
+    "scip_name": "dml simics . . src. sample.dml. sample_device.",
+    "kind": "device",
+    "parameters": {
+      "register_size": {
+        "scip_name": "dml simics . . src. sample.dml. sample_device. register_size.",
+        "value_expression": "4",
+        "type": "int"
+      }
+    },
+    "methods": {
+      "init": {
+        "scip_name_of_method_used": "dml simics . . src. sample.dml. sample_device. init().",
+        "arg_list": [],
+        "return_types": [],
+        "modifiers": ["default"]
+      }
+    },
+    "objects": {
+      "regs": {
+        "scip_name": "dml simics . . src. sample.dml. regs.",
+        "kind": "bank",
+        "parameters": { ... },
+        "methods": { ... },
+        "objects": {
+          "r0": {
+            "scip_name": "...",
+            "kind": "register",
+            ...
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+### Schema Reference
+
+#### Top Level
+
+A map from device short name (string) to a **HierarchyObject**.
+
+#### HierarchyObject
+
+| Field        | Type                                  | Description |
+|--------------|---------------------------------------|-------------|
+| `scip_name`  | string                                | Full SCIP symbol path for this object. |
+| `kind`       | string                                | DML composite object kind (`device`, `bank`, `register`, `field`, `group`, `port`, `connect`, `attribute`, `event`, `subdevice`, `implement`, `interface`). |
+| `parameters` | map\<string, HierarchyParameter\>     | Parameters declared on this object, keyed by short name. Omitted when empty. |
+| `methods`    | map\<string, HierarchyMethod\>        | Methods declared on this object, keyed by short name. Omitted when empty. |
+| `objects`    | map\<string, HierarchyObject\>        | Child composite objects, keyed by short name. Omitted when empty. |
+
+#### HierarchyParameter
+
+| Field              | Type            | Description |
+|--------------------|-----------------|-------------|
+| `scip_name`        | string          | Full SCIP symbol path for this parameter. |
+| `value_expression` | string or null  | Source text of the parameter value expression (e.g. `0x100`, `"hello"`), or `"auto"` for auto-parameters. Null if abstract. |
+| `type`             | string or null  | Source text of the declared type annotation (e.g. `uint64`). Null if untyped. |
+
+#### HierarchyMethod
+
+| Field                      | Type                       | Description |
+|----------------------------|----------------------------|-------------|
+| `scip_name_of_method_used` | string                     | Full SCIP symbol path of the concrete method definition used. |
+| `arg_list`                 | array of HierarchyMethodArg | Method arguments in declaration order. |
+| `return_types`             | array of string            | Source text of each return type. |
+| `modifiers`                | array of string            | Applicable modifiers: `shared`, `inline`, `independent`, `default`, `throws`. |
+
+#### HierarchyMethodArg
+
+| Field  | Type   | Description |
+|--------|--------|-------------|
+| `name` | string | Argument name. |
+| `type` | string | Source text of the argument type, or `"inline"` for untyped inline arguments. |
+
+### Relationship to SCIP
+
+The `scip_name` fields in the hierarchy correspond directly to the SCIP symbol
+strings produced by the SCIP export (see previous section). This allows
+consumers to cross-reference the hierarchy with the SCIP index — for example,
+looking up the precise source location of a parameter via its SCIP symbol, or
+navigating override chains for methods.
+
+Auto-generated parameters that are synthesised during device analysis (such as
+`_ident`, `indices`, `qname`, `parent`, `obj`) do not have a source-level
+declaration of their own. Their `scip_name` is resolved by walking the
+parameter's definition/declaration chain (used definitions → overridden
+definitions → declarations) looking for the nearest declaration that has a SCIP
+symbol — for example, the declaration in a built-in template. If no declaration
+in the chain has a SCIP symbol, the short identity name is used (e.g.
+`_ident`).

@@ -322,6 +322,44 @@ pub fn set_contexts(paths: Vec<String>) -> Notification<notifications::ChangeAct
     }
 }
 
+pub fn export_scip(devices: Vec<String>, output_path: String) -> Request<requests::ExportScipRequest> {
+    Request {
+        params: requests::ExportScipParams {
+            devices: if devices.is_empty() {
+                None
+            } else {
+                Some(devices.into_iter()
+                    .map(|p| parse_uri(&p).unwrap())
+                    .collect())
+            },
+            output_path,
+        },
+        action: PhantomData,
+        id: next_id(),
+        received: Instant::now(),
+    }
+}
+
+pub fn export_object_hierarchy(devices: Vec<String>, output_path: String)
+    -> Request<requests::ExportObjectHierarchyRequest>
+{
+    Request {
+        params: requests::ExportObjectHierarchyParams {
+            devices: if devices.is_empty() {
+                None
+            } else {
+                Some(devices.into_iter()
+                    .map(|p| parse_uri(&p).unwrap())
+                    .collect())
+            },
+            output_path,
+        },
+        action: PhantomData,
+        id: next_id(),
+        received: Instant::now(),
+    }
+}
+
 fn next_id() -> RequestId {
     static ID: AtomicU64 = AtomicU64::new(1);
     RequestId::Num(ID.fetch_add(1, Ordering::SeqCst))
