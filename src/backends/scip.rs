@@ -107,8 +107,6 @@ fn extract_relationships(
                 }
 
                 if !rels.is_empty() {
-                    rels.sort_by(|a, b| a.symbol.cmp(&b.symbol));
-                    rels.dedup_by(|a, b| a.symbol == b.symbol);
                     result.entry(source_scip.clone())
                         .or_default()
                         .extend(rels);
@@ -140,8 +138,6 @@ fn extract_relationships(
                             }
                         }
                         if !rels.is_empty() {
-                            rels.sort_by(|a, b| a.symbol.cmp(&b.symbol));
-                            rels.dedup_by(|a, b| a.symbol == b.symbol);
                             result.entry(source_scip.clone())
                                 .or_default()
                                 .extend(rels);
@@ -160,6 +156,16 @@ fn extract_relationships(
     }
 
     result
+}
+
+/// Build a `file://`-prefixed project root URI with a trailing slash.
+fn make_project_root_uri(root: &Path) -> String {
+    let s = root.to_string_lossy();
+    if s.ends_with('/') {
+        format!("file://{s}")
+    } else {
+        format!("file://{s}/")
+    }
 }
 
 /// Convert a ZeroSpan range into the SCIP occurrence range format.
@@ -1113,12 +1119,7 @@ pub fn build_scip_indices(
 
         let mut metadata = Metadata::new();
         metadata.tool_info = MessageField::some(tool_info);
-        let root_str = root.to_string_lossy();
-        metadata.project_root = if root_str.ends_with('/') {
-            format!("file://{root_str}")
-        } else {
-            format!("file://{root_str}/")
-        };
+        metadata.project_root = make_project_root_uri(root);
         metadata.text_document_encoding =
             scip::types::TextEncoding::UTF8.into();
 
@@ -1222,12 +1223,7 @@ pub fn build_scip_index(
         tool_info.version = crate::version();
         let mut metadata = Metadata::new();
         metadata.tool_info = MessageField::some(tool_info);
-        let root_str = project_root.to_string_lossy();
-        metadata.project_root = if root_str.ends_with('/') {
-            format!("file://{root_str}")
-        } else {
-            format!("file://{root_str}/")
-        };
+        metadata.project_root = make_project_root_uri(project_root);
         index.metadata = MessageField::some(metadata);
         index
     })

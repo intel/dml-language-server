@@ -1123,8 +1123,7 @@ impl RequestAction for ExportScipRequest {
         let mut total_docs = 0usize;
         let mut written_files = Vec::new();
 
-        let mut used_names: std::collections::HashSet<String> =
-            std::collections::HashSet::new();
+        let mut used_names: HashSet<String> = HashSet::new();
 
         for (root, index) in indices.into_iter() {
             let doc_count = index.documents.len();
