@@ -968,7 +968,8 @@ pub struct ExportScipRequest;
 pub struct ExportScipParams {
     /// Device paths to export SCIP for. If empty, exports all known devices.
     pub devices: Option<Vec<lsp_types::Uri>>,
-    /// The file path where the SCIP index should be written.
+    /// Directory where SCIP index files should be written.
+    /// Each workspace root produces a `<root-name>.scip` file.
     pub output_path: String,
 }
 
@@ -976,8 +977,11 @@ pub struct ExportScipParams {
 pub struct ExportScipResult {
     /// Whether the export succeeded.
     pub success: bool,
-    /// Number of documents in the exported index.
+    /// Total number of documents across all index files.
     pub document_count: usize,
+    /// Paths of all SCIP index files written.
+    #[serde(default)]
+    pub index_files: Vec<String>,
     /// Error message, if any.
     pub error: Option<String>,
 }
@@ -1000,6 +1004,7 @@ impl RequestAction for ExportScipRequest {
         Ok(ExportScipResult {
             success: false,
             document_count: 0,
+            index_files: vec![],
             error: Some("Request timed out".to_string()),
         })
     }
@@ -1058,6 +1063,7 @@ impl RequestAction for ExportScipRequest {
             return Ok(ExportScipResult {
                 success: false,
                 document_count: 0,
+                index_files: vec![],
                 error: Some("No device analyses found".to_string()),
             });
         }
@@ -1084,38 +1090,91 @@ impl RequestAction for ExportScipRequest {
             }
         }
 
-        // Determine project root from workspaces
-        let project_root = ctx.workspace_roots
+        // Build the list of project roots from all workspace roots.
+        let project_roots: Vec<std::path::PathBuf> = ctx.workspace_roots
             .lock()
             .unwrap()
-            .first()
-            .and_then(|ws| parse_file_path!(&ws.uri, "ExportScip").ok())
-            .unwrap_or_else(|| std::path::PathBuf::from("."));
+            .iter()
+            .filter_map(|ws| parse_file_path!(&ws.uri, "ExportScip").ok())
+            .collect();
+        let project_roots = if project_roots.is_empty() {
+            vec![std::path::PathBuf::from(".")]
+        } else {
+            project_roots
+        };
 
-        let index = crate::backends::scip::build_scip_index(
-            &isolated_map, &project_root, Some(&import_data), &devices);
-        let doc_count = index.documents.len();
+        let indices = crate::backends::scip::build_scip_indices(
+            &isolated_map, &project_roots, Some(&import_data), &devices);
 
-        let output = std::path::Path::new(&params.output_path);
-        match crate::backends::scip::write_scip_to_file(index, output) {
-            Ok(()) => {
-                info!("SCIP export complete: {} documents written to {}",
-                      doc_count, params.output_path);
-                Ok(ExportScipResult {
-                    success: true,
-                    document_count: doc_count,
-                    error: None,
-                })
-            },
-            Err(e) => {
-                error!("SCIP export failed: {}", e);
-                Ok(ExportScipResult {
-                    success: false,
-                    document_count: 0,
-                    error: Some(e),
-                })
+        // Write each index into the output directory, named
+        // after the last component of its project root.
+        let output_dir = std::path::Path::new(&params.output_path);
+        if let Err(e) = std::fs::create_dir_all(output_dir) {
+            error!("Failed to create SCIP output directory {:?}: {}", output_dir, e);
+            return Ok(ExportScipResult {
+                success: false,
+                document_count: 0,
+                index_files: vec![],
+                error: Some(format!(
+                    "Failed to create output directory {:?}: {}", output_dir, e)),
+            });
+        }
+
+        let mut total_docs = 0usize;
+        let mut written_files = Vec::new();
+
+        let mut used_names: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
+
+        for (root, index) in indices.into_iter() {
+            let doc_count = index.documents.len();
+            total_docs += doc_count;
+
+            let base_name = root.file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| "index".to_string());
+            let mut name = base_name.clone();
+            let mut suffix = 1u32;
+            while used_names.contains(&name) {
+                name = format!("{}.{}", base_name, suffix);
+                suffix += 1;
+            }
+            used_names.insert(name.clone());
+            let file_path = output_dir.join(format!("{}.scip", name));
+
+            match crate::backends::scip::write_scip_to_file(
+                index, &file_path,
+            ) {
+                Ok(()) => {
+                    info!(
+                        "SCIP index written: {} documents to {:?}",
+                        doc_count, file_path
+                    );
+                    written_files.push(
+                        file_path.to_string_lossy().to_string());
+                }
+                Err(e) => {
+                    error!("SCIP export failed for {:?}: {}", file_path, e);
+                    return Ok(ExportScipResult {
+                        success: false,
+                        document_count: 0,
+                        index_files: written_files,
+                        error: Some(e),
+                    });
+                }
             }
         }
+
+        info!(
+            "SCIP export complete: {} total documents in {} file(s)",
+            total_docs, written_files.len()
+        );
+        Ok(ExportScipResult {
+            success: true,
+            document_count: total_docs,
+            index_files: written_files,
+            error: None,
+        })
     }
 }
 
