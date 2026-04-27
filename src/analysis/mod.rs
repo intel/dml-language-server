@@ -815,10 +815,16 @@ impl DeviceAnalysis {
                             context_chain: &[ContextKey],
                             limitations: &mut HashSet<DLSLimitation>)
                             -> Result<Vec<DMLObject>, String> {
-        // Note: failing to find here is not actually an error
-        curr_objs.into_iter()
+        let (matches, mut errors): (Vec<_>, Vec<_>) = curr_objs.into_iter()
             .map(|o|self.context_to_objs(o, context_chain, limitations))
-            .process_results(|r|r.flatten().collect())
+            .partition_result();
+        let matches: Vec<_> = matches.into_iter().flatten().collect();
+        if matches.is_empty() {
+            // Hard to tell which error would be the most relevant, so
+            // pick the first one, if any
+            return errors.pop().map(Err).unwrap_or(Ok(vec![]));
+        }
+        Ok(matches)
     }
 
     // TODO: This function is called from two contexts, and this is a reoccuring pain-point
