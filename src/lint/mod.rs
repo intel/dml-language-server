@@ -6,7 +6,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use lazy_static::lazy_static;
-use log::{debug, error, trace};
+use crate::logging::{debug, error, trace};
 use rules::linelength::{BreakBeforeBinaryOpOptions,
     BreakFuncCallOpenParenOptions,
     BreakMethodOutputOptions,
@@ -34,7 +34,7 @@ use rules::{spacing::{SpReservedOptions,
                 IndentSwitchCaseOptions,
                 IndentEmptyLoopOptions,
                 IndentContinuationLineOptions}};
-use crate::analysis::{DMLError, IsolatedAnalysis, LocalDMLError, ZeroRange};
+use crate::analysis::{AnalysisProcessResult, DMLError, IsolatedAnalysis, LocalDMLError, ZeroRange};
 use crate::analysis::parsing::tree::TreeElement;
 use crate::file_management::CanonPath;
 use crate::vfs::{Error, TextFile};
@@ -211,16 +211,16 @@ impl LinterAnalysis {
                cfg: LintCfg,
                original_analysis: IsolatedAnalysis,
                status: AliveStatus)
-               -> Result<LinterAnalysis, Error> {
+               -> AnalysisProcessResult<LinterAnalysis> {
         debug!("local linting for: {:?}", path);
-        status.assert_alive();
+        status.check_alive()?;
         let canonpath = CanonPath::try_from_path_buf(path.to_path_buf())
             .map_err(|e|Error::Io(Some(path.to_path_buf()),
                                   Some(e.to_string())))?;
         let rules =  instantiate_rules(&cfg);
         let local_lint_errors = begin_style_check(
             original_analysis.ast, &file.text, &rules)?;
-        status.assert_alive();
+        status.check_alive()?;
         let mut lint_errors = vec![];
         for entry in local_lint_errors {
             let ident = entry.rule_ident;

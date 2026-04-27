@@ -1,7 +1,7 @@
 //  © 2024 Intel Corporation
 //  SPDX-License-Identifier: Apache-2.0 and MIT
 // Types, traits, and structs for the structure of a DML file
-use log::{trace, error};
+use crate::logging::{error, trace};
 
 use crate::analysis::parsing::expression::{Expression,
                                            ensure_string_concatenation};
@@ -1838,7 +1838,6 @@ impl Parse<DMLObjectContent> for ErrorObjectContent {
     }
 }
 
-#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum DMLObjectContent {
     Attribute(CompositeObjectContent),

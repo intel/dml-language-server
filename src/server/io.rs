@@ -1,7 +1,7 @@
 //  © 2024 Intel Corporation
 //  SPDX-License-Identifier: Apache-2.0 and MIT
 use jsonrpc::error::{RpcError, StandardError, standard_error};
-use log::{debug, trace};
+use crate::logging::{debug, trace};
 use serde_json::Value;
 
 use super::{Notification, Request, RequestId};

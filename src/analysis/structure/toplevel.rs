@@ -3,7 +3,7 @@
 use std::fmt::{Display, Formatter, self as fmt};
 use std::path::PathBuf;
 
-use log::trace;
+use crate::logging::trace;
 
 use crate::analysis::structure::objects::{Bitorder, CBlock, CompObjectKind, CompositeObject, Constant, DMLObject, DMLStatement, Device, Error, Export, Hook, Import, InEach, Instantiation, Loggroup, Method, MethodModifier, Parameter, Statements, Template, ToStructure, Typedef, Variable, Version, make_statements};
 use crate::analysis::structure::expressions::{Expression};

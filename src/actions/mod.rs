@@ -3,7 +3,6 @@
 //! Actions that the DLS can perform: responding to requests, watching files,
 //! etc.
 
-use log::{debug, info, trace, error, warn};
 use thiserror::Error;
 use crossbeam::channel;
 use serde::Deserialize;
@@ -40,6 +39,7 @@ use crate::Span;
 use crate::span;
 use crate::span::{ZeroIndexed, FilePosition};
 use crate::vfs::Vfs;
+use crate::logging::{debug, info, trace, error};
 
 use jsonrpc::error::{standard_error, StandardError};
 use serde_json::Value;
@@ -80,7 +80,7 @@ macro_rules! make_canon_path {
 macro_rules! ignore_non_file_uri {
     ($expr: expr, $uri: expr, $log_name: expr) => {
         $expr.map_err(|_| {
-            log::trace!("{}: Non-`file` URI scheme, ignoring: {:?}", $log_name, $uri);
+            crate::logging::trace!("{}: Non-`file` URI scheme, ignoring: {:?}", $log_name, $uri);
         })
     };
 }
@@ -362,6 +362,11 @@ impl SourcedDMLError {
 
 pub type ActiveDeviceContexts = HashSet<ContextDefinition>;
 
+#[derive(Debug, Clone)]
+pub struct DeviceAnalysisJobOptions {
+    pub max_reference_cache_size: usize,
+}
+
 impl <O: Output> InitActionContext<O> {
     fn new(
         analysis: Arc<Mutex<AnalysisStorage>>,
@@ -594,7 +599,7 @@ impl <O: Output> InitActionContext<O> {
                                 .extend(includes.into_iter());
                         }
                     } else {
-                        warn!(
+                        info!(
                             "File in compile information file is not .dml; \
                              {:?}",
                             file
@@ -862,13 +867,19 @@ impl <O: Output> InitActionContext<O> {
         let (job, token) = ConcurrentJob::new();
         let job_ident = Self::device_job_id(device.as_str());
         let locked_analysis = &mut self.analysis.lock().unwrap();
+        let device_job_options =
+            DeviceAnalysisJobOptions {
+                    max_reference_cache_size:
+                        self.config.lock().unwrap().max_reference_cache_size,
+            };
         let dependencies = locked_analysis.all_dependencies(device,
                                                             Some(device));
         if self.analysis_queue.enqueue_device_job(
             locked_analysis,
             device,
             dependencies,
-            token) {
+            token,
+            device_job_options) {
             self.add_job(job_ident, job);
         }
     }

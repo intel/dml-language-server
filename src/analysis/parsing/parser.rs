@@ -2,7 +2,7 @@
 //  SPDX-License-Identifier: Apache-2.0 and MIT
 use logos::Lexer;
 use regex::Regex;
-use log::trace;
+use crate::logging::trace;
 use lazy_static::lazy_static;
 
 use crate::span::{Range, ZeroIndexed, Position};

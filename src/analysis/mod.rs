@@ -19,13 +19,15 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::Mutex;
 
+use hashlink::LinkedHashMap;
+use itertools::Itertools;
 use lsp_types::{DiagnosticSeverity};
 use logos::Logos;
-use log::{debug, error, info, trace};
+use crate::logging::{debug, error, info, trace};
 use rayon::prelude::*;
 
-use crate::actions::SourcedDMLError;
-use crate::actions::analysis_storage::TimestampedStorage;
+use crate::actions::{SourcedDMLError, DeviceAnalysisJobOptions};
+use crate::actions::analysis_storage::{TimestampedStorage};
 use crate::actions::semantic_lookup::{DLSLimitation, isolated_template_limitation};
 use crate::analysis::symbols::{DMLSymbolKind, SimpleSymbol, StructureSymbol, SymbolContainer, SymbolMaker, SymbolSource};
 pub use crate::analysis::symbols::SymbolRef;
@@ -65,7 +67,7 @@ use crate::analysis::templating::types::DMLResolvedType;
 use crate::concurrency::AliveStatus;
 use crate::file_management::{PathResolver, CanonPath};
 
-use crate::vfs::{TextFile, Error};
+use crate::vfs::{TextFile, Error as VFSError};
 
 #[derive(Clone, Copy)]
 pub struct FileSpec<'a> {
@@ -185,6 +187,12 @@ impl Hash for DMLError {
 }
 
 impl DMLError {
+    fn size_of(&self) -> usize {
+        std::mem::size_of_val(self)
+         + self.description.len()
+         + self.related.iter().fold(0, |a, (_, m)| a + std::mem::size_of::<ZeroSpan>() + m.len())
+    }
+
     pub fn with_source(self, source: &'static str) -> SourcedDMLError {
         SourcedDMLError {
             error: self,
@@ -284,12 +292,15 @@ impl RangeEntry {
             && self.sub_ranges.iter().all(|sub|sub.is_empty())
     }
     fn find_symbol_for_dmlname(&self, name: &DMLString) -> Option<&SymbolRef> {
+        trace!("Finding symbol for name {:?} at position {:?} in rangeentry {:?}",
+              name.val, name.span.start_position(), self);
         self.find_symbol_for_name(
             &name.val, name.span.start_position().position)
     }
 
     fn find_smallest_scope_around(&self, loc: ZeroPosition)
                                   -> Option<ZeroRange> {
+        trace!("Finding smallest scope around position {:?} in rangeentry {:?}", loc, self);
         if self.range.contains_pos(loc) {
             self.sub_ranges.iter()
                 .find_map(|sub|sub.find_smallest_scope_around(loc))
@@ -371,6 +382,7 @@ pub struct DeviceAnalysis {
     pub path: CanonPath,
     pub dependant_files: Vec<CanonPath>,
     pub clientpath: PathBuf,
+    pub reference_cache_max_size : usize,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -380,7 +392,7 @@ pub enum ReferenceMatchKind {
     NotFound,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct ReferenceMatches {
     pub kind: ReferenceMatchKind,
     // How these references are interpreted depends on 'kind',
@@ -402,6 +414,14 @@ impl Default for ReferenceMatches {
 }
 
 impl ReferenceMatches {
+    fn size_of(&self) -> usize {
+        // NOTE: This does NOT count the size of the values under the symbolrefs, as these should be shared with
+        // the analysis
+        std::mem::size_of_val(self)
+         + self.references.len() * std::mem::size_of::<SymbolRef>()
+         + self.messages.iter().fold(0, |a, m| a + m.size_of())
+    }
+
     pub fn add_match(&mut self, reference: SymbolRef) {
         if self.kind != ReferenceMatchKind::MismatchedFind {
             self.kind = ReferenceMatchKind::Found;
@@ -478,14 +498,38 @@ pub type TypeHint = DMLResolvedType;
 // Agnostic reference
 type AgnRef = Vec<String>;
 
-type ReferenceCacheKey = (String, AgnRef, Option<ZeroRange>);
-#[derive(Default)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+struct ReferenceCacheKey {
+    object_path: String,
+    agnostic_reference: AgnRef,
+    method_scope: Option<ZeroRange>,
+}
+
+impl ReferenceCacheKey {
+    fn size_of(&self) -> usize {
+        std::mem::size_of_val(self)
+         + self.object_path.len()
+         + self.agnostic_reference.iter().fold(0, |a, s| a + s.len())
+    }
+}
+
 struct ReferenceCache {
-    underlying_cache: HashMap<ReferenceCacheKey, ReferenceMatches>,
+    underlying_cache: LinkedHashMap<ReferenceCacheKey, ReferenceMatches>,
+    used_size: usize,
+    allowed_size: usize,
+    enabled: bool,
+    num_insert_failures: usize,
 }
 
 fn object_to_path_name(object: Option<&DMLObject>, container: &StructureContainer) -> String {
-    object_to_path_name_aux(object, container, String::new())
+    if let Some(obj) = object.map(|o|o.resolve(container)) {
+        let parent = obj.parent().map(DMLObject::CompObject);
+        object_to_path_name_aux(parent.as_ref(),
+                                container,
+                                obj.identity().to_string())
+    } else {
+        String::new()
+    }
 }
 
 fn object_to_path_name_aux(object: Option<&DMLObject>, container: &StructureContainer, acc: String) -> String {
@@ -501,6 +545,19 @@ fn object_to_path_name_aux(object: Option<&DMLObject>, container: &StructureCont
 }
 
 impl ReferenceCache {
+    fn new(size: usize) -> Self {
+        if size == 0 {
+            debug!("Auto-disabled reference cache due to designated size being 0");
+        }
+        ReferenceCache {
+            underlying_cache: LinkedHashMap::new(),
+            used_size: 0,
+            allowed_size: size,
+            enabled: size > 0,
+            num_insert_failures: 0,
+        }
+    }
+
     fn flatten_ref(refr: &NodeRef, agn: &mut Vec<String>) {
         match refr {
             NodeRef::Simple(dmlstring) => agn.push(dmlstring.val.clone()),
@@ -517,7 +574,9 @@ impl ReferenceCache {
         let (object, refr) = key;
         let method_scope =
             if let Some(meth) = object.and_then(|o|o.as_shallow()).and_then(|s|s.variant.as_method()) {
-                method_structure.get(meth.location()).and_then(
+                let adjusted_meth = DeviceAnalysis::adjust_method_for_pos(meth, &refr.span().start_position())
+                    .unwrap_or(meth);
+                method_structure.get(adjusted_meth.location()).and_then(
                         |re|re.find_smallest_scope_around(refr.loc_span().range.start()))
             } else {
                 None
@@ -525,16 +584,53 @@ impl ReferenceCache {
         let object_path = object_to_path_name(object, container);
         let mut agnostic_reference = vec![];
         Self::flatten_ref(&refr.reference, &mut agnostic_reference);
-        (object_path, agnostic_reference, method_scope)
+        let res = ReferenceCacheKey {
+            object_path,
+            agnostic_reference,
+            method_scope
+        };
+        trace!("Converted {:?} to agnostic key {:?}", (object, refr), res);
+        res
     }
 
-    pub fn get(&self,
+    pub fn get(&mut self,
                key: (Option<&DMLObject>, VariableReference),
                container: &StructureContainer,
                method_structure: &HashMap<ZeroSpan, RangeEntry>)
                -> Option<&ReferenceMatches> {
+        if !self.enabled {
+            return None;
+        }
         let agn_key = Self::convert_to_key(key, container, method_structure);
-        self.underlying_cache.get(&agn_key)
+        match self.underlying_cache.raw_entry_mut().from_key(&agn_key) {
+            hashlink::linked_hash_map::RawEntryMut::Occupied(mut e) => {
+                // Update cache entry to be recently used
+                e.to_back();
+                Some(e.into_mut())
+            },
+            _ => None,
+        }
+    }
+
+    fn size_of_key_val(key: &ReferenceCacheKey, val: &ReferenceMatches) -> usize {
+        key.size_of() + val.size_of()
+    }
+
+    fn remove_oldest(&mut self) {
+        // Unwrap is guaranteed by caller, a.k.a. do not speculatively call this function
+        let (oldest_key, oldest_val) = self.underlying_cache.pop_front().unwrap();
+        let removed_size = Self::size_of_key_val(&oldest_key, &oldest_val);
+        self.used_size -= removed_size;
+    }
+
+    fn prepare_space(&mut self, added_size: usize) -> Result<(), &'static str>{
+        if added_size > self.allowed_size {
+            return Err("Not enough space allowed in cache");
+        }
+        while self.used_size + added_size > self.allowed_size {
+            self.remove_oldest();
+        }
+        Ok(())
     }
 
     pub fn insert(&mut self,
@@ -543,7 +639,27 @@ impl ReferenceCache {
                   container: &StructureContainer,
                   method_structure: &HashMap<ZeroSpan, RangeEntry>)
     {
+        if !self.enabled {
+            return;
+        }
         let agn_key = Self::convert_to_key(key, container, method_structure);
+        if let Some(previous_result) = self.underlying_cache.get(&agn_key) {
+            if val != *previous_result {
+                internal_error!("Invariant broken: agnostic keys resulted in different matches, old: {:?}, new: {:?}, agn key: {:?}", previous_result, val, agn_key);
+            }
+            return;
+        }
+        let added_size = Self::size_of_key_val(&agn_key, &val);
+        if let Err(e) = self.prepare_space(added_size) {
+            internal_error!("Failed to insert '{:?}' into reference cache: {}", agn_key, e);
+            self.num_insert_failures += 1;
+            if self.num_insert_failures > 10 {
+                info!("Auto-disabling reference cache due to repeated insert failures, consider increasing the cache size limit");
+                self.enabled = false;
+            }
+            return;
+        }
+        self.used_size += added_size;
         self.underlying_cache.insert(agn_key, val);
     }
 }
@@ -572,18 +688,37 @@ fn gather_scopes<'c>(next_scopes: Vec<&'c dyn Scope>,
     }
 }
 
+pub enum AnalysisError {
+    VFSError(VFSError),
+    Cancelled,
+}
+
+pub type AnalysisProcessResult<T> = Result<T, AnalysisError>;
+
+impl From<VFSError> for AnalysisError {
+    fn from(e: VFSError) -> Self {
+        AnalysisError::VFSError(e)
+    }
+}
+
+impl From<AnalysisError> for AnalysisProcessResult<()> {
+    fn from(e: AnalysisError) -> Self {
+        Err(e)
+    }
+}
+
 impl DeviceAnalysis {
     pub fn lookup_symbols<'t>(&self, context_sym: &ContextedSymbol<'t>, limitations: &mut HashSet<DLSLimitation>)
-        -> Vec<SymbolRef> {
+        -> Result<Vec<SymbolRef>, String> {
         trace!("Looking up symbols at {:?}", context_sym);
 
         // Special handling for methods, since each method decl has its
         // own symbol
         if context_sym.kind() == DMLSymbolKind::Method {
-            return self.symbol_info.method_symbols
+            return Ok(self.symbol_info.method_symbols
                 .get(context_sym.loc_span())
                 .map(|m|m.values().cloned())
-                .into_iter().flatten().collect();
+                .into_iter().flatten().collect());
         }
         self.lookup_symbols_by_contexted_symbol(context_sym, limitations)
     }
@@ -671,23 +806,23 @@ impl DeviceAnalysis {
                         curr_objs: Vec<DMLObject>,
                         context_chain: &[ContextKey],
                         limitations: &mut HashSet<DLSLimitation>)
-                        -> Option<Vec<DMLObject>> {
+                        -> Result<Vec<DMLObject>, String> {
         if context_chain.is_empty() {
-            Some(curr_objs)
+            Ok(curr_objs)
         } else {
             self.contexts_to_objs_aux(
-                curr_objs.into_iter().filter_map(
+                curr_objs.into_iter().map(
                     |obj|match obj.resolve(&self.objects) {
-                        DMLResolvedObject::CompObject(robj) => Some(robj),
+                        DMLResolvedObject::CompObject(robj) => Ok(robj),
                         DMLResolvedObject::ShallowObject(sobj) => {
-                            internal_error!(
+                            Err(format!(
                                 "Internal Error: \
                                  Wanted to find context {:?} in {:?} \
                                  which is not \
-                                 a composite object", sobj, context_chain);
-                            None
+                                 a composite object", sobj, context_chain))
                         }
-                    }).collect(),
+                    })
+                    .collect::<Result<Vec<_>, String>>()?,
                 context_chain,
                 limitations)
         }
@@ -697,15 +832,17 @@ impl DeviceAnalysis {
                             curr_objs: Vec<&DMLCompositeObject>,
                             context_chain: &[ContextKey],
                             limitations: &mut HashSet<DLSLimitation>)
-                            -> Option<Vec<DMLObject>> {
-        let result: Vec<DMLObject> = curr_objs.into_iter()
-            .filter_map(|o|self.context_to_objs(o, context_chain, limitations))
-            .flatten().collect();
-        if result.is_empty() {
-            None
-        } else {
-            Some(result)
+                            -> Result<Vec<DMLObject>, String> {
+        let (matches, mut errors): (Vec<_>, Vec<_>) = curr_objs.into_iter()
+            .map(|o|self.context_to_objs(o, context_chain, limitations))
+            .partition_result();
+        let matches: Vec<_> = matches.into_iter().flatten().collect();
+        if matches.is_empty() {
+            // Hard to tell which error would be the most relevant, so
+            // pick the first one, if any
+            return errors.pop().map(Err).unwrap_or(Ok(vec![]));
         }
+        Ok(matches)
     }
 
     // TODO: This function is called from two contexts, and this is a reoccuring pain-point
@@ -717,19 +854,22 @@ impl DeviceAnalysis {
                        curr_obj: &DMLCompositeObject,
                        context_chain: &[ContextKey],
                        limitations: &mut HashSet<DLSLimitation>)
-                       -> Option<Vec<DMLObject>> {
+                       -> Result<Vec<DMLObject>, String> {
         // Should be guaranteed by caller responsibility
         if context_chain.is_empty() {
-            internal_error!(
-                "context chain invariant broken at {:?}",
-                curr_obj.identity());
+            return Err(format!("context chain invariant broken at {:?}", curr_obj.identity()));
         }
 
         let (first, rest) = context_chain.split_first().unwrap();
         let next_objs = match first {
-            ContextKey::Structure(sym) =>
-                curr_obj.get_object(sym.name_ref()).cloned()
-                .into_iter().collect(),
+            ContextKey::Structure(sym) => {
+                let res: Vec<_> = curr_obj.get_object(sym.name_ref()).cloned()
+                    .into_iter().collect();
+                if res.is_empty() {
+                    return Err(format!("Failed to find structural object corresponding to {:?} at {:?}", first, curr_obj.identity()));
+                }
+                res
+            },
             ContextKey::Method(sym) => {
                 if let Some(found_obj)
                     = curr_obj.get_object(sym.name_ref()) {
@@ -740,17 +880,16 @@ impl DeviceAnalysis {
                                 vec![found_obj.clone()]
                             }
                         else {
-                            internal_error!(
+                            return Err(format!(
                                 "Context chain suggested {:?} should be a \
                                  method, but it wasn't",
-                                found_obj.resolve(&self.objects));
-                            vec![]
+                                found_obj.resolve(&self.objects)));
                         }
                     }
                 else {
                     // If it is an error to not find an result, handle
                     // it higher up in stack
-                    return None;
+                    return Err(format!("Failed to find method object corresponding to {:?} at {:?}", first, curr_obj.identity()));
                 }
             },
             ContextKey::Template(sym) =>
@@ -765,26 +904,25 @@ impl DeviceAnalysis {
                             limitations.insert(
                                 isolated_template_limitation(&templ.name)
                             );
+                            return Ok(vec![]);
+                        } else {
+                            return self.contexts_to_objs(
+                                templ_impls
+                                    .iter()
+                                    .map(|key|DMLObject::CompObject(*key))
+                                    .collect(),
+                                rest,
+                                limitations);
                         }
-                        return self.contexts_to_objs(
-                            templ_impls
-                                .iter()
-                                .map(|key|DMLObject::CompObject(*key))
-                                .collect(),
-                            rest,
-                            limitations);
                     }
                     else {
-                        internal_error!(
-                            "No template->objects map for {:?}", sym);
-                        vec![]
+                        return Err(format!("No template->objects map for {:?}", sym));
                     }
                 } else {
-                    internal_error!(
+                    return Err(format!(
                         "Wanted to find context {:?} in {:?} which is not \
                          a known template object",
-                        first, curr_obj);
-                    return None;
+                        first, curr_obj));
                 },
             ContextKey::AllWithTemplate(_, templates) =>
                 return self.contexts_to_objs(
@@ -1020,7 +1158,7 @@ impl DeviceAnalysis {
             }
     }
 
-    fn lookup_global_sym(&self, sym: &SimpleSymbol) -> Vec<SymbolRef> {
+    fn lookup_global_sym(&self, sym: &SimpleSymbol) -> Result<Vec<SymbolRef>, String> {
         //TODO: being able to fail a re-match here feels silly. consider
         // adding sub-enum for DMLGlobalSymbolKind
         match sym.kind {
@@ -1029,21 +1167,18 @@ impl DeviceAnalysis {
                     sym.name.as_str()) {
                     // This _should_ be guaranteed, since the SimpleSymbol
                     // ref comes from structure
-                    vec![Arc::clone(self.symbol_info.template_symbols.get(
-                        templ.location.as_ref().unwrap()).unwrap())]
+                    Ok(vec![Arc::clone(self.symbol_info.template_symbols.get(
+                        templ.location.as_ref().unwrap()).unwrap())])
                 } else {
-                    error!("Unexpectedly missing template matching {:?}", sym);
-                    vec![]
+                    Err(format!("Unexpectedly missing template matching {:?}", sym))
                 }
             },
             // TODO: DMLType lookup
-            DMLSymbolKind::Typedef => vec![],
+            DMLSymbolKind::Typedef => Ok(vec![]),
             // TODO: Extern lookup
-            DMLSymbolKind::Extern => vec![],
+            DMLSymbolKind::Extern => Ok(vec![]),
             e => {
-                error!("Internal error: Unexpected symbol kind of global \
-                        symbol: {:?}", e);
-                vec![]
+                Err(format!("Unexpected symbol kind of global symbol: {:?}", e))
             },
         }
     }
@@ -1052,7 +1187,7 @@ impl DeviceAnalysis {
     pub fn lookup_symbols_by_contexted_symbol<'t>(&self,
                                                   sym: &ContextedSymbol<'t>,
                                                   limitations: &mut HashSet<DLSLimitation>)
-        -> Vec<SymbolRef> {
+        -> Result<Vec<SymbolRef>, String> {
         if matches!(sym.symbol.kind, DMLSymbolKind::Template |
                     DMLSymbolKind::Typedef | DMLSymbolKind::Extern)
         {
@@ -1061,36 +1196,28 @@ impl DeviceAnalysis {
 
         debug!("Looking up {:?} in device tree", sym);
 
-        let mb_objs = if sym.contexts.is_empty() {
-            Some(vec![self.get_device_obj().clone()])
+        let objs = if sym.contexts.is_empty() {
+            vec![self.get_device_obj().clone()]
         } else {
             self.context_to_objs(self.get_device_comp_obj(),
                                  sym.contexts.iter()
                                  .cloned().cloned()
                                  .collect::<Vec<ContextKey>>()
                                  .as_slice(),
-                                 limitations)
+                                 limitations)?
         };
 
-        if let Some(objs) = mb_objs {
-            trace!("Found {:?}", objs);
-            let mut refs = ReferenceMatches::new();
-            let _: Vec<_> = objs.into_iter()
-                .map(|o|self.lookup_def_in_obj(&o, sym.symbol, &mut refs))
-                .collect();
-            // We can ignore messages from lookup defs here, as this lookup is
-            // live and reporting additional things from here makes no sense
-            if let Some(matches) = refs.as_matches() {
-                matches.into_iter().collect()
-            } else {
-                vec![]
-            }
+        trace!("Found {:?}", objs);
+        let mut refs = ReferenceMatches::new();
+        let _: Vec<_> = objs.into_iter()
+            .map(|o|self.lookup_def_in_obj(&o, sym.symbol, &mut refs))
+            .collect();
+        // We can ignore messages from lookup defs here, as this lookup is
+        // live and reporting additional things from here makes no sense
+        if let Some(matches) = refs.as_matches() {
+            Ok(matches.into_iter().collect())
         } else {
-            // TODO: Do we need to fall back on globals here? Can we get an
-            // identifier from a spot that is generic enough to refer to a
-            // global, but also is in a context where a global makes sense?
-            internal_error!("Failed to find objects matching {:?}", sym);
-            vec![]
+            Ok(vec![])
         }
     }
 
@@ -1137,6 +1264,33 @@ impl DeviceAnalysis {
         to_ret
     }
 
+    // Returns the method ref in the default chain that contains the loc, if any
+    fn adjust_method_for_pos<'t>(method: &'t Arc<DMLMethodRef>,
+                                 pos: &ZeroFilePosition)
+                            -> Option<&'t Arc<DMLMethodRef>> {
+        if !method.span().contains_pos(pos) {
+            match method.get_default() {
+                Some(DefaultCallReference::Valid(defmeth)) => {
+                    return Self::adjust_method_for_pos(defmeth, pos);
+                },
+                Some(DefaultCallReference::Ambiguous(defmeths)) => {
+                    let mut res: Vec<_> = defmeths.iter()
+                        .filter_map(|df|Self::adjust_method_for_pos(df, pos))
+                        .collect();
+                    if res.len() > 1 {
+                        internal_error!("Invariant broken: multiple methods contain the pos {:?} over method {:?}\nhit methods are: {:?}", pos, method, res);
+                    }
+                    return res.pop();
+                },
+                _ => {
+                    internal_error!("Fell through recursive method noderef resolution for {:?} in method {:?}", pos, method);
+                    return None;
+                }
+            }
+        }
+        Some(method)
+    }
+
     fn resolve_simple_noderef_in_method<'c>(&'c self,
                                             parent_key: &StructureKey,
                                             meth: &Arc<DMLMethodRef>,
@@ -1148,37 +1302,10 @@ impl DeviceAnalysis {
         // When resolving a noderef from an overridden method, meth here will be
         // a bottom-most overriding method. So instead find the correct method
         // by recursing to parent
-        if !meth.span().contains_pos(&node.span.start_position()) {
-            match meth.get_default() {
-                Some(DefaultCallReference::Valid(defmeth)) => {
-                    if let Some(defmeth_sym) = self.get_method_symbol(defmeth,
-                                                                     parent_key) {
-                        self.resolve_noderef_in_symbol(
-                            defmeth_sym,
-                            &NodeRef::Simple(node.clone()),
-                            method_structure,
-                            ref_matches);
-                    }
-                },
-                Some(DefaultCallReference::Ambiguous(defmeths)) => {
-                    for defmeth in defmeths {
-                        if let Some(defmeth_sym) = self.get_method_symbol(defmeth,
-                                                                         parent_key) {
-                            self.resolve_noderef_in_symbol(
-                                defmeth_sym,
-                                &NodeRef::Simple(node.clone()),
-                                method_structure,
-                                ref_matches);
-                        }
-                    }
-                },
-                _ => {
-                    trace!("Fell through recursive method noderef resolution for {:?} in method {:?}", node, meth);
-                }
-            }
-            return;
-        }
         trace!("Resolving simple noderef {:?} in method {:?}", node, meth);
+        let Some(adjusted_meth) = Self::adjust_method_for_pos(meth, &node.span().start_position())
+        else { return; };
+        trace!("After adjusting, looking up in {:?}", adjusted_meth);
         match node.val.as_str() {
             "this" =>
                 ref_matches.add_match(Arc::clone(
@@ -1188,7 +1315,7 @@ impl DeviceAnalysis {
             // NOTE: Here we match a default ref to the symbol of the method decl
             // that we directly overrode. Meaning that further lookups on that symbol
             // will be specialized for that overriding chain
-                if let Some(defref) = meth.get_default() {
+                if let Some(defref) = adjusted_meth.get_default() {
                     match defref {
                         DefaultCallReference::Valid(refr) =>  {
                             if let Some(s) = self.get_method_symbol(refr, parent_key) {
@@ -1203,7 +1330,7 @@ impl DeviceAnalysis {
                                    ref_matches.set_mismatched(Arc::clone(s));
                                 }
                             }
-                             let ambiguous_desc: &'static str 
+                             let ambiguous_desc: &'static str
                             = "Ambiguous default call, you may need to clarify the template ordering or use a template-qualified-method-implementation-call";
                             ref_matches.add_message(DMLError {
                                     span: *node.span(),
@@ -1230,9 +1357,9 @@ impl DeviceAnalysis {
                     // TODO: better error message here, somehow?
                 },
             _ => {
-                let local_sym = method_structure.get(meth.location())
+                let local_sym = method_structure.get(adjusted_meth.location())
                     .and_then(|locals|locals.find_symbol_for_dmlname(node));
-                let arg_sym = meth.args().iter()
+                let arg_sym = adjusted_meth.args().iter()
                     .find(|a|a.name().val == node.val)
                     .map(|a|self.symbol_info.variable_symbols
                          .get(a.loc_span()).unwrap());
@@ -1320,7 +1447,7 @@ impl DeviceAnalysis {
                                             subnode,
                                             method_structure,
                                             &mut intermediate_matches);
-                
+
                 if let Some(syms) = intermediate_matches.as_matches() {
                     let wrapped_simple = NodeRef::Simple(simple.clone());
                     for sym in syms {
@@ -1364,30 +1491,8 @@ impl DeviceAnalysis {
         method_structure: &HashMap<ZeroSpan, RangeEntry>,
         reference_cache: &Mutex<ReferenceCache>)
         -> ReferenceMatches {
-        let mut recursive_cache = HashSet::default();
-        self.find_target_for_reference_without_loop(in_object,
-                                                    reference,
-                                                    method_structure,
-                                                    reference_cache,
-                                                    &mut recursive_cache)
-    }
-
-    fn find_target_for_reference_without_loop<'t>(
-        &self,
-        in_object: Option<&'t DMLObject>,
-        reference: &'t VariableReference,
-        method_structure: &HashMap<ZeroSpan, RangeEntry>,
-        reference_cache: &Mutex<ReferenceCache>,
-        recursive_cache: &'t mut HashSet<(String, &'t VariableReference)>)
-        -> ReferenceMatches {
-        // Prevent us from calling into the exact same reference lookup twice
-        // within one lookup.
-        let path_name = object_to_path_name(in_object, &self.objects);
-        if !recursive_cache.insert((path_name, reference)) {
-            internal_error!("Recursive reference lookup detected at \
-                             {:?} under {:?}", reference, in_object);
-            return ReferenceMatches::new();
-        }
+        // NOTE: There was previously a check here to detect infinite recursion loops in reference
+        // lookups, but it was discarded for being overly memory-intensive
         let index_key = (in_object, reference.clone());
         {
             if let Some(cached_result) = reference_cache.lock().unwrap()
@@ -1454,46 +1559,49 @@ impl DeviceAnalysis {
         report: &mut Vec<DMLError>,
         method_structure: &HashMap<ZeroSpan, RangeEntry>,
         reference_cache: &Mutex<ReferenceCache>,
-        status: &AliveStatus) {
+        status: &AliveStatus) -> AnalysisProcessResult<()> {
         if scope_chain.is_empty() {
             internal_error!("Attempted to match references in empty scope chain");
-            return;
+            return Ok(());
         }
         let current_scope = scope_chain.last().unwrap();
         let context_chain: Vec<ContextKey> = scope_chain
             .iter().map(|s|s.create_context()).collect();
-        let Some(objects_of_scope) = (
+        let objects_of_scope =
             if context_chain.len() == 1 {
                 // Must be device object
-                Some(vec![self.get_device_obj().clone()])
+                vec![self.get_device_obj().clone()]
             } else {
-                self.context_to_objs(
+                match self.context_to_objs(
                     self.get_device_comp_obj(),
                     // Skip first context, it's the device one
                     &context_chain[1..],
                     // Intentionally avoid storing limitations
-                    &mut HashSet::new())
-            }
-        )                 
-        else {
-            debug!("Context chain {:?} corresponded to no objects", context_chain);
-            return;
-        };
+                    &mut HashSet::new()) {
+                        Ok(objs) => objs,
+                        Err(e) => {
+                            internal_error!("Failed to resolve context chain {:?}: {:?}",
+                                            context_chain, e);
+                            return Ok(());
+                        }
+                    }
+            };
         // NOTE: chunk number is arbitrarily picked that benches well
-        report.extend(current_scope.defined_references().par_chunks(25).flat_map(|references|{
-            status.assert_alive();
-            let mut local_reports = vec![];
-            for reference in references {
-                for object in &objects_of_scope {
-                    trace!("In {:?}, Matching {:?}", object, reference);
-                    let symbol_lookup = match &reference.variant {
-                        ReferenceVariant::Variable(var) => self.find_target_for_reference(
-                            Some(object),
-                            var,
-                            method_structure,
-                            reference_cache),
-                            ReferenceVariant::Global(glob) =>
-                            self.lookup_global_from_ref(glob),
+        let errs: AnalysisProcessResult<Vec<_>> = current_scope.defined_references().par_chunks(25).
+            try_fold(|| Vec::new(),
+            |mut local_reports, references|{
+                status.check_alive()?;
+                for reference in references {
+                    for object in &objects_of_scope {
+                        trace!("In {:?}, Matching {:?}", object, reference);
+                        let symbol_lookup = match &reference.variant {
+                            ReferenceVariant::Variable(var) => self.find_target_for_reference(
+                                Some(object),
+                                var,
+                                method_structure,
+                                reference_cache),
+                                ReferenceVariant::Global(glob) =>
+                                self.lookup_global_from_ref(glob),
                         };
 
                         match symbol_lookup.kind {
@@ -1523,15 +1631,18 @@ impl DeviceAnalysis {
                         local_reports.extend(symbol_lookup.messages);
                     }
                 }
-            local_reports.into_par_iter()
-        }).collect::<Vec<_>>());
+                Ok(local_reports)
+            })
+            .try_reduce(Vec::new, |mut vec1, vec2|{ vec1.extend(vec2); Ok(vec1) });
+        report.extend(errs?);
+        Ok(())
     }
 }
 
 pub fn parse_file(path: &Path, file: FileSpec<'_>)
                   -> Result<(parsing::structure::TopAst,
                              ProvisionalsManager,
-                             Vec<DMLError>), Error>
+                             Vec<DMLError>), VFSError>
 {
     let content = &file.file.text;
     let lexer = TokenKind::lexer(content);
@@ -1591,14 +1702,14 @@ impl IsolatedAnalysis {
                clientpath: &PathBuf,
                file: TextFile,
                status: AliveStatus)
-               -> Result<IsolatedAnalysis, Error> {
+               -> AnalysisProcessResult<IsolatedAnalysis> {
         trace!("local analysis: {} at {}", path.as_str(), path.as_str());
-        status.assert_alive();
+        status.check_alive()?;
         let filespec = FileSpec {
             path, file: &file
         };
         let (mut ast, provisionals, mut errors) = parse_file(path, filespec)?;
-        status.assert_alive();
+        status.check_alive()?;
         // Add invalid provisionals to errors
         for duped_provisional in &provisionals.duped_provisionals {
             errors.push(DMLError {
@@ -1654,7 +1765,7 @@ impl IsolatedAnalysis {
 
         let toplevel = collect_toplevel(path, &ast,
                                         &mut errors, filespec);
-        status.assert_alive();
+        status.check_alive()?;
         // sanity, clientpath and path should be the same file
         if CanonPath::from_path_buf(clientpath.clone()).is_none_or(
             |cp|&cp != path) {
@@ -1662,8 +1773,8 @@ impl IsolatedAnalysis {
                     file as the actual path; {:?} vs {:?}",
                    path,
                    clientpath);
-            return Err(Error::InternalError(
-                "Clientpath did not describe the same file as path"));
+            return Err(VFSError::InternalError(
+                "Clientpath did not describe the same file as path").into());
         }
         let top_context = toplevel.to_context();
         let res = IsolatedAnalysis {
@@ -1674,7 +1785,6 @@ impl IsolatedAnalysis {
             clientpath: clientpath.clone(),
             errors,
         };
-        status.assert_alive();
         info!("Produced an isolated analysis of {:?}", res.path);
         debug!("Produced an isolated analysis: {}", res);
         Ok(res)
@@ -1804,8 +1914,7 @@ fn extend_with_templates(maker: &SymbolMaker,
 
 fn new_symbol_from_object(maker: &SymbolMaker,
                           object: &DMLCompositeObject) -> SymbolRef {
-    let all_decl_defs: Vec<ZeroSpan> = object.all_decls.iter().map(
-        |spec|*spec.loc_span()).collect();
+    let all_decl_defs = &object.all_decls;
     symbol_ref!(
         maker,
         object.declloc,
@@ -1815,7 +1924,7 @@ fn new_symbol_from_object(maker: &SymbolMaker,
         declarations = all_decl_defs.clone(),
         implementations = object.used_ineach_locs.clone().into_iter().collect(),
         // TODO: this does not follow from the new definition of bases
-        bases = all_decl_defs)
+        bases = all_decl_defs.clone())
 }
 
 fn new_symbol_from_arg(maker: &SymbolMaker,
@@ -1892,7 +2001,7 @@ fn add_new_symbol_from_method(maker: &SymbolMaker, parent_obj_key: &StructureKey
                 add_new_symbol_from_method(maker, parent_obj_key, default, errors, storage, method_structure);
             }
         }
-    }   
+    }
 }
 
 #[allow(clippy::ptr_arg)]
@@ -1925,7 +2034,7 @@ fn add_new_symbol_from_shallow(maker: &SymbolMaker,
              vec![*hook.loc_span()],
              vec![*hook.loc_span()]),
     };
-    
+
     let new_sym = symbol_ref!(
         maker,
         *shallow.location(),
@@ -1933,7 +2042,7 @@ fn add_new_symbol_from_shallow(maker: &SymbolMaker,
         SymbolSource::DMLObject(
             // TODO: Inefficient clone. Not terribly so, but worth
             // noting
-            DMLObject::ShallowObject(shallow.clone())),
+            DMLObject::ShallowObject(Box::new(shallow.clone()))),
         bases = bases,
         definitions = definitions,
         declarations = declarations);
@@ -1982,7 +2091,7 @@ fn add_method_scope_symbols(maker: &SymbolMaker,
     }
     if !entry.is_empty() {
         method_structure.insert(
-            *method.get_decl().location(),
+            *method.location(),
             entry);
     }
 }
@@ -2236,9 +2345,11 @@ impl DeviceAnalysis {
                         bases: &Vec<IsolatedAnalysis>,
                         method_structure: &HashMap<ZeroSpan, RangeEntry>,
                         errors: &mut Vec<DMLError>,
-                        status: &AliveStatus) {
+                        status: &AliveStatus) -> AnalysisProcessResult<()> {
         info!("Match references");
-        let reference_cache: Mutex<ReferenceCache> = Mutex::default();
+        let reference_cache: Mutex<ReferenceCache> = Mutex::new(
+            ReferenceCache::new(self.reference_cache_max_size)
+        );
         for scope_chain in all_scopes(bases) {
             debug!("Got scope at {:?}", scope_chain.last()
                    .map(|s|s.span().start_position()));
@@ -2246,8 +2357,9 @@ impl DeviceAnalysis {
                                            errors,
                                            method_structure,
                                            &reference_cache,
-                                           status);
+                                           status)?;
         }
+        Ok(())
     }
 
     fn template_object_map(tt_info: &TemplateTraitInfo,
@@ -2281,14 +2393,15 @@ impl DeviceAnalysis {
     pub fn new(root: IsolatedAnalysis,
                timed_bases: Vec<TimestampedStorage<IsolatedAnalysis>>,
                imp_map: HashMap<Import, String>,
+               device_job_options: DeviceAnalysisJobOptions,
                status: AliveStatus)
-               -> Result<DeviceAnalysis, Error> {
+               -> AnalysisProcessResult<DeviceAnalysis> {
         info!("device analysis: {:?}", root.path);
-        status.assert_alive();
+        status.check_alive()?;
 
         if root.toplevel.device.is_none() {
-            return Err(Error::InternalError(
-                "Attempted to device analyze a file without device decl"));
+            return Err(VFSError::InternalError(
+                "Attempted to device analyze a file without device decl").into());
         }
 
         let mut bases: Vec<_> =
@@ -2320,7 +2433,7 @@ impl DeviceAnalysis {
                              .expect("write string error");
                          s
                      }));
-        status.assert_alive();
+        status.check_alive()?;
         let mut errors = vec![];
 
         // Remove duplicate templates
@@ -2334,12 +2447,12 @@ impl DeviceAnalysis {
             let name = &template.obj.object.name.val;
             if unique_templates.contains_key(name.as_str()) {
                 errors.push(DMLError {
-                    span: template.obj.object.span,
+                    span: *template.obj.object.loc_span(),
                     description: format!("Duplicate template name; '{}'", name),
                     severity: Some(DiagnosticSeverity::ERROR),
                     related: vec![(
-                        unique_templates.get(name.as_str()).unwrap()
-                            .obj.object.span,
+                        *unique_templates.get(name.as_str()).unwrap()
+                            .obj.object.loc_span(),
                         "Previously defined here".to_string()
                     )],
                 });
@@ -2356,7 +2469,7 @@ impl DeviceAnalysis {
             trace!("Tracked file {} as template",
                    base.path.to_str().unwrap_or("no path"));
         }
-        status.assert_alive();
+        status.check_alive()?;
         let mut rank_maker = RankMaker::new();
         let tt_info = Self::make_templates_traits(&root.toplevel.start_of_file,
                                                   &mut rank_maker,
@@ -2364,7 +2477,7 @@ impl DeviceAnalysis {
                                                   &files,
                                                   &imp_map,
                                                   &mut errors);
-        status.assert_alive();
+        status.check_alive()?;
         // TODO: catch typedef/traitname overlaps
 
         // TODO: this is where we would do type resolution
@@ -2373,11 +2486,11 @@ impl DeviceAnalysis {
         let device_key = make_device(root.path.as_str(), &root.toplevel,
                                      &tt_info, imp_map, &mut container,
                                      &mut rank_maker, &mut errors).key;
-        status.assert_alive();
+        status.check_alive()?;
         // maps template declaration loc to objects
         let template_object_implementation_map =
             Self::template_object_map(&tt_info, &container);
-        status.assert_alive();
+        status.check_alive()?;
         info!("Generate symbols");
         // Used to handle scoping in methods when looking up local symbols,
         // NOTE: if this meta-information becomes relevant later, move this
@@ -2395,7 +2508,7 @@ impl DeviceAnalysis {
         // symbol order is not correlated to the object iteration order
         bind_method_implementations(&mut symbol_info.method_symbols);
 
-        status.assert_alive();
+        status.check_alive()?;
         // TODO: how do we store type info?
         extend_with_templates(&maker, &mut symbol_info, &tt_info);
         //extend_with_types(&mut symbols, ??)
@@ -2411,12 +2524,13 @@ impl DeviceAnalysis {
             path: root.path.clone(),
             clientpath: root.path.clone().into(),
             dependant_files: bases.iter().map(|b|&b.path).cloned().collect(),
+            reference_cache_max_size: device_job_options.max_reference_cache_size,
         };
-        status.assert_alive();
+        status.check_alive()?;
         device.match_references(&bases,
                                 &method_structure,
                                 &mut errors,
-                                &status);
+                                &status)?;
 
         // NOTE: This is when we previously pre-calculated the ref->symbol map,
         // however the up-front analysis cost of this was too heavy
@@ -2433,7 +2547,7 @@ impl DeviceAnalysis {
                 .push(error);
         }
         trace!("Errors are {:?}", device.errors);
-        status.assert_alive();
+        status.check_alive()?;
         info!("Done with device");
         Ok(device)
     }
