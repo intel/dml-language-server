@@ -1263,7 +1263,7 @@ impl DeviceAnalysis {
                     return None;
                 }
             }
-        }    
+        }
         Some(method)
     }
 
@@ -1306,7 +1306,7 @@ impl DeviceAnalysis {
                                    ref_matches.set_mismatched(Arc::clone(s));
                                 }
                             }
-                             let ambiguous_desc: &'static str 
+                             let ambiguous_desc: &'static str
                             = "Ambiguous default call, you may need to clarify the template ordering or use a template-qualified-method-implementation-call";
                             ref_matches.add_message(DMLError {
                                     span: *node.span(),
@@ -1423,7 +1423,7 @@ impl DeviceAnalysis {
                                             subnode,
                                             method_structure,
                                             &mut intermediate_matches);
-                
+
                 if let Some(syms) = intermediate_matches.as_matches() {
                     let wrapped_simple = NodeRef::Simple(simple.clone());
                     for sym in syms {
@@ -1605,7 +1605,7 @@ impl DeviceAnalysis {
                                 (),
                         }
                         local_reports.extend(symbol_lookup.messages);
-                    }  
+                    }
                 }
                 Ok(local_reports)
             })
@@ -1977,7 +1977,7 @@ fn add_new_symbol_from_method(maker: &SymbolMaker, parent_obj_key: &StructureKey
                 add_new_symbol_from_method(maker, parent_obj_key, default, errors, storage, method_structure);
             }
         }
-    }   
+    }
 }
 
 #[allow(clippy::ptr_arg)]
@@ -2010,7 +2010,7 @@ fn add_new_symbol_from_shallow(maker: &SymbolMaker,
              vec![*hook.loc_span()],
              vec![*hook.loc_span()]),
     };
-    
+
     let new_sym = symbol_ref!(
         maker,
         *shallow.location(),
