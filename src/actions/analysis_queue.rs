@@ -484,7 +484,7 @@ impl IsolatedAnalysisJob {
 pub struct DeviceAnalysisJob {
     bases: Vec<TimestampedStorage<IsolatedAnalysis>>,
     root: IsolatedAnalysis,
-    import_sources: HashMap<Import, String>,
+    import_sources: HashMap<Import, CanonPath>,
     timestamp: SystemTime,
     report: ResultChannel,
     notify: channel::Sender<ServerToHandle>,
@@ -530,7 +530,7 @@ impl DeviceAnalysisJob {
                            });
         trace!("Missing bases are {:?}", missing.iter()
                .map(|a|a.as_str()).collect::<Vec<&str>>());
-        let mut import_sources: HashMap<Import, String> = HashMap::default();
+        let mut import_sources: HashMap<Import, CanonPath> = HashMap::default();
         trace!("Dependency map is {:?}", analysis.dependencies);
         trace!("Root is {:?}", root);
         for base in &bases {

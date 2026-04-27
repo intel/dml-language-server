@@ -2338,7 +2338,7 @@ impl DeviceAnalysis {
                              unique_templates: &HashMap<
                                      &str, &ObjectDecl<Template>>,
                              files: &HashMap<&str, &TopLevel>,
-                             imp_map: &HashMap<Import, String>,
+                             imp_map: &HashMap<Import, CanonPath>,
                              errors: &mut Vec<DMLError>)
                              -> TemplateTraitInfo {
         info!("Rank templates");
@@ -2402,7 +2402,7 @@ impl DeviceAnalysis {
 
     pub fn new(root: IsolatedAnalysis,
                timed_bases: Vec<TimestampedStorage<IsolatedAnalysis>>,
-               imp_map: HashMap<Import, String>,
+               imp_map: HashMap<Import, CanonPath>,
                device_job_options: DeviceAnalysisJobOptions,
                status: AliveStatus)
                -> AnalysisProcessResult<DeviceAnalysis> {
@@ -2493,7 +2493,7 @@ impl DeviceAnalysis {
         // TODO: this is where we would do type resolution
         let mut container = StructureContainer::default();
         info!("Make device");
-        let device_key = make_device(root.path.as_str(), &root.toplevel,
+        let device_key = make_device(&root.path, &root.toplevel,
                                      &tt_info, imp_map, &mut container,
                                      &mut rank_maker, &mut errors).key;
         status.check_alive()?;
