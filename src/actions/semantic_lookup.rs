@@ -77,12 +77,32 @@ struct AnalysisInfo <'a> {
     pub device_analysises: Vec<&'a DeviceAnalysis>,
 }
 
+impl std::fmt::Debug for AnalysisInfo<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AnalysisInfo")
+        .field("isolated_analysis", &self.isolated_analysis.clientpath.display())
+        .field("device analysis paths", &self.device_analysises.iter().map(|a|a.clientpath.display()).collect::<Vec<_>>())
+        .finish()
+    }
+}
+
 #[allow(dead_code)]
 struct SemanticLookup<'t> {
     pub stored_symbols: DeviceSymbols<'t>,
     pub found_ref: Option<Reference>,
     pub analysis_info: AnalysisInfo<'t>,
     pub recognized_limitations: HashSet<DLSLimitation>,
+}
+
+impl std::fmt::Debug for SemanticLookup<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SemanticLookup")
+        .field("stored_symbols", &self.stored_symbols.iter().map(|(a, syms)| (a.clientpath.display(), syms.iter().map(|s|s.lock().unwrap().medium_debug_info()).collect::<Vec<_>>())).collect::<Vec<_>>())
+        .field("found_ref", &self.found_ref.as_ref())
+        .field("analysis_info", &self.analysis_info)
+        .field("recognized_limitations", &self.recognized_limitations)
+        .finish()
+    }
 }
 
 impl <'t> SemanticLookup<'t> {
@@ -400,6 +420,7 @@ pub fn references_at_fp(context: &InitActionContext<impl Output>,
         &analysis_lock,
         context)?;
     mem::swap(relevant_limitations, &mut semantic_lookup.recognized_limitations);
+    debug!("Lookup at {:?} is {:?}", fp, semantic_lookup);
     Ok(semantic_lookup.symbols()
        .into_iter()
        .flat_map(|s|s.lock().unwrap().references.clone())
