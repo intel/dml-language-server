@@ -517,6 +517,8 @@ struct ReferenceCache {
     underlying_cache: LinkedHashMap<ReferenceCacheKey, ReferenceMatches>,
     used_size: usize,
     allowed_size: usize,
+    enabled: bool,
+    num_insert_failures: usize,
 }
 
 fn object_to_path_name(object: Option<&DMLObject>, container: &StructureContainer) -> String {
@@ -544,10 +546,15 @@ fn object_to_path_name_aux(object: Option<&DMLObject>, container: &StructureCont
 
 impl ReferenceCache {
     fn new(size: usize) -> Self {
+        if size == 0 {
+            debug!("Auto-disabled reference cache due to designated size being 0");
+        }
         ReferenceCache {
             underlying_cache: LinkedHashMap::new(),
             used_size: 0,
             allowed_size: size,
+            enabled: size > 0,
+            num_insert_failures: 0,
         }
     }
 
@@ -591,6 +598,9 @@ impl ReferenceCache {
                container: &StructureContainer,
                method_structure: &HashMap<ZeroSpan, RangeEntry>)
                -> Option<&ReferenceMatches> {
+        if !self.enabled {
+            return None;
+        }
         let agn_key = Self::convert_to_key(key, container, method_structure);
         match self.underlying_cache.raw_entry_mut().from_key(&agn_key) {
             hashlink::linked_hash_map::RawEntryMut::Occupied(mut e) => {
@@ -629,6 +639,9 @@ impl ReferenceCache {
                   container: &StructureContainer,
                   method_structure: &HashMap<ZeroSpan, RangeEntry>)
     {
+        if !self.enabled {
+            return;
+        }
         let agn_key = Self::convert_to_key(key, container, method_structure);
         if let Some(previous_result) = self.underlying_cache.get(&agn_key) {
             if val != *previous_result {
@@ -639,6 +652,11 @@ impl ReferenceCache {
         let added_size = Self::size_of_key_val(&agn_key, &val);
         if let Err(e) = self.prepare_space(added_size) {
             internal_error!("Failed to insert '{:?}' into reference cache: {}", agn_key, e);
+            self.num_insert_failures += 1;
+            if self.num_insert_failures > 10 {
+                info!("Auto-disabling reference cache due to repeated insert failures, consider increasing the cache size limit");
+                self.enabled = false;
+            }
             return;
         }
         self.used_size += added_size;

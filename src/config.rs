@@ -138,7 +138,7 @@ pub struct Config {
     pub analysis_retain_duration: Option<f64>,
     pub new_device_context_mode: DeviceContextMode,
     /// Max size of the data in the reference cache while resolving references,
-    /// does not include cache overhead
+    /// does not include cache overhead. Setting to 0 disables the cache
     pub max_reference_cache_size: usize,
 }
 
