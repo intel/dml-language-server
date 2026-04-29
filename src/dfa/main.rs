@@ -13,7 +13,6 @@ use std::io::Write;
 use clap::{command, arg, Arg, ArgAction};
 
 use dls::dfa::ClientInterface;
-
 use log::debug;
 
 pub fn main() {

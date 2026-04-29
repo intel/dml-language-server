@@ -1,7 +1,7 @@
 //  © 2024 Intel Corporation
 //  SPDX-License-Identifier: Apache-2.0 and MIT
 //! Contains utilities and file management
-use log::{debug, error, trace};
+use crate::logging::{debug, error, trace};
 
 use std::collections::HashMap;
 use std::fs;

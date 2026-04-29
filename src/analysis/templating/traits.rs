@@ -23,7 +23,7 @@ use crate::analysis::templating::topology::Rank;
 
 use crate::analysis::DeclarationSpan;
 
-use log::{debug, error, trace};
+use crate::logging::{debug, error, trace};
 use lsp_types::DiagnosticSeverity;
 
 #[derive(Debug, Clone, PartialEq, Eq)]

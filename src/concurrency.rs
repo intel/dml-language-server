@@ -4,6 +4,8 @@ use std::thread;
 use std::collections::HashMap;
 use std::sync::{Arc, Weak};
 
+use crate::analysis::AnalysisError;
+
 use crossbeam::channel::{bounded, select, Receiver, Select, Sender};
 
 /// `ConcurrentJob` is a handle for some long-running computation
@@ -48,9 +50,11 @@ impl AliveStatus {
     pub fn is_alive(&self) -> bool {
         self.0.strong_count() > 0
     }
-    pub fn assert_alive(&self) {
-        if !self.is_alive() {
-            panic!("Sub-job killed");
+    pub fn check_alive(&self) -> Result<(), AnalysisError> {
+        if self.is_alive() {
+            Ok(())
+        } else {
+            Err(AnalysisError::Cancelled)
         }
     }
 }

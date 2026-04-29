@@ -35,7 +35,7 @@ Once you have this basic support in place, the hard work begins:
     (note that you need to support dynamic registration of
     "didChangeConfiguration" and support the "workspace/configuration" request on the client
     for pull-style updates)
-  - For the config options, see [config.rs](./src/config.rs#L99-L111)
+  - For the config options, see [config.rs](./src/config.rs#L123-L141)
 * Check for and install the DLS
   - Download the latest [binary](https://github.com/intel/dml-language-server/actions/workflows/rust.yml).
     Currently, official releases are not being made from a public-facing repository. So you should on occassion

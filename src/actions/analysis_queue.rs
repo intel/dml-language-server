@@ -13,6 +13,8 @@ use std::sync::{Arc, Mutex};
 use std::sync::atomic::AtomicBool;
 use std::thread::{self, Thread};
 use std::time::SystemTime;
+
+use crate::actions::DeviceAnalysisJobOptions;
 use crate::lint::LintCfg;
 use crate::lint::LinterAnalysis;
 
@@ -20,7 +22,7 @@ use itertools::{Either, Itertools};
 
 use crate::actions::analysis_storage::{AnalysisStorage, ResultChannel,
                                        TimestampedStorage, timestamp_is_newer};
-use crate::analysis::{DeviceAnalysis, IsolatedAnalysis};
+use crate::analysis::{AnalysisError, DeviceAnalysis, IsolatedAnalysis};
 use crate::analysis::structure::objects::Import;
 
 use crate::concurrency::JobToken;
@@ -28,7 +30,7 @@ use crate::file_management::CanonPath;
 use crate::vfs::{TextFile, Vfs};
 use crate::server::ServerToHandle;
 
-use log::{info, debug, trace, error};
+use crate::logging::{info, debug, trace, error};
 use crossbeam::channel;
 
 // Maps in-process device jobs the timestamps of their dependencies
@@ -76,7 +78,7 @@ impl AnalysisQueue {
                               tracking_token: JobToken) -> bool {
         match LinterJob::new(tracking_token, storage, cfg, vfs, file) {
             Ok(newjob) => {
-                self.enqueue(QueuedJob::FileLinterJob(newjob));
+                self.enqueue(newjob.into());
                 true
             },
             Err(desc) => {
@@ -104,7 +106,7 @@ impl AnalysisQueue {
             Ok(newjob) => {
                 debug!("Enqueued isolated analysis job of {}",
                        newjob.path.as_str());
-                self.enqueue(QueuedJob::IsolatedAnalysisJob(newjob));
+                self.enqueue(newjob.into());
                 true
             },
             Err(desc) => {
@@ -119,8 +121,9 @@ impl AnalysisQueue {
                               storage: &mut AnalysisStorage,
                               device: &CanonPath,
                               bases: HashSet<CanonPath>,
-                              tracking_token: JobToken) -> bool {
-        match DeviceAnalysisJob::new(tracking_token, storage, bases, device) {
+                              tracking_token: JobToken,
+                              device_analysis_options: DeviceAnalysisJobOptions) -> bool {
+        match DeviceAnalysisJob::new(tracking_token, storage, bases, device, device_analysis_options) {
             Ok(newjob) => {
                 if let Some((_, previous_bases)) = self.device_tracker
                     .lock().unwrap()
@@ -146,7 +149,7 @@ impl AnalysisQueue {
                         }
                     }
                 debug!("Enqueued device analysis job of {:?}", device);
-                self.enqueue(QueuedJob::DeviceAnalysisJob(newjob));
+                self.enqueue(newjob.into());
                 true
             },
             Err(desc) => {
@@ -360,14 +363,31 @@ impl Drop for AnalysisQueue {
     }
 }
 
-#[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 enum QueuedJob {
-    IsolatedAnalysisJob(IsolatedAnalysisJob),
-    FileLinterJob(LinterJob),
-    DeviceAnalysisJob(DeviceAnalysisJob),
+    IsolatedAnalysisJob(Box<IsolatedAnalysisJob>),
+    FileLinterJob(Box<LinterJob>),
+    DeviceAnalysisJob(Box<DeviceAnalysisJob>),
     Sentinel,
     Terminate,
+}
+
+impl From<IsolatedAnalysisJob> for QueuedJob {
+    fn from(job: IsolatedAnalysisJob) -> Self {
+        QueuedJob::IsolatedAnalysisJob(Box::new(job))
+    }
+}
+
+impl From<LinterJob> for QueuedJob {
+    fn from(job: LinterJob) -> Self {
+        QueuedJob::FileLinterJob(Box::new(job))
+    }
+}
+
+impl From<DeviceAnalysisJob> for QueuedJob {
+    fn from(job: DeviceAnalysisJob) -> Self {
+        QueuedJob::DeviceAnalysisJob(Box::new(job))
+    }
 }
 
 impl QueuedJob {
@@ -439,7 +459,7 @@ impl IsolatedAnalysisJob {
                     self.context.clone()
                 };
                 let import_paths = analysis.get_import_names();
-                self.report.send(TimestampedStorage::make_isolated_result(
+                self.report.send(TimestampedStorage::make_timestamped(
                     self.timestamp,
                     analysis)).ok();
                 self.notify.send(ServerToHandle::IsolatedAnalysisDone(
@@ -448,9 +468,12 @@ impl IsolatedAnalysisJob {
                     import_paths
                 )).ok();
             },
-            Err(e) => {
-                trace!("Failed to create isolated analysis: {}", e);
+            Err(AnalysisError::VFSError(e)) => {
+                error!("Failed to create isolated analysis: {}", e);
                 // TODO: perhaps collect this for reporting to server
+            },
+            Err(AnalysisError::Cancelled) => {
+                debug!("Isolated analysis of {} was cancelled", self.path.as_str());
             }
         }
     }
@@ -467,13 +490,15 @@ pub struct DeviceAnalysisJob {
     notify: channel::Sender<ServerToHandle>,
     hash: u64,
     token: JobToken,
+    device_analysis_options: DeviceAnalysisJobOptions,
 }
 
 impl DeviceAnalysisJob {
     fn new(token: JobToken,
            analysis: &mut AnalysisStorage,
            bases: HashSet<CanonPath>,
-           root: &CanonPath)
+           root: &CanonPath,
+           device_analysis_options: DeviceAnalysisJobOptions)
            -> Result<DeviceAnalysisJob, String> {
         info!("Creating a device analysis job of {:?}", root);
         // TODO: Use some sort of timestamp from VFS instead of systemtime
@@ -526,10 +551,12 @@ impl DeviceAnalysisJob {
             notify: analysis.notify.clone(),
             hash,
             token,
+            device_analysis_options,
         })
     }
 
     fn process(self) {
+        let root_path = self.root.path.clone();
         info!("Started work on deviceanalysis of {:?}, depending on {:?}",
               self.root.path,
               self.bases.iter().map(|i|&i.stored.path)
@@ -537,19 +564,23 @@ impl DeviceAnalysisJob {
         match DeviceAnalysis::new(self.root,
                                   self.bases,
                                   self.import_sources,
+                                  self.device_analysis_options,
                                   self.token.status) {
             Ok(analysis) => {
                 info!("Finished device analysis of {:?}", analysis.name);
                 self.notify.send(ServerToHandle::DeviceAnalysisDone(
                     analysis.path.clone())).ok();
-                self.report.send(TimestampedStorage::make_device_result(
+                self.report.send(TimestampedStorage::make_timestamped(
                     self.timestamp,
                     analysis)).ok();
             },
             // In general, an analysis shouldn't fail to be created
-            Err(e) => {
-                trace!("Failed to create device analysis: {}", e);
+            Err(AnalysisError::VFSError(e)) => {
+                error!("Failed to create device analysis: {}", e);
                 // TODO: perhaps collect this for reporting to server
+            },
+            Err(AnalysisError::Cancelled) => {
+                debug!("Device analysis of {} was cancelled", root_path.as_str());
             }
         }
     }
@@ -606,14 +637,17 @@ impl LinterJob {
                                   self.ast,
                                   self.token.status) {
             Ok(analysis) => {
-                self.report.send(TimestampedStorage::make_linter_result(
+                self.report.send(TimestampedStorage::make_timestamped(
                     self.timestamp,
                     analysis)).ok();
                 self.notify.send(ServerToHandle::LinterDone(
                     self.file.clone())).ok();
             },
-            Err(e) => {
-                debug!("Failed to create isolated linter analysis: {}", e);
+            Err(AnalysisError::VFSError(e)) => {
+                error!("Failed to create isolated linter analysis: {}", e);
+            },
+            Err(AnalysisError::Cancelled) => {
+                debug!("Linter analysis of {} was cancelled", self.file.as_str());
             }
         }
     }

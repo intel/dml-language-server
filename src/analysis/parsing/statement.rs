@@ -1,6 +1,6 @@
 //  © 2024 Intel Corporation
 //  SPDX-License-Identifier: Apache-2.0 and MIT
-use log::error;
+use crate::logging::error;
 
 use crate::lint::rules::indentation::{IndentEmptyLoopArgs,
     IndentContinuationLineArgs};
@@ -666,32 +666,51 @@ impl TreeElement for ForPostElement {
     }
 }
 
-#[allow(clippy::large_enum_variant)]
+#[derive(Debug, Clone, PartialEq)]
+pub struct ForPreDeclaration {
+    pub decl_kind: LeafToken,
+    pub declarations: VarDecl,
+    pub initializer: Option<(LeafToken, Initializer)>
+}
+
+impl TreeElement for ForPreDeclaration {
+    fn range(&self) -> ZeroRange {
+        Range::combine(self.decl_kind.range(),
+                       match &self.initializer {
+                           Some((_, init)) => init.range(),
+                           None => self.declarations.range(),
+                       })
+    }
+    fn subs(&self) -> TreeElements<'_> {
+        create_subs!(&self.decl_kind, &self.declarations, &self.initializer)
+    }
+    fn post_parse_sanity(&self, _file: &TextFile) -> Vec<LocalDMLError> {
+        self.declarations.ensure_named()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum ForPre {
-    Declaration(LeafToken, VarDecl, Option<(LeafToken, Initializer)>),
+    Declaration(Box<ForPreDeclaration>),
     Post(ForPost),
 }
 
 impl TreeElement for ForPre {
     fn range(&self) -> ZeroRange {
         match self {
-            Self::Declaration(loc, vardecls, init) =>
-                Range::combine(Range::combine(loc.range(), vardecls.range()),
-                               init.range()),
+            Self::Declaration(forpre) => forpre.range(),
             Self::Post(forpost) => forpost.range(),
         }
     }
     fn subs(&self) -> TreeElements<'_> {
         match self {
-            Self::Declaration(loc, vardecls, init) =>
-                create_subs!(loc, vardecls, init),
+            Self::Declaration(forpre) => create_subs!(forpre.as_ref()),
             Self::Post(forpost) => create_subs!(forpost),
         }
     }
     fn post_parse_sanity(&self, _file: &TextFile) -> Vec<LocalDMLError> {
-        if let ForPre::Declaration(_, cdecl, _) = self {
-            cdecl.ensure_named()
+        if let ForPre::Declaration(forpre) = self {
+            forpre.post_parse_sanity(_file)
         } else {
             vec![]
         }
@@ -824,7 +843,7 @@ fn parse_forpre(context: &ParseContext, stream: &mut FileParser<'_>, file_info: 
     match new_context.peek_kind(stream) {
         Some(TokenKind::Local | TokenKind::Saved | TokenKind::Session) => {
             let decl_kind = new_context.next_leaf(stream);
-            let decls = parse_vardecl(&new_context, stream, file_info);
+            let declarations = parse_vardecl(&new_context, stream, file_info);
             let initializer = match new_context.peek_kind(stream) {
                 Some(TokenKind::Assign) => {
                     let equals = new_context.next_leaf(stream);
@@ -834,7 +853,11 @@ fn parse_forpre(context: &ParseContext, stream: &mut FileParser<'_>, file_info: 
                 },
                 _ => None,
             };
-            ForPre::Declaration(decl_kind, decls, initializer)
+            ForPre::Declaration(Box::new(ForPreDeclaration {
+                decl_kind,
+                declarations,
+                initializer,
+            }))
         },
         _ => ForPre::Post(parse_forpost(&new_context, stream, file_info)),
     }
@@ -1003,12 +1026,11 @@ fn parse_switchhashif(context: &ParseContext, stream: &mut FileParser<'_>, file_
     }
 }
 
-#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum SwitchCase {
     Statement(Statement),
     Case(LeafToken, Expression, LeafToken),
-    HashIf(SwitchHashIf),
+    HashIf(Box<SwitchHashIf>),
     Default(LeafToken, LeafToken),
 }
 
@@ -1028,7 +1050,7 @@ impl TreeElement for SwitchCase {
         match self {
             Self::Statement(content) => create_subs!(content),
             Self::Case(case, expr, colon) => create_subs!(case, expr, colon),
-            Self::HashIf(content) => create_subs!(content),
+            Self::HashIf(content) => create_subs!(content.as_ref()),
             Self::Default(default, colon) => create_subs!(default, colon),
         }
     }
@@ -1050,7 +1072,7 @@ fn parse_switchcase(context: &ParseContext, stream: &mut FileParser<'_>, file_in
     let mut new_context = context.enter_context(doesnt_understand_tokens);
     match new_context.peek_kind(stream) {
         Some(TokenKind::HashIf) => SwitchCase::HashIf(
-            parse_switchhashif(&new_context, stream, file_info)),
+            Box::new(parse_switchhashif(&new_context, stream, file_info))),
         Some(TokenKind::Case) => {
             let case = new_context.next_leaf(stream);
             let mut colon_context = new_context.enter_context(
@@ -2315,7 +2337,7 @@ mod test {
                 make_leaf(zero_range(0, 0, 21, 21),
                           zero_range(0, 0, 21, 22),
                           TokenKind::Colon)),
-            SwitchCase::HashIf(hashif),
+            SwitchCase::HashIf(Box::new(hashif)),
             SwitchCase::Statement(
                 make_ast(
                     zero_range(0, 0, 43, 47),

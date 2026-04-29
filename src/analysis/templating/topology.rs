@@ -10,7 +10,7 @@ use std::sync::Mutex;
 
 use itertools::Itertools;
 use lazy_static::lazy_static;
-use log::{debug, error, trace};
+use crate::logging::{debug, error, trace};
 use lsp_types::DiagnosticSeverity;
 
 use crate::analysis::DeclarationSpan;
@@ -175,6 +175,7 @@ pub fn create_templates_traits<'t>(
     let mut templates = HashMap::default();
     let mut traits = HashMap::default();
     debug!("template order is: {:?}", order);
+
     for templname in order {
         let templ = &template_specs[templname];
         let rankinf = &rank_struct[templname];
@@ -282,6 +283,8 @@ pub fn dependencies<'t>(statements: &'t StatementSpec,
             InferiorVariant::Object(obj) => {
                 queue.extend(obj.spec.objects.iter().map(
                     |o|InferiorVariant::Object(o)));
+                queue.push(InferiorVariant::ImplicitIs(
+                    &obj.obj.kind));
                 queue.extend(obj.spec.ineachs.iter().map(
                     |o|InferiorVariant::InEach(o)));
                 queue.extend(obj.spec.instantiations.iter().map(

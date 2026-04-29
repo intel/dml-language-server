@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::iter;
 use std::sync::Arc;
 
-use log::{debug, trace, error};
+use crate::logging::{debug, trace, error};
 use lsp_types::DiagnosticSeverity;
 use slotmap::{DefaultKey, Key, SlotMap};
 
@@ -321,7 +321,6 @@ pub fn make_device<'t>(path: &str,
         &device_decl.name,
         device_decl.decl.kind,
         vec![],
-        vec![],
         vec![faux_spec],
         &InEachSpec::default(),
         None,
@@ -365,13 +364,12 @@ pub trait DMLHierarchyMember : DMLNamedMember {
 // underlying objects carry their own multiple definitions
 // This means we might miss some cases where we refer to a composite object
 // that does not actually exist
-#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DMLObject {
     // This is a key to be used in the structure dictionary for
     // current device analysis
     CompObject(StructureKey),
-    ShallowObject(DMLShallowObject),
+    ShallowObject(Box<DMLShallowObject>),
 }
 
 impl DMLObject {
@@ -562,15 +560,52 @@ impl DMLHierarchyMember for DMLShallowObject {
     }
 }
 
-#[allow(clippy::large_enum_variant)]
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum DMLShallowObjectVariant {
     Method(Arc<DMLMethodRef>),
     Session(DMLVariable),
     Saved(DMLVariable),
     Parameter(DMLParameter),
     Constant(Constant),
-    Hook(ObjectDecl<Hook>),
+    Hook(Box<ObjectDecl<Hook>>),
+}
+
+impl std::fmt::Debug for DMLShallowObjectVariant {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DMLShallowObjectVariant::Method(m) => f
+                .debug_struct("Method")
+                .field("name", &m.identity())
+                .field("location", m.location())
+                .field("trait", &m.template_ref.as_ref().map(|t|t.name.to_string()))
+                .finish(),
+            DMLShallowObjectVariant::Session(s) => f
+                .debug_struct("Session")
+                .field("name", s.name())
+                .field("location", s.loc_span())
+                .finish(),
+            DMLShallowObjectVariant::Saved(s) => f
+                .debug_struct("Saved")
+                .field("name", s.name())
+                .field("location", s.loc_span())
+                .finish(),
+            DMLShallowObjectVariant::Parameter(p) => f
+                .debug_struct("Parameter")
+                .field("name", p.name())
+                .field("location", p.loc_span())
+                .finish(),
+            DMLShallowObjectVariant::Constant(c) => f
+                .debug_struct("Constant")
+                .field("name", c.name())
+                .field("location", c.loc_span())
+                .finish(),
+            DMLShallowObjectVariant::Hook(h) => f
+                .debug_struct("Hook")
+                .field("name", h.obj.name())
+                .field("location", h.obj.loc_span())
+                .finish(),
+        }
+    }
 }
 
 impl DMLShallowObjectVariant {
@@ -808,14 +843,12 @@ pub struct DMLCompositeObject {
     pub declloc: ZeroSpan,
     // These are the ranges of the objectspecs declared with the
     // objects name
-    pub all_decls: Vec<Arc<ObjectSpec>>,
+    pub all_decls: Vec<ZeroSpan>,
     pub identity: DMLString,
     // Reference to self, let's us pass obj refs rather than
     // keys to functions unless necessary
     pub key: StructureKey,
     pub kind: CompObjectKind,
-    // These are the full objectspecs used to define this object, non-semantic
-    pub definitions: Vec<Arc<ObjectSpec>>,
     // These are the immediate parents
     pub templates: HashMap<String, Arc<DMLTemplate>>,
     pub parent: Option<StructureKey>,
@@ -833,28 +866,28 @@ impl DMLCompositeObject {
     }
     pub fn get_param<T>(&self, name: T) -> Option<&DMLParameter>
     where T: std::borrow::Borrow<str> + Sized {
-        if let Some(DMLObject::ShallowObject(
-            DMLShallowObject {
+        self.get_object(name).and_then(|obj|
+            if let Some(DMLShallowObject {
                 variant: DMLShallowObjectVariant::Parameter(param),
                 ..
-            })) = self.get_object(name) {
-            Some(param)
-        } else {
-            None
-        }
+            }) = obj.as_shallow() {
+                Some(param)
+            } else {
+                None
+            })
     }
 
     pub fn get_method<T>(&self, name: T) -> Option<Arc<DMLMethodRef>>
     where T: std::borrow::Borrow<str> + Sized {
-        if let Some(DMLObject::ShallowObject(
-            DMLShallowObject {
+        self.get_object(name).and_then(|obj|
+            if let Some(DMLShallowObject {
                 variant: DMLShallowObjectVariant::Method(meth),
                 ..
-            })) = self.get_object(name) {
-            Some(Arc::clone(meth))
-        } else {
-            None
-        }
+            }) = obj.as_shallow() {
+                Some(Arc::clone(meth))
+            } else {
+                None
+            })
     }
 
     pub fn dimensions(&self, container: &StructureContainer) -> usize {
@@ -873,15 +906,16 @@ impl DMLCompositeObject {
     pub fn parameters<'t>(&'t self)
                           -> impl Iterator<Item=&'t DMLParameter> + 't {
         self.components.values().filter_map(
-            |c| if let DMLObject::ShallowObject(
-                DMLShallowObject {
+            |c|c.as_shallow().and_then(|s|
+            if let DMLShallowObject {
                     variant: DMLShallowObjectVariant::Parameter(p),
                     ..
-                }) = c {
+                } = s{
                 Some(p)
             } else {
                 None
             })
+        )
     }
 
     pub fn add_composite_component(&mut self,
@@ -909,10 +943,10 @@ impl DMLCompositeObject {
                    });
         } else {
             self.components.insert(child.identity().to_string(),
-                                   DMLObject::ShallowObject(DMLShallowObject {
+                                   DMLObject::ShallowObject(Box::new(DMLShallowObject {
                                        parent: self.key,
                                        variant: child,
-                                   }));
+                                   })));
         }
     }
 }
@@ -1047,7 +1081,7 @@ fn add_hooks(obj: &mut DMLCompositeObject,
         if used {
             let (_, hook) = hook_decls.swap_remove(0);
             obj.add_shallow_component(
-                DMLShallowObjectVariant::Hook(hook));
+                DMLShallowObjectVariant::Hook(Box::new(hook)));
         }
     }
 }
@@ -1328,7 +1362,7 @@ fn resolve_parameter(obj_loc: &ZeroSpan,
 }
 
 fn create_object_instance(loc: Option<ZeroSpan>,
-                          all_decls: Vec<Arc<ObjectSpec>>,
+                          all_decls: &Vec<Arc<ObjectSpec>>,
                           identity: &DMLString,
                           kind: CompObjectKind,
                           array_info: &[ArrayDim],
@@ -1349,12 +1383,11 @@ fn create_object_instance(loc: Option<ZeroSpan>,
            all_decls);
     let obj = DMLCompositeObject {
         declloc: loc.unwrap_or(identity.span),
-        all_decls,
+        all_decls: all_decls.iter().map(|s|*s.loc_span()).collect(),
         identity: identity.clone(),
         used_ineach_locs: vec![],
         key: StructureKey::null(),
         kind,
-        definitions: vec![],
         templates: HashMap::default(),
         parent: None,
         arraydimvars: array_info.to_vec(),
@@ -1743,7 +1776,6 @@ fn merge_composite_subobj<'c>(name: String,
                 &auth_obj.obj.object.name,
                 *auth_kind,
                 array_info.iter().map(|(d, _)|d).cloned().collect(),
-                specs.iter().map(|(_, s)|Arc::clone(s)).collect(),
                 object_specs,
                 parent_each_stmts,
                 parent_key,
@@ -2229,7 +2261,6 @@ pub fn make_object(loc: ZeroSpan,
                    identity: &DMLString,
                    kind: CompObjectKind,
                    array_info: Vec<ArrayDim>,
-                   merged_obj_specs: Vec<Arc<ObjectSpec>>,
                    mut obj_specs: Vec<Arc<ObjectSpec>>,
                    parent_each_stmts: &InEachSpec,
                    parent_key: Option<StructureKey>,
@@ -2263,7 +2294,7 @@ pub fn make_object(loc: ZeroSpan,
            symbols.keys().map(|k|k.as_str()).collect::<Vec<&str>>());
 
     let new_obj_key = create_object_instance(Some(loc),
-                                             merged_obj_specs,
+                                             &obj_specs,
                                              identity, kind,
                                              &array_info, container);
 
@@ -2273,7 +2304,6 @@ pub fn make_object(loc: ZeroSpan,
 
     {
         let new_obj = container.get_mut(new_obj_key).unwrap();
-        new_obj.definitions = obj_specs.clone();
         new_obj.used_ineach_locs = used_ineach_locs;
         add_templates(new_obj, &obj_specs);
         add_constants(new_obj, constants);
