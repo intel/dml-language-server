@@ -959,6 +959,375 @@ impl RequestAction for GetKnownContextsRequest {
     }
 }
 
+// ---- SCIP Export Request ----
+
+#[derive(Debug, Clone)]
+pub struct ExportScipRequest;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExportScipParams {
+    /// Device paths to export SCIP for. If empty, exports all known devices.
+    pub devices: Option<Vec<lsp_types::Uri>>,
+    /// Directory where SCIP index files should be written.
+    /// Each workspace root produces a `<root-name>.scip` file.
+    pub output_path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExportScipResult {
+    /// Whether the export succeeded.
+    pub success: bool,
+    /// Total number of documents across all index files.
+    pub document_count: usize,
+    /// Paths of all SCIP index files written.
+    #[serde(default)]
+    pub index_files: Vec<String>,
+    /// Error message, if any.
+    pub error: Option<String>,
+}
+
+impl LSPRequest for ExportScipRequest {
+    type Params = ExportScipParams;
+    type Result = ExportScipResult;
+
+    const METHOD: &'static str = "$/exportScip";
+}
+
+impl RequestAction for ExportScipRequest {
+    type Response = ExportScipResult;
+
+    fn timeout() -> std::time::Duration {
+        crate::server::dispatch::DEFAULT_REQUEST_TIMEOUT * 30
+    }
+
+    fn fallback_response() -> Result<Self::Response, ResponseError> {
+        Ok(ExportScipResult {
+            success: false,
+            document_count: 0,
+            index_files: vec![],
+            error: Some("Request timed out".to_string()),
+        })
+    }
+
+    fn get_identifier(params: &Self::Params) -> String {
+        Self::request_identifier(&params.output_path)
+    }
+
+    fn handle<O: Output>(
+        ctx: InitActionContext<O>,
+        params: Self::Params,
+    ) -> Result<Self::Response, ResponseError> {
+        info!("Handling SCIP export request to {}", params.output_path);
+
+        // Determine which device paths to export
+        let device_paths: Vec<CanonPath> =
+            if let Some(devices) = params.devices {
+                devices.iter().filter_map(
+                    |uri| parse_file_path!(&uri, "ExportScip")
+                        .ok()
+                        .and_then(CanonPath::from_path_buf))
+                    .collect()
+            } else {
+                vec![]
+            };
+
+        // Wait for device analyses to be ready
+        if !device_paths.is_empty() {
+            ctx.wait_for_state(
+                AnalysisProgressKind::Device,
+                AnalysisWaitKind::Work,
+                AnalysisCoverageSpec::Paths(device_paths.clone())).ok();
+        } else {
+            ctx.wait_for_state(
+                AnalysisProgressKind::Device,
+                AnalysisWaitKind::Work,
+                AnalysisCoverageSpec::All).ok();
+        }
+
+        let analysis = ctx.analysis.lock().unwrap();
+
+        // Collect device analyses
+        let devices: Vec<&crate::analysis::DeviceAnalysis> =
+            if device_paths.is_empty() {
+                // Export all device analyses
+                analysis.device_analysis.values()
+                    .map(|ts| &ts.stored)
+                    .collect()
+            } else {
+                device_paths.iter().filter_map(|path| {
+                    analysis.get_device_analysis(path).ok()
+                }).collect()
+            };
+
+        if devices.is_empty() {
+            return Ok(ExportScipResult {
+                success: false,
+                document_count: 0,
+                index_files: vec![],
+                error: Some("No device analyses found".to_string()),
+            });
+        }
+
+        info!("Exporting SCIP for {} device(s)", devices.len());
+
+        // Extract import resolution data for the SCIP export
+        let import_data = crate::backends::scip::extract_import_data(
+            &analysis.isolated_analysis,
+            &analysis.import_map,
+            &devices,
+        );
+
+        // Collect per-file isolated analyses from all device
+        // dependant files (deduplicates via HashMap key).
+        let mut isolated_map = std::collections::HashMap::new();
+        for device in &devices {
+            for file_path in &device.dependant_files {
+                if !isolated_map.contains_key(file_path) {
+                    if let Some(ts) = analysis.isolated_analysis.get(file_path) {
+                        isolated_map.insert(file_path.clone(), &ts.stored);
+                    }
+                }
+            }
+        }
+
+        // Build the list of project roots from all workspace roots.
+        let project_roots: Vec<std::path::PathBuf> = ctx.workspace_roots
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|ws| parse_file_path!(&ws.uri, "ExportScip").ok())
+            .collect();
+        let project_roots = if project_roots.is_empty() {
+            vec![std::path::PathBuf::from(".")]
+        } else {
+            project_roots
+        };
+
+        let indices = crate::backends::scip::build_scip_indices(
+            &isolated_map, &project_roots, Some(&import_data), &devices);
+
+        // Write each index into the output directory, named
+        // after the last component of its project root.
+        let output_dir = std::path::Path::new(&params.output_path);
+        if let Err(e) = std::fs::create_dir_all(output_dir) {
+            error!("Failed to create SCIP output directory {:?}: {}", output_dir, e);
+            return Ok(ExportScipResult {
+                success: false,
+                document_count: 0,
+                index_files: vec![],
+                error: Some(format!(
+                    "Failed to create output directory {:?}: {}", output_dir, e)),
+            });
+        }
+
+        let mut total_docs = 0usize;
+        let mut written_files = Vec::new();
+
+        let mut used_names: HashSet<String> = HashSet::new();
+
+        for (root, index) in indices.into_iter() {
+            let doc_count = index.documents.len();
+            total_docs += doc_count;
+
+            let base_name = root.file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| "index".to_string());
+            let mut name = base_name.clone();
+            let mut suffix = 1u32;
+            while used_names.contains(&name) {
+                name = format!("{}.{}", base_name, suffix);
+                suffix += 1;
+            }
+            used_names.insert(name.clone());
+            let file_path = output_dir.join(format!("{}.scip", name));
+
+            match crate::backends::scip::write_scip_to_file(
+                index, &file_path,
+            ) {
+                Ok(()) => {
+                    info!(
+                        "SCIP index written: {} documents to {:?}",
+                        doc_count, file_path
+                    );
+                    written_files.push(
+                        file_path.to_string_lossy().to_string());
+                }
+                Err(e) => {
+                    error!("SCIP export failed for {:?}: {}", file_path, e);
+                    return Ok(ExportScipResult {
+                        success: false,
+                        document_count: 0,
+                        index_files: written_files,
+                        error: Some(e),
+                    });
+                }
+            }
+        }
+
+        info!(
+            "SCIP export complete: {} total documents in {} file(s)",
+            total_docs, written_files.len()
+        );
+        Ok(ExportScipResult {
+            success: true,
+            document_count: total_docs,
+            index_files: written_files,
+            error: None,
+        })
+    }
+}
+
+// ---- Object Hierarchy Export Request ----
+
+#[derive(Debug, Clone)]
+pub struct ExportObjectHierarchyRequest;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExportObjectHierarchyParams {
+    /// Device paths to export hierarchy for. If empty, exports all known devices.
+    pub devices: Option<Vec<lsp_types::Uri>>,
+    /// The file path where the JSON hierarchy should be written.
+    pub output_path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExportObjectHierarchyResult {
+    /// Whether the export succeeded.
+    pub success: bool,
+    /// Number of devices in the exported hierarchy.
+    pub device_count: usize,
+    /// Error message, if any.
+    pub error: Option<String>,
+}
+
+impl LSPRequest for ExportObjectHierarchyRequest {
+    type Params = ExportObjectHierarchyParams;
+    type Result = ExportObjectHierarchyResult;
+
+    const METHOD: &'static str = "$/exportObjectHierarchy";
+}
+
+impl RequestAction for ExportObjectHierarchyRequest {
+    type Response = ExportObjectHierarchyResult;
+
+    fn timeout() -> std::time::Duration {
+        crate::server::dispatch::DEFAULT_REQUEST_TIMEOUT * 30
+    }
+
+    fn fallback_response() -> Result<Self::Response, ResponseError> {
+        Ok(ExportObjectHierarchyResult {
+            success: false,
+            device_count: 0,
+            error: Some("Request timed out".to_string()),
+        })
+    }
+
+    fn get_identifier(params: &Self::Params) -> String {
+        Self::request_identifier(&params.output_path)
+    }
+
+    fn handle<O: Output>(
+        ctx: InitActionContext<O>,
+        params: Self::Params,
+    ) -> Result<Self::Response, ResponseError> {
+        info!("Handling object hierarchy export request to {}", params.output_path);
+
+        let device_paths: Vec<CanonPath> =
+            if let Some(devices) = params.devices {
+                devices.iter().filter_map(
+                    |uri| parse_file_path!(&uri, "ExportObjectHierarchy")
+                        .ok()
+                        .and_then(CanonPath::from_path_buf))
+                    .collect()
+            } else {
+                vec![]
+            };
+
+        if !device_paths.is_empty() {
+            ctx.wait_for_state(
+                AnalysisProgressKind::Device,
+                AnalysisWaitKind::Work,
+                AnalysisCoverageSpec::Paths(device_paths.clone())).ok();
+        } else {
+            ctx.wait_for_state(
+                AnalysisProgressKind::Device,
+                AnalysisWaitKind::Work,
+                AnalysisCoverageSpec::All).ok();
+        }
+
+        let analysis = ctx.analysis.lock().unwrap();
+
+        let devices: Vec<&crate::analysis::DeviceAnalysis> =
+            if device_paths.is_empty() {
+                analysis.device_analysis.values()
+                    .map(|ts| &ts.stored)
+                    .collect()
+            } else {
+                device_paths.iter().filter_map(|path| {
+                    analysis.get_device_analysis(path).ok()
+                }).collect()
+            };
+
+        if devices.is_empty() {
+            return Ok(ExportObjectHierarchyResult {
+                success: false,
+                device_count: 0,
+                error: Some("No device analyses found".to_string()),
+            });
+        }
+
+        info!("Exporting object hierarchy for {} device(s)", devices.len());
+
+        // Build the SCIP span→symbol map so the hierarchy can use
+        // full SCIP symbol paths for scip_name fields.
+        let mut isolated_map = std::collections::HashMap::new();
+        for device in &devices {
+            for file_path in &device.dependant_files {
+                if !isolated_map.contains_key(file_path) {
+                    if let Some(ts) = analysis.isolated_analysis.get(file_path) {
+                        isolated_map.insert(file_path.clone(), &ts.stored);
+                    }
+                }
+            }
+        }
+
+        let project_root = ctx.workspace_roots
+            .lock()
+            .unwrap()
+            .first()
+            .and_then(|ws| parse_file_path!(&ws.uri, "ExportObjectHierarchy").ok())
+            .unwrap_or_else(|| std::path::PathBuf::from("."));
+
+        let span_map = crate::backends::scip::build_span_symbol_map(
+            &isolated_map, &project_root);
+
+        let hierarchy = crate::backends::hierarchy::build_hierarchy(
+            &devices, &span_map);
+        let device_count = hierarchy.len();
+
+        let output = std::path::Path::new(&params.output_path);
+        match crate::backends::hierarchy::write_hierarchy_to_file(&hierarchy, output) {
+            Ok(()) => {
+                info!("Object hierarchy export complete: {} device(s) written to {}",
+                      device_count, params.output_path);
+                Ok(ExportObjectHierarchyResult {
+                    success: true,
+                    device_count,
+                    error: None,
+                })
+            },
+            Err(e) => {
+                error!("Object hierarchy export failed: {}", e);
+                Ok(ExportObjectHierarchyResult {
+                    success: false,
+                    device_count: 0,
+                    error: Some(e),
+                })
+            }
+        }
+    }
+}
+
 /// Server-to-client requests
 impl SentRequest for RegisterCapability {
     type Response = <Self as lsp_data::request::Request>::Result;
