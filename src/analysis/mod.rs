@@ -573,6 +573,8 @@ impl ReferenceCache {
                       -> ReferenceCacheKey {
         let (object, refr) = key;
         let method_scope =
+            // contexts-to-obj will always give the most-overriding method, but our reference may actually be from a scope in an overridden method.
+            // So here we adjust and find the correct method
             if let Some(meth) = object.and_then(|o|o.as_shallow()).and_then(|s|s.variant.as_method()) {
                 let adjusted_meth = DeviceAnalysis::adjust_method_for_pos(meth, &refr.span().start_position())
                     .unwrap_or(meth);
@@ -1282,8 +1284,9 @@ impl DeviceAnalysis {
                     }
                     return res.pop();
                 },
+                // NOTE: we would like to report this as an internal error somewhere, but it turns out to be too
+                // costly to do so
                 _ => {
-                    internal_error!("Fell through recursive method noderef resolution for {:?} in method {:?}", pos, method);
                     return None;
                 }
             }
@@ -1299,12 +1302,14 @@ impl DeviceAnalysis {
                                             method_structure: &HashMap
                                             <ZeroSpan, RangeEntry>,
                                             ref_matches: &mut ReferenceMatches) {
-        // When resolving a noderef from an overridden method, meth here will be
-        // a bottom-most overriding method. So instead find the correct method
+        // Context-to-obj will always give the most-overriding method, but our reference may actually
+        // be from a scope in an overridden method. So here we adjust and find the correct method
         // by recursing to parent
         trace!("Resolving simple noderef {:?} in method {:?}", node, meth);
         let Some(adjusted_meth) = Self::adjust_method_for_pos(meth, &node.span().start_position())
-        else { return; };
+        else {
+            return;
+        };
         trace!("After adjusting, looking up in {:?}", adjusted_meth);
         match node.val.as_str() {
             "this" =>
@@ -1567,6 +1572,11 @@ impl DeviceAnalysis {
         let current_scope = scope_chain.last().unwrap();
         let context_chain: Vec<ContextKey> = scope_chain
             .iter().map(|s|s.create_context()).collect();
+        // NOTE: Awkwardly, this will _not_ give the correct override level
+        // for scopes that are overridden methods. So we will re-adjust
+        // the method reference at later points (when caching and looking up
+        // refs in method). This cannot be done at this level because we are
+        // dealing with a concrete object, and not a method reference.
         let objects_of_scope =
             if context_chain.len() == 1 {
                 // Must be device object
@@ -1600,7 +1610,7 @@ impl DeviceAnalysis {
                                 var,
                                 method_structure,
                                 reference_cache),
-                                ReferenceVariant::Global(glob) =>
+                            ReferenceVariant::Global(glob) =>
                                 self.lookup_global_from_ref(glob),
                         };
 
