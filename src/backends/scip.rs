@@ -747,7 +747,7 @@ fn emit_method(
 fn process_file(
     analysis: &IsolatedAnalysis,
     project_root: &Path,
-    project_roots: &[PathBuf],
+    canon_map: &HashMap<&Path, PathBuf>,
     import_data: Option<&FileImportData>,
     span_map: &mut SpanSymbolMap,
     extern_typedef_map: &mut ExternTypedefMap,
@@ -782,9 +782,7 @@ fn process_file(
         if let Some(imports) = import_data.and_then(|id| id.get(canon)) {
             for (import_span, resolved_path) in imports {
                 let target_pathbuf: PathBuf = resolved_path.clone().into();
-                let target_root_idx = closest_root(&target_pathbuf, project_roots);
-                let target_root = target_root_idx
-                    .map(|i| project_roots[i].as_path())
+                let target_root = closest_root(&target_pathbuf, canon_map)
                     .unwrap_or(project_root);
                 let target_sym = make_file_symbol(&target_pathbuf, target_root);
 
@@ -944,19 +942,22 @@ fn collect_refs_from_spec(spec: &StatementSpec, results: &mut Vec<Reference>) {
 
 /// Assign a file path to its closest matching project root.
 ///
-/// Returns the index into `roots` of the longest-prefix match,
+/// Returns the canonical root path with the longest prefix match,
 /// or `None` if the path doesn't fall under any root.
-fn closest_root(path: &Path, roots: &[PathBuf]) -> Option<usize> {
-    let mut best: Option<(usize, usize)> = None; // (root_idx, component_count)
-    for (i, root) in roots.iter().enumerate() {
-        if path.starts_with(root) {
-            let depth = root.components().count();
+fn closest_root<'a>(
+    path: &Path,
+    canon_map: &'a HashMap<&Path, PathBuf>,
+) -> Option<&'a Path> {
+    let mut best: Option<(&'a Path, usize)> = None;
+    for canon_root in canon_map.values() {
+        if path.starts_with(canon_root) {
+            let depth = canon_root.components().count();
             if best.is_none_or(|(_, d)| depth > d) {
-                best = Some((i, depth));
+                best = Some((canon_root.as_path(), depth));
             }
         }
     }
-    best.map(|(i, _)| i)
+    best.map(|(r, _)| r)
 }
 
 /// Build one or more SCIP indices from per-file analyses, partitioned
@@ -997,6 +998,15 @@ pub fn build_scip_indices(
         project_roots.len()
     );
 
+    // Pre-canonicalize all roots once to avoid repeated filesystem
+    // calls during matching.  The original `project_roots` are kept
+    // for metadata/output so user-facing paths remain unchanged.
+    let canon_map: HashMap<&Path, PathBuf> = project_roots
+        .iter()
+        .map(|r| (r.as_path(), r.canonicalize().unwrap_or_else(|_| r.clone())))
+        .collect();
+    let default_canon = &canon_map[project_roots[0].as_path()];
+
     // --- Pass 1: walk all files, emit symbols, build span→symbol map ---
     let mut span_map = SpanSymbolMap::new();
     let mut extern_typedef_map = ExternTypedefMap::new();
@@ -1004,11 +1014,10 @@ pub fn build_scip_indices(
 
     for analysis in analyses.values() {
         let file_path: PathBuf = analysis.path.clone().into();
-        let root_idx = closest_root(&file_path, project_roots);
-        let root = root_idx.map(|i| &project_roots[i])
-            .unwrap_or(&project_roots[0]);
+        let root = closest_root(&file_path, &canon_map)
+            .unwrap_or(default_canon);
         let (path, data) = process_file(
-            analysis, root, project_roots, import_data, &mut span_map,
+            analysis, root, &canon_map, import_data, &mut span_map,
             &mut extern_typedef_map);
         file_results.insert(path, data);
     }
@@ -1092,23 +1101,23 @@ pub fn build_scip_indices(
         }
     }
 
-    // Partition files into buckets by closest root.
-    // root_idx → Vec<(path, FileData)>.
-    // None-bucket = files not under any root; these "orphan" files
-    // never get a Document in any index (their occurrences are dropped).
-    // Their SymbolInformation is selectively included in each root's
-    // external_symbols if referenced from that root's documents.
-    let mut root_buckets: HashMap<Option<usize>, Vec<(PathBuf, FileData)>> =
+    // Partition files into buckets by closest canonical root.
+    // None-bucket = files not under any root ("orphan" files);
+    // they never get a Document but their SymbolInformation may
+    // appear in external_symbols if referenced.
+    let mut root_buckets: HashMap<Option<&Path>, Vec<(PathBuf, FileData)>> =
         HashMap::new();
     for (path, data) in file_results.drain() {
-        let bucket = closest_root(&path, project_roots);
+        let bucket = closest_root(&path, &canon_map);
         root_buckets.entry(bucket).or_default().push((path, data));
     }
 
     // For each root, build an Index.
     let mut results: Vec<(PathBuf, Index)> = Vec::new();
 
-    for (root_idx, root) in project_roots.iter().enumerate() {
+    for root in project_roots {
+        let canon_root = canon_map[root.as_path()].as_path();
+
         let mut tool_info = ToolInfo::new();
         tool_info.name = "dls".to_string();
         tool_info.version = crate::version();
@@ -1123,10 +1132,10 @@ pub fn build_scip_indices(
         let mut external_symbols = Vec::new();
 
         // Files belonging to this root → Documents.
-        if let Some(files) = root_buckets.get(&Some(root_idx)) {
+        if let Some(files) = root_buckets.get(&Some(canon_root)) {
             for (path, data) in files {
                 let (occs, syms) = data.clone().into_vecs();
-                let rel = path.strip_prefix(root).unwrap();
+                let rel = path.strip_prefix(canon_root).unwrap_or(path);
                 let mut doc = Document::new();
                 doc.relative_path = rel.to_string_lossy().to_string();
                 doc.language = "dml".to_string();
@@ -1233,11 +1242,15 @@ pub fn build_span_symbol_map(
     analyses: &HashMap<CanonPath, &IsolatedAnalysis>,
     project_root: &Path,
 ) -> SpanSymbolMap {
+    let canon_root = project_root.canonicalize()
+        .unwrap_or_else(|_| project_root.to_path_buf());
+    let canon_map: HashMap<&Path, PathBuf> =
+        HashMap::from([(project_root, canon_root)]);
     let mut span_map = SpanSymbolMap::new();
     let mut extern_typedefs = ExternTypedefMap::new();
     for analysis in analyses.values() {
-        process_file(analysis, project_root, &[project_root.to_path_buf()],
-                     None, &mut span_map, &mut extern_typedefs);
+        process_file(analysis, &canon_map[project_root],
+                     &canon_map, None, &mut span_map, &mut extern_typedefs);
     }
     span_map
 }
