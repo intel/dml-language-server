@@ -84,6 +84,12 @@ instantiated.
 including direct instantiation sites (so this is a super-set of
 `goto-implementations`)
 
+### On Import Statements
+`goto-definition` on the target name of an import will open the file that was
+imported by that statement.
+
+Other operations on import statements do nothing.
+
 ## Relevant environment variables
 * `MAX_LOG_MESSAGE_LENGTH` When set, will truncate any outputted logs that are longer than the value. Defaults to 1000 bytes. Set to 0 to turn off truncation.
 

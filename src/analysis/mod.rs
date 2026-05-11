@@ -31,7 +31,7 @@ use crate::actions::analysis_storage::{TimestampedStorage};
 use crate::actions::semantic_lookup::{DLSLimitation, isolated_template_limitation};
 use crate::analysis::symbols::{DMLSymbolKind, SimpleSymbol, StructureSymbol, SymbolContainer, SymbolMaker, SymbolSource};
 pub use crate::analysis::symbols::SymbolRef;
-use crate::analysis::reference::{GlobalReference, NodeRef, Reference, ReferenceKind, ReferenceVariant, VariableReference};
+use crate::analysis::reference::{GlobalReference, NodeRef, CodeReference, Reference, ReferenceKind, ReferenceVariant, VariableReference};
 use crate::analysis::scope::{Scope, SymbolContext,
                              ContextKey, ContextedSymbol};
 use crate::analysis::parsing::parser::{FileInfo, FileParser};
@@ -1549,7 +1549,7 @@ impl DeviceAnalysis {
     }
 
     fn handle_symbol_ref(symbol: &SymbolRef,
-                         reference: &Reference) {
+                         reference: &CodeReference) {
         let mut sym = symbol.lock().unwrap();
         sym.references.insert(*reference.loc_span());
         if sym.kind == DMLSymbolKind::Template && reference.extra_info.was_instantiation {
@@ -1602,48 +1602,50 @@ impl DeviceAnalysis {
             |mut local_reports, references|{
                 status.check_alive()?;
                 for reference in references {
-                    for object in &objects_of_scope {
-                        trace!("In {:?}, Matching {:?}", object, reference);
-                        let symbol_lookup = match &reference.variant {
-                            ReferenceVariant::Variable(var) => self.find_target_for_reference(
-                                Some(object),
-                                var,
-                                method_structure,
-                                reference_cache),
-                            ReferenceVariant::Global(glob) =>
-                                self.lookup_global_from_ref(glob),
-                        };
-
-                        match symbol_lookup.kind {
-                            ReferenceMatchKind::NotFound =>
-                            // TODO: report suggestions?
-                            // TODO: Uncomment reporting of errors here when
-                            // semantics are strong enough that they are rare
-                            // for correct devices
-                            // report.lock().unwrap().push(DMLError {
-                            //     span: reference.span().clone(),
-                            //     description: format!("Unknown reference {}",
-                            //                          reference.to_string()),
-                            //     related: vec![],
-                            // })
+                    // Non-coderef references will be resolved on-demand as requests are made
+                    if let Some(code_ref) = reference.as_code_ref() {
+                        for object in &objects_of_scope {
+                            trace!("In {:?}, Matching {:?}", object, reference);
+                            let symbol_lookup = match &code_ref.variant {
+                                ReferenceVariant::Variable(var) => self.find_target_for_reference(
+                                    Some(object),
+                                    var,
+                                    method_structure,
+                                    reference_cache),
+                                ReferenceVariant::Global(glob) =>
+                                    self.lookup_global_from_ref(glob),
+                            };
+                                
+                            match symbol_lookup.kind {
+                                ReferenceMatchKind::NotFound =>
+                                // TODO: report suggestions?
+                                // TODO: Uncomment reporting of errors here when
+                                // semantics are strong enough that they are rare
+                                // for correct devices
+                                // report.lock().unwrap().push(DMLError {
+                                //     span: reference.span().clone(),
+                                //     description: format!("Unknown reference {}",
+                                //                          reference.to_string()),
+                                //     related: vec![],
+                                // })
                                 (),
-                            // This maps symbols->references, this is later
-                            // used to create the inverse map
-                            // (not done here because of ownership issues)
+                                // This maps symbols->references, this is later
+                                // used to create the inverse map
+                                // (not done here because of ownership issues)
                             ReferenceMatchKind::Found =>
                                 for symbol in &symbol_lookup.references {
-                                    Self::handle_symbol_ref(symbol, reference);
+                                    Self::handle_symbol_ref(symbol, code_ref);
                                 },
                             ReferenceMatchKind::MismatchedFind =>
-                            //TODO: report mismatch,
+                                //TODO: report mismatch,
                                 (),
+                            }
+                            local_reports.extend(symbol_lookup.messages);
                         }
-                        local_reports.extend(symbol_lookup.messages);
                     }
                 }
                 Ok(local_reports)
-            })
-            .try_reduce(Vec::new, |mut vec1, vec2|{ vec1.extend(vec2); Ok(vec1) });
+        }).try_reduce(Vec::new, |mut vec1, vec2|{ vec1.extend(vec2); Ok(vec1) });
         report.extend(errs?);
         Ok(())
     }

@@ -25,7 +25,7 @@ use crate::lint::rules::indentation::{IndentCodeBlockArgs,
     IndentParenExprArgs,
     IndentContinuationLineArgs};
 use crate::lint::{rules::CurrentRules, AuxParams, DMLStyleError};
-use crate::analysis::reference::{Reference, ReferenceKind};
+use crate::analysis::reference::{CodeReference, Reference, ReferenceKind};
 use crate::analysis::FileSpec;
 use crate::span::Range;
 use crate::vfs::TextFile;
@@ -631,9 +631,10 @@ impl TreeElement for Instantiation {
         };
 
         let refs = toks.into_iter()
-            .filter_map(|tok|Reference::global_from_token(
+            .filter_map(|tok|CodeReference::global_from_token(
                          tok, file, ReferenceKind::Template))
-            .map(|mut r|{r.extra_info.was_instantiation = true; r});
+            .map(|mut r|{r.extra_info.was_instantiation = true; r})
+            .map(Into::into);
         accumulator.extend(refs);
     }
 }
@@ -1265,6 +1266,13 @@ impl TreeElement for ImportContent {
     fn subs(&self) -> TreeElements<'_> {
         create_subs!(&self.import, &self.file, &self.semi)
     }
+    fn references<'a>(&self,
+                      accumulator: &mut Vec<Reference>,
+                      file: FileSpec<'a>) {
+        if let Some(reference) = Reference::file_ref_from_token(&self.file, file) {
+            accumulator.push(reference);
+        }
+    }
 }
 
 impl Parse<DMLObjectContent> for ImportContent {
@@ -1662,8 +1670,8 @@ impl TreeElement for InEachSpec {
         let references = match self {
             Self::One(tok) => vec![tok],
             Self::List(_, toks, _) => toks.iter().map(|(t, _)|t).collect(),
-        }.into_iter().filter_map(|tok|Reference::global_from_token(
-            tok, file, ReferenceKind::Template));
+        }.into_iter().filter_map(|tok|CodeReference::global_from_token(
+            tok, file, ReferenceKind::Template).map(Into::into));
         accumulator.extend(references);
     }
 }
@@ -1774,9 +1782,9 @@ impl TreeElement for DeviceContent {
     fn references<'a>(&self,
                       accumulator: &mut Vec<Reference>,
                       file: FileSpec<'a>) {
-        if let Some(refr) = Reference::global_from_token(
+        if let Some(refr) = CodeReference::global_from_token(
             &self.device, file, ReferenceKind::Template) {
-            accumulator.push(refr);
+            accumulator.push(refr.into());
         }
     }
 }

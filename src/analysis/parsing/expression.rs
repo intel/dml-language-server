@@ -10,7 +10,7 @@ use crate::analysis::parsing::tree::{AstObject, TreeElement,
                                      ZeroRange, ZeroSpan};
 use crate::analysis::parsing::types::CTypeDecl;
 use crate::analysis::parsing::misc::{objident_filter, SingleInitializer};
-use crate::analysis::reference::{Reference, ReferenceKind,
+use crate::analysis::reference::{CodeReference, Reference, ReferenceKind,
                                  MaybeIsNodeRef, NodeRef};
 use crate::analysis::FileSpec;
 use crate::analysis::structure::expressions::DMLString;
@@ -123,8 +123,8 @@ impl TreeElement for MemberLiteralContent {
         self.subs().into_iter()
             .for_each(|s|s.collect_references(accumulator, file));
         if let Some(refr) = self.maybe_noderef(file) {
-            accumulator.push(Reference::from_noderef(
-                refr, ReferenceKind::Variable));
+            accumulator.push(CodeReference::from_noderef(
+                refr, ReferenceKind::Variable).into());
         }
     }
 }
@@ -226,8 +226,8 @@ impl TreeElement for FunctionCallContent {
                       file: FileSpec<'a>) {
         self.default_references(accumulator, file);
         if let Some(noderef) = self.fun.maybe_noderef(file) {
-            accumulator.push(Reference::from_noderef(
-                noderef, ReferenceKind::Callable));
+            accumulator.push(CodeReference::from_noderef(
+                noderef, ReferenceKind::Callable).into());
         }
     }
     fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, aux: AuxParams) {
@@ -569,9 +569,9 @@ impl TreeElement for EachInContent {
                       accumulator: &mut Vec<Reference>,
                       file: FileSpec<'a>) {
         self.default_references(accumulator, file);
-        if let Some(refr) = Reference::global_from_token(
+        if let Some(refr) = CodeReference::global_from_token(
             &self.ident, file, ReferenceKind::Template) {
-            accumulator.push(refr);
+            accumulator.push(refr.into());
         }
     }
 }
@@ -782,8 +782,8 @@ impl TreeElement for ExpressionContent {
                       file: FileSpec<'a>) {
         self.default_references(accumulator, file);
         if let Some(refr) = self.maybe_noderef(file) {
-            accumulator.push(Reference::from_noderef(
-                refr, ReferenceKind::Variable));
+            accumulator.push(CodeReference::from_noderef(
+                refr, ReferenceKind::Variable).into());
         }
     }
 }

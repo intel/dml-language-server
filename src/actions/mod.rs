@@ -270,9 +270,10 @@ pub struct InitActionContext<O: Output> {
     pub direct_opens: Arc<Mutex<HashSet<CanonPath>>>,
     pub compilation_info: Arc<Mutex<CompilationInfoStorage>>,
 
-    // maps files to the paths of device contexts they should be
-    // analyzed under
+    // Track the device contexts which we currently use for analysis
     pub device_active_contexts: Arc<Mutex<ActiveDeviceContexts>>,
+    // Used to hold a-moment-ago active contexts, so we can check for when re-analysis or re-reporting is
+    // necessary
     previously_checked_contexts: Arc<Mutex<ActiveDeviceContexts>>,
 
     prev_changes: Arc<Mutex<HashMap<PathBuf, i32>>>,

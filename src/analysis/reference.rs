@@ -116,9 +116,59 @@ pub struct ReferenceInfo {
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Reference {
+pub struct CodeReference {
     pub variant: ReferenceVariant,
     pub extra_info: ReferenceInfo,
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Reference {
+    CodeReference(CodeReference),
+    FileReference(DMLString),
+}
+
+impl Reference {
+    pub fn file_ref_from_token<'a>(token: &LeafToken, file: FileSpec<'a>) -> Option<Reference> {
+        DMLString::from_token(token, file).map(Reference::FileReference)
+    }
+}
+
+impl LocationSpan for Reference {
+    fn loc_span(&self) -> &ZeroSpan {
+        match self {
+            Reference::CodeReference(code_ref) => code_ref.loc_span(),
+            Reference::FileReference(import) => &import.span,
+        }
+    }
+}
+impl DeclarationSpan for Reference {
+    fn span(&self) -> &ZeroSpan {
+        match self {
+            Reference::CodeReference(code_ref) => code_ref.span(),
+            Reference::FileReference(import) => &import.span,
+        }
+    }
+}
+
+impl Reference  {
+    pub fn as_code_ref(&self) -> Option<&CodeReference> {
+        match self {
+            Reference::CodeReference(code_ref) => Some(code_ref),
+            _ => None,
+        }
+    }
+    pub fn as_file_ref(&self) -> Option<&DMLString> {
+        match self {
+            Reference::FileReference(file_ref) => Some(file_ref),
+            _ => None,
+        }
+    }
+}
+
+impl From<CodeReference> for Reference {
+    fn from(code_ref: CodeReference) -> Self {
+        Reference::CodeReference(code_ref)
+    }
 }
 
 // NOTE: The locationspan of a reference is the actual source range its
@@ -128,7 +178,7 @@ pub struct Reference {
 // a.f[3].r
 // would have the locationspan covering 'r'
 // and the declarationspan covering the full reference
-impl LocationSpan for Reference {
+impl LocationSpan for CodeReference {
     fn loc_span(&self) -> &ZeroSpan {
         match &self.variant {
             ReferenceVariant::Variable(var) => var.loc_span(),
@@ -136,7 +186,7 @@ impl LocationSpan for Reference {
         }
     }
 }
-impl DeclarationSpan for Reference {
+impl DeclarationSpan for CodeReference {
     fn span(&self) -> &ZeroSpan {
         match &self.variant {
             ReferenceVariant::Variable(var) => var.span(),
@@ -145,7 +195,7 @@ impl DeclarationSpan for Reference {
     }
 }
 
-impl std::fmt::Display for Reference {
+impl std::fmt::Display for CodeReference {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>)
            -> Result<(), std::fmt::Error> {
         match &self.variant {
@@ -155,7 +205,7 @@ impl std::fmt::Display for Reference {
     }
 }
 
-impl Reference {
+impl CodeReference {
     pub fn as_variable_ref(&self) -> Option<&VariableReference> {
         match &self.variant {
             ReferenceVariant::Variable(var) => Some(var),
@@ -163,8 +213,8 @@ impl Reference {
         }
     }
 
-    pub fn from_noderef(node: NodeRef, kind: ReferenceKind) -> Reference {
-        Reference {
+    pub fn from_noderef(node: NodeRef, kind: ReferenceKind) -> CodeReference {
+        CodeReference {
             variant: ReferenceVariant::Variable(VariableReference {
                 reference: node,
                 kind,
@@ -172,10 +222,11 @@ impl Reference {
             extra_info: ReferenceInfo::default(),
         }
     }
+
     pub fn global_from_string(name: String,
                               loc: ZeroSpan,
-                              kind: ReferenceKind) -> Reference {
-        Reference {
+                              kind: ReferenceKind) -> CodeReference {
+        CodeReference {
             variant: ReferenceVariant::Global(GlobalReference {
                 name,
                 loc,
@@ -186,9 +237,9 @@ impl Reference {
     }
     pub fn global_from_token<'a>(token: &LeafToken,
                                  file: FileSpec<'a>,
-                                 kind: ReferenceKind) -> Option<Reference> {
+                                 kind: ReferenceKind) -> Option<CodeReference> {
         token.read_leaf(file.file).map(
-            |string|Reference::global_from_string(
+            |string|CodeReference::global_from_string(
                 string,
                 ZeroSpan::from_range(token.range(),
                                      file.path),
