@@ -539,6 +539,39 @@ fn walk_spec(
             file_path, project_root, namespace, file_data, span_map,
         );
     }
+
+    // --- In-each blocks ---
+    //
+    // An `in each (foo, bar) { ... }` block applies its contents as
+    // template additions, not as a true child namespace.  We still
+    // need to give nested declarations *some* unique scope to avoid
+    // collisions with siblings of the in-each.  We synthesize a
+    // namespace segment from the target template list, formatted
+    // with characters that are not valid in DML identifiers (`<`,
+    // `>`, `:`, `,`, ` `).  `sanitize_name` will backtick-escape
+    // the whole segment, guaranteeing it cannot collide with a
+    // real DML object name.
+    for ineach_decl in &spec.ineachs {
+        let targets = ineach_decl.obj.spec.iter()
+            .map(|t| t.val.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let scope_name = format!("<in each: {targets}>");
+        namespace.push(NamespaceSegment {
+            name: scope_name,
+            suffix: DescriptorSuffix::Term,
+        });
+        walk_spec(
+            &ineach_decl.spec,
+            file_path,
+            project_root,
+            namespace,
+            file_data,
+            local_counter,
+            span_map,
+        );
+        namespace.pop();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -911,6 +944,11 @@ fn collect_impl_iface_from_spec(
     for template_decl in &spec.templates {
         collect_impl_iface_from_spec(&template_decl.spec, results);
     }
+    // Recurse into in-each blocks: a connect inside an in-each
+    // may contain interface declarations.
+    for ineach_decl in &spec.ineachs {
+        collect_impl_iface_from_spec(&ineach_decl.spec, results);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -933,6 +971,7 @@ fn collect_refs_from_spec(spec: &StatementSpec, results: &mut Vec<Reference>) {
     }
     for ineach_decl in &spec.ineachs {
         results.extend_from_slice(&ineach_decl.obj.references);
+        collect_refs_from_spec(&ineach_decl.spec, results);
     }
 }
 
@@ -964,10 +1003,12 @@ fn closest_root<'a>(
 /// by project root.
 ///
 /// Each file is assigned to its closest matching root (longest prefix
-/// match).  A separate `Index` is produced for every root.  Files
-/// under *other* roots appear as `external_symbols` in each index,
-/// preserving cross-root relationship targets.  Files that don't fall
-/// under any root are placed in `external_symbols` of every index.
+/// match).  A separate `Index` is produced for every root.  Files that
+/// don't fall under any root ("orphan" files) do not get a Document;
+/// instead, their `SymbolInformation` may appear in `external_symbols`
+/// of any index that references them but does not define them locally.
+/// Files under *other* roots are not included as external symbols
+/// because they get their own dedicated index, per the SCIP spec.
 ///
 /// Symbol strings are consistent across all indices: they use the
 /// file's *own* root to build the path-based prefix.  This means a
