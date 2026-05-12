@@ -1032,10 +1032,24 @@ pub fn build_scip_indices(
                 for (name_span, obj_name) in refs {
                     let typedef_name = format!("{}_interface_t", obj_name);
                     if let Some(typedef_sym) = extern_typedef_map.get(&typedef_name) {
+                        // Reference occurrence at the object name span
                         let mut ref_occ = Occurrence::new();
                         ref_occ.range = span_to_scip_range(&name_span);
                         ref_occ.symbol = typedef_sym.clone();
                         file_data.add_occurrence(ref_occ);
+
+                        // is_type_definition relationship on the object's
+                        // SymbolInformation → the extern typedef
+                        if let Some(obj_sym) = span_map.get(&name_span) {
+                            if let Some(sym_info) =
+                                file_data.symbols.get_mut(obj_sym)
+                            {
+                                let mut rel = Relationship::new();
+                                rel.symbol = typedef_sym.clone();
+                                rel.is_type_definition = true;
+                                sym_info.relationships.push(rel);
+                            }
+                        }
                     }
                 }
             }

@@ -280,6 +280,12 @@ implements `foo` with its own definition of `method a`, then `b.a` will carry
 an `is_implementation` relationship to `foo.a`. This lets consumers identify
 which method version is the active override and navigate the override chain.
 
+`implement` and `interface` objects whose name matches an extern typedef
+(following the DML convention `<name>_interface_t`) emit an
+`is_type_definition` relationship on the object's `SymbolInformation` pointing
+to the typedef symbol. A reference occurrence at the object's name span is also
+emitted, linking the declaration site to the underlying interface type.
+
 #### File Symbols and Imports
 
 Each source file involved in the analysis gets a dedicated SCIP symbol of kind
