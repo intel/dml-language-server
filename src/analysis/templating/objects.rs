@@ -2267,6 +2267,11 @@ pub fn make_object(loc: ZeroSpan,
                    report: &mut Vec<DMLError>) -> StructureKey {
     debug!("Making object {}", identity.val);
 
+    // Capture the direct declarations before add_template_specs extends
+    // obj_specs with template-instantiated specs, to be used for decl
+    // locations later
+    let direct_decls: Vec<Arc<ObjectSpec>> = obj_specs.clone();
+
     let mut each_stmts = parent_each_stmts.clone();
     let used_ineach_locs = add_template_specs(&mut obj_specs, &each_stmts);
     add_template_ineachs(&obj_specs, &mut each_stmts);
@@ -2293,7 +2298,7 @@ pub fn make_object(loc: ZeroSpan,
            symbols.keys().map(|k|k.as_str()).collect::<Vec<&str>>());
 
     let new_obj_key = create_object_instance(Some(loc),
-                                             &obj_specs,
+                                             &direct_decls,
                                              identity, kind,
                                              &array_info, container);
 
