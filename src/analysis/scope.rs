@@ -112,6 +112,13 @@ impl ContextKey {
             Self::AllWithTemplate(_, _) => None,
         }
     }
+
+    pub fn as_simple_symbol(&self) -> Option<&SimpleSymbol> {
+        match self {
+            Self::Template(s) | Self::Method(s) | Self::Structure(s) => Some(s),
+            Self::AllWithTemplate(_, _) => None,
+        }
+    }
 }
 
 impl Named for ContextKey {
@@ -232,6 +239,11 @@ impl SymbolContext {
                              pos: &ZeroFilePosition,
                              acc: &mut Vec<&'t ContextKey>)
                              -> Option<&'t SimpleSymbol> {
+        if self.context.loc_span().contains_pos(pos) {
+            if let Some(simp) = self.context.as_simple_symbol() {
+                return Some(simp);
+            }
+        }
         acc.push(&self.context);
         self.subsymbols.iter()
             .find(|sub|{trace!("Considering {:?}, contains pos? {:?}",
