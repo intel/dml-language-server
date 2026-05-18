@@ -26,7 +26,7 @@ use crate::analysis::structure::objects::{
 use crate::analysis::templating::methods::{DMLMethodArg, MethodDeclaration};
 use crate::analysis::templating::objects::{
     DMLCompositeObject, DMLNamedMember, DMLObject,
-    DMLShallowObject, DMLShallowObjectVariant, StructureContainer,
+    DMLShallowObjectVariant, StructureContainer,
 };
 use crate::analysis::DeclarationSpan;
 use crate::analysis::LocationSpan;
@@ -314,28 +314,22 @@ fn build_object_hierarchy(
                     );
                 }
             }
-            DMLObject::ShallowObject(DMLShallowObject {
-                variant: DMLShallowObjectVariant::Parameter(param),
-                ..
-            }) => {
-                parameters.insert(
-                    name.clone(),
-                    build_param_entry(
-                        param, comp_obj.location(), span_map, source),
-                );
+            DMLObject::ShallowObject(shallow) => match &shallow.variant {
+                DMLShallowObjectVariant::Parameter(param) => {
+                    parameters.insert(
+                        name.clone(),
+                        build_param_entry(
+                            param, comp_obj.location(), span_map, source),
+                    );
+                }
+                DMLShallowObjectVariant::Method(method_ref) => {
+                    methods.insert(
+                        name.clone(),
+                        build_method_entry(method_ref, span_map, source),
+                    );
+                }
+                _ => {}
             }
-            DMLObject::ShallowObject(DMLShallowObject {
-                variant: DMLShallowObjectVariant::Method(method_ref),
-                ..
-            }) => {
-                methods.insert(
-                    name.clone(),
-                    build_method_entry(method_ref, span_map, source),
-                );
-            }
-            // Sessions, saveds, constants, hooks are not included
-            // in the hierarchy output per current specification.
-            _ => {}
         }
     }
 
