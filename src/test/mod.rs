@@ -10,6 +10,9 @@ use crate::analysis::parsing::tree::{AstObject, Content, TreeElement,
                                      LeafToken, MissingToken,
                                      ZeroRange, ZeroPosition};
 
+#[cfg(test)]
+pub mod lsp_lookup_tests;
+
 pub fn make_ast<T: PartialEq + Clone>(range: ZeroRange, t: T) -> AstObject<T> {
     AstObject::<T> {
         range,

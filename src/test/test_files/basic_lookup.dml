@@ -1,0 +1,142 @@
+//  © 2024 Intel Corporation
+//  SPDX-License-Identifier: Apache-2.0 and MIT
+dml 1.4;
+
+device test_device;
+
+// Rudimentary testing coverage
+
+// @loc[10]=base_template_def
+template base_template { // @goto-ref[10]->base_template_ref @goto-impl[10]->base_template_ref
+    // @loc[11]=base_param_def
+    param base_param default 42;
+    // @loc[12]=base_method_def
+    method base_method() default {
+        log info: "base implementation";
+    }
+}
+
+// @loc[10]=override_template_def
+// @loc[31]=base_template_ref
+template override_template is base_template { // @goto-ref[10]->override_template_ref @goto-impl[10]->override_template_ref // @goto-def-decl[31]->base_template_def
+    // @loc[11]=base_param_override
+    param base_param default 100; // @goto-decl[11]->base_param_def @goto-ref[11]->base_param_use
+    // @loc[12]=override_base_method
+    method base_method() { // @goto-decl[12]->base_method_def
+        log info: "override implementation";
+        default(); // @goto-def-decl[9]->base_method_def
+    } 
+}
+
+// Bank for testing composite object references
+
+// Check that param is fully shadowed
+param shadowed_param default 1; // @goto-ref[7]->
+// @loc[6]=test_bank_def
+bank test_bank { // @goto-ref[6]->!test_register_parent_ref, test_bank_ref
+    // @loc[11]=bank_shadowed_param_def
+    param shadowed_param default 0; // @goto-ref[11]->!use_bank_shadowed_param_1, use_bank_shadowed_param_2
+    // @loc[14]=test_register_def
+    register test_register size 4 @ 0x0000 { // @goto-ref[14]->test_register_ref,test_register_this_ref
+        // @loc[15]=reg_shadowed_param_def
+        param shadowed_param default 8; // @goto-ref[15]->use_reg_shadowed_param_1, use_reg_shadowed_param_2
+        
+        // @loc[16]=test_register_read
+        method read() -> (uint64) { // @goto-ref[16]->test_register_read_ref
+            // @loc[26]=value_decl
+            // @loc[34]=use_reg_shadowed_param_1
+            local uint64 value = shadowed_param; // @goto-ref[26]->value_ref_1,value_ref_2,value_ref_3 @goto-def-decl[34]->reg_shadowed_param_def 
+            // @loc[13]=value_ref_1
+            // @loc[21]=test_register_this_ref
+            // @loc[26]=use_reg_shadowed_param_2
+            value = this.shadowed_param; // @goto-def-decl[13]->value_decl @goto-def-decl[21]->test_register_def @goto-def-decl[26]->reg_shadowed_param_def
+            // @loc[13]=value_ref_2
+            // @loc[21]=test_register_parent_ref
+            // @loc[41]=use_bank_shadowed_param_1
+            value = parent.shadowed_param; // @goto-def-decl[13]->value_decl @goto-def-decl[21]->!test_bank_def @goto-def-decl[28]->!bank_shadowed_param_def
+            // @loc[20]=value_ref_3
+            return value; // @goto-def-decl[20]->value_decl 
+        }
+    }
+
+    // @loc[21]=bank_m_value_def
+    method m(uint64 value) -> (uint64) { // @goto-ref[21]->bank_m_value_ref
+        // @loc[16]=bank_m_value_ref
+        // @loc[24]=use_bank_shadowed_param_2
+        return value + shadowed_param; // goto-def-decl[16]->bank_m_value_def @goto-def-decl[24]->bank_shadowed_param_def
+    }
+    
+    // @loc[14]=override_reg_def
+    // @loc[46]=override_template_ref
+    register override_reg size 4 @ 0x0004 is override_template { // @goto-def-decl[46]->override_template_def
+        method read() -> (uint64) {
+            // @loc[25]=base_param_use
+            return this.base_param; // @goto-def-decl[20]->override_reg_def @goto-def[25]->base_param_override @goto-decl[25]->base_param_def
+        }
+    }
+}
+
+// Method for testing method references and calls
+// @loc[8]=device_method_def
+method device_method() { // @goto-ref[8]->device_method_ref1,device_method_ref2
+    // @loc[15]=x_decl
+    local int x = 10;
+    x = x + 1; // @goto-def-decl[5]->x_decl @goto-def-decl[9]->x_decl
+}
+
+// Group for testing object hierarchy
+// @loc[7]=test_group_def
+group test_group { // @goto-ref[7]->test_group_ref    
+    // @loc[12]=group_method_def
+    method group_method() { // @goto-ref[12]->group_method_ref
+        // @loc[9]=device_method_ref1
+        device_method(); // @goto-def-decl[9]->device_method_def
+    }
+}
+
+// Session and saved variables for testing
+// @loc[13]=session_var_def
+session int session_var; // @goto-ref[13]->session_var_ref1,session_var_ref2
+
+// @loc[11]=saved_var_def
+saved int saved_var; // @goto-ref[11]->saved_var_ref
+
+// Hooks for testing hook references
+// @loc[15]=test_hook_def
+hook(int val) test_hook; // @goto-ref[15]->test_hook_ref,test_hook_send_now
+
+method reference_test() {
+    // @loc[5]=test_bank_ref
+    // @loc[15]=test_register_ref
+    // @loc[29]=test_register_read_ref
+    test_bank.test_register.read(); // @goto-def-decl[5]->test_bank_def @goto-def-decl[15]->test_register_def @goto-def-decl[29]->test_register_read 
+    
+    // @loc[5]=test_group_ref
+    // @loc[16]=group_method_ref
+    test_group.group_method(); // @goto-def-decl[5]->test_group_def @goto-def-decl[16]->group_method_def 
+    
+    // @loc[5]=session_var_ref1
+    session_var = 42; // @goto-def-decl[5]->session_var_def
+    
+    // @loc[5]=saved_var_ref
+    // @loc[17]=session_var_ref2
+    saved_var = session_var; // @goto-def-decl[5]->saved_var_def @goto-def-decl[17]->session_var_def
+    
+    // @loc[5]=test_hook_ref
+    // @loc[15]=test_hook_send_now
+    test_hook.send_now(10); // @goto-def-decl[5]->test_hook_def
+    
+    // @loc[5]=device_method_ref2
+    device_method(); // @goto-def-decl[5]->device_method_def
+}
+
+// Non-existent template in 'is' clause
+template phantom_child is nonexistent_parent { //@goto-impl[10]-> @goto-def-decl[27]-> 
+    param phantom_param default 1; // @goto-ref[11]->
+}
+
+// Non-existent method calls and object references
+method phantom_calls() { // @goto-ref[8]->
+    nonexistent_method(); // @goto-def-decl[5]->
+    nonexistent_bank.nonexistent_reg.read(); // @goto-def-decl[5]-> @goto-def-decl[22]-> @goto-def-decl[38]->
+}
