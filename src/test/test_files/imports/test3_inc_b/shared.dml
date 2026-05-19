@@ -1,0 +1,3 @@
+dml 1.4;
+
+// Variant B of shared.dml, only reachable via test3_inc_b include path

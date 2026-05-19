@@ -1,0 +1,5 @@
+dml 1.4;
+
+device test2_device;
+
+import "./test2_common_a.dml";

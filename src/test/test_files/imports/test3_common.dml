@@ -1,0 +1,6 @@
+dml 1.4;
+
+// Commoncode used by both test3_device_a and test3_device_b.
+// "shared.dml" resolves differently in each device context because
+// each device supplies a distinct include path.
+import "shared.dml";

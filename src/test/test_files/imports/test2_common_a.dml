@@ -1,0 +1,4 @@
+dml 1.4; // @loc[1]=test2_common_a_start
+
+// Commoncode that itself imports another commoncode file
+import "./test2_common_b.dml"; // @goto-def[11]->imports/test2_common_b.dml:test2_common_b_start

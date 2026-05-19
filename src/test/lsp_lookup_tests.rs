@@ -1221,4 +1221,89 @@ mod tests {
         let fail_count = failures.len();
         (fail_count, test_annotations.len(), failures)
     }
+
+    /// Goto-def on an `import "./..."` in a device file should resolve to
+    /// the imported commoncode file (relative path resolution).
+    #[test]
+    fn test_goto_def_on_relative_import() {
+        init_logging();
+        let setup = setup_test(
+            &["imports/test1_device.dml", "imports/test1_common.dml"],
+        );
+        run_annotation_tests(&setup.ctx, &setup.main_file, setup.annotations);
+    }
+
+    /// Goto-def on an import in a commoncode file should also resolve, so
+    /// chains of commoncode-only imports can be navigated.
+    #[test]
+    fn test_goto_def_on_commoncode_import() {
+        init_logging();
+        let setup = setup_test(
+            &[
+                "imports/test2_device.dml",
+                "imports/test2_common_a.dml",
+                "imports/test2_common_b.dml",
+            ],
+        );
+        run_annotation_tests(&setup.ctx, &setup.main_file, setup.annotations);
+    }
+
+    /// When the same commoncode file is imported by two devices that
+    /// resolve a given import string to different files (via different
+    /// include paths), goto-def on that import should return BOTH
+    /// resolutions.
+    #[test]
+    fn test_goto_def_on_import_resolves_per_device_context() {
+        init_logging();
+        let setup = setup_test_with_imports(
+            &[
+                "imports/test3_device_a.dml",
+                "imports/test3_device_b.dml",
+                "imports/test3_common.dml",
+            ],
+            &[
+                ("imports/test3_device_a.dml", &["imports/test3_inc_a"]),
+                ("imports/test3_device_b.dml", &["imports/test3_inc_b"]),
+            ],
+        );
+
+        // Find the canonical paths of the two expected `shared.dml` targets.
+        let base_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("src/test/test_files");
+        let expected_a = CanonPath::from_path_buf(
+            base_dir.join("imports/test3_inc_a/shared.dml")).unwrap();
+        let expected_b = CanonPath::from_path_buf(
+            base_dir.join("imports/test3_inc_b/shared.dml")).unwrap();
+
+        // The import we're testing is `import "shared.dml";` on line 6
+        // (0-indexed row 5) of test3_common.dml. Position the lookup inside
+        // the quoted import string (col 11, 1-indexed => col 10, 0-indexed).
+        let common_path = base_dir.join("imports/test3_common.dml");
+        let file_pos = make_file_position(&common_path, 5, 10);
+
+        let mut limitations = HashSet::new();
+        let spans = definitions_at_fp(&setup.ctx, &file_pos, &mut limitations)
+            .expect("definitions_at_fp failed");
+
+        let result_paths: HashSet<PathBuf> = spans.iter()
+            .map(|s| s.path())
+            .collect();
+
+        assert!(result_paths.contains(expected_a.as_path()),
+                "expected to find variant-A shared.dml at {:?}, got {:?}",
+                expected_a.as_path(), result_paths);
+        assert!(result_paths.contains(expected_b.as_path()),
+                "expected to find variant-B shared.dml at {:?}, got {:?}",
+                expected_b.as_path(), result_paths);
+        assert_eq!(spans.len(), 2,
+                   "expected exactly 2 targets, got {}: {:?}",
+                   spans.len(), result_paths);
+
+        // Each result span should be at (0,0) per definitions_at_fp's
+        // file-reference contract.
+        for span in &spans {
+            assert_eq!(span.range.row_start.0, 0);
+            assert_eq!(span.range.col_start.0, 0);
+        }
+    }
 }

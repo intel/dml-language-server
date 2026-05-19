@@ -1,0 +1,3 @@
+dml 1.4; // @loc[1]=test2_common_b_start
+
+// Innermost commoncode file in the test2 chain

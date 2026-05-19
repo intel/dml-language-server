@@ -1,0 +1,3 @@
+dml 1.4; // @loc[1]=test1_common_start
+
+// Commoncode file imported by test1_device.dml
