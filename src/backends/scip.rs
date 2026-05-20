@@ -146,6 +146,37 @@ fn extract_relationships(
                 }
             }
         }
+
+        // --- Template → template inheritance (is) ---
+        for sym_ref in device.symbol_info.template_symbols.values() {
+            let sym = sym_ref.symbol.lock().unwrap();
+            let source_span = &sym.loc;
+
+            let Some(source_scip) = span_map.get(source_span) else {
+                continue;
+            };
+
+            if let SymbolSource::Template(templ_arc) = &sym.source {
+                let mut rels: Vec<Relationship> = Vec::new();
+
+                for parent_trait in templ_arc.traitspec.parents.values() {
+                    if let Some(loc) = &parent_trait.loc {
+                        if let Some(target_scip) = span_map.get(loc) {
+                            let mut rel = Relationship::new();
+                            rel.symbol = target_scip.clone();
+                            rel.is_implementation = true;
+                            rels.push(rel);
+                        }
+                    }
+                }
+
+                if !rels.is_empty() {
+                    result.entry(source_scip.clone())
+                        .or_default()
+                        .extend(rels);
+                }
+            }
+        }
     }
 
     // Deduplicate relationships across devices (multiple devices
