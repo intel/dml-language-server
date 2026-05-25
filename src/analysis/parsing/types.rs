@@ -684,6 +684,12 @@ impl Parse<CTypeDeclContent> for CTypeDecl {
     }
 }
 
+impl CTypeDeclContent {
+    pub fn first_token_matcher(token: TokenKind) -> bool {
+        token == TokenKind::Const || BaseType::first_token_matcher(token)
+    }
+}
+
 // TODO: Expand unit tests
 #[cfg(test)]
 mod test {

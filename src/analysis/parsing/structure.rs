@@ -10,7 +10,7 @@ use crate::analysis::parsing::misc::{CDecl, CDeclList, Initializer,
                                      ident_filter, objident_filter};
 use crate::analysis::parsing::statement::Statement;
 use crate::analysis::parsing::tree::{AstObject, LeafToken, TreeElement, TreeElements, ZeroRange};
-use crate::analysis::parsing::types::CTypeDecl;
+use crate::analysis::parsing::types::{CTypeDecl, CTypeDeclContent};
 use crate::analysis::parsing::parser::{doesnt_understand_tokens,
                                        FileParser, Parse, ParseContext,
                                        FileInfo};
@@ -305,15 +305,15 @@ fn parse_method(modifier: Option<LeafToken>,
             let mut paren_context = pre_statements_context.enter_context(
                 understands_rparen);
             let mut types = vec![];
-            // if return is declared, it cannot be empty
-                let mut end = false;
-            while !end {
+            let mut forced_end = false;
+            while paren_context.peek_kind(stream).is_some_and(|k|CTypeDeclContent::first_token_matcher(k))
+                  && !forced_end {
                 let typed = CTypeDecl::parse(&paren_context, stream, file_info);
                 let comma = match paren_context.peek_kind(stream) {
                     Some(TokenKind::Comma) =>
                         Some(paren_context.next_leaf(stream)),
                     _ => {
-                        end = true;
+                        forced_end = true;
                         None
                     },
                 };
