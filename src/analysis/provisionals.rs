@@ -15,7 +15,7 @@ use crate::analysis::FileSpec;
 pub enum Provisional {
     // TODO: implement the neccessary checks for explicit params
     ExplicitMethodDecls,
-    ExplicitObjectDecls,
+    ExplicitObjectExtensions,
     ExplicitParamDecls,
     SimicsUtilVect,
 }
@@ -71,7 +71,7 @@ mod test {
     #[test]
     fn test_provisionals_parsing() {
         for (s, p) in [
-            ("explicit_object_decls", Provisional::ExplicitObjectDecls),
+            ("explicit_object_extensions", Provisional::ExplicitObjectExtensions),
             ("explicit_param_decls", Provisional::ExplicitParamDecls),
             ("explicit_method_decls", Provisional::ExplicitMethodDecls),
             ("simics_util_vect", Provisional::SimicsUtilVect),

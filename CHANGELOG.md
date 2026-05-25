@@ -12,6 +12,7 @@
 - Fixed a bug that caused intermittent failures around instantiated templates
 - Added the ability to goto-definition on imports to find the file that was imported
 - Allowed empty `-> ()` type specifier for method returns
+- Replace provisional `explicit\_object\_decls` with `explicit\_object\_extensions`
 
 ## 0.9.18
 - Fixed a rare case where the DLS would crash when reporting device contexts
