@@ -1276,11 +1276,17 @@ impl DeviceAnalysis {
                     return Self::adjust_method_for_pos(defmeth, pos);
                 },
                 Some(DefaultCallReference::Ambiguous(defmeths)) => {
+                    // NOTE: We need to make results unique here, since diamond inheritance could cause us
+                    // to hit the same method twice when adjusting
+                    let mut res_make_unique = HashSet::new();
                     let mut res: Vec<_> = defmeths.iter()
                         .filter_map(|df|Self::adjust_method_for_pos(df, pos))
+                        .filter(|m|res_make_unique.insert(m.location()))
                         .collect();
                     if res.len() > 1 {
-                        internal_error!("Invariant broken: multiple methods contain the pos {:?} over method {:?}\nhit methods are: {:?}", pos, method, res);
+                        internal_error!("Invariant broken: multiple methods contain the pos {:?} over method {:?} at {:?}\nhit methods are: {:?}",
+                        pos, method.identity(), method.location(),
+                        res.iter().map(|m|format!("{:?} at {:?}", m.identity(), m.location())).collect::<Vec<_>>());
                     }
                     return res.pop();
                 },
