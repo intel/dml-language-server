@@ -14,7 +14,7 @@ use crate::analysis::parsing::tree::{AstObject, TreeElement, TreeElements,
                             LeafToken, ZeroRange};
 use crate::analysis::parsing::misc::{CDecl, ident_filter};
 use crate::analysis::parsing::expression::Expression;
-use crate::analysis::reference::{Reference, ReferenceKind};
+use crate::analysis::reference::{CodeReference, Reference, ReferenceKind};
 use crate::analysis::{FileSpec, LocalDMLError};
 use crate::vfs::TextFile;
 
@@ -489,9 +489,9 @@ impl TreeElement for BaseTypeContent {
                       file: FileSpec<'a>) {
         self.default_references(accumulator, file);
         if let BaseTypeContent::Ident(leaf) = self {
-            if let Some(refr) = Reference::global_from_token(
+            if let Some(refr) = CodeReference::global_from_token(
                 leaf, file, ReferenceKind::Type) {
-                accumulator.push(refr);
+                accumulator.push(refr.into());
             }
         }
     }
@@ -681,6 +681,12 @@ impl Parse<CTypeDeclContent> for CTypeDecl {
             base,
             simple,
         }.into()
+    }
+}
+
+impl CTypeDeclContent {
+    pub fn first_token_matcher(token: TokenKind) -> bool {
+        token == TokenKind::Const || BaseType::first_token_matcher(token)
     }
 }
 

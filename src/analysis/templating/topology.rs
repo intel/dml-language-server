@@ -24,6 +24,7 @@ use crate::analysis::templating::objects::{create_objectspec};
 use crate::analysis::templating::traits::{TemplateTraitInfo,
                                           DMLTemplate,
                                           DMLTrait};
+use crate::file_management::CanonPath;
 
 lazy_static! {
     static ref RANKMAKER_ID: Mutex<u64> = Mutex::new(0);
@@ -168,7 +169,7 @@ pub fn create_templates_traits<'t>(
     template_specs: HashMap<&'t str, TemplateRef<'t>>,
     order: Vec<&'t str>,
     invalid_isimps: HashMap<InferiorVariant<'t>, Vec<&'t str>>,
-    imp_map: &'t HashMap<Import, String>,
+    imp_map: &'t HashMap<Import, CanonPath>,
     rank_struct: HashMap<&'t str, InEachStruct<'t>>,
     report: &mut Vec<DMLError>)
     -> TemplateTraitInfo {
@@ -256,7 +257,7 @@ pub struct DependencyInfo<'t> {
 }
 
 pub fn dependencies<'t>(statements: &'t StatementSpec,
-                        imp_map: &'t HashMap<Import, String>)
+                        imp_map: &'t HashMap<Import, CanonPath>)
                         -> DependencyInfo<'t> {
     let mut queue = vec![];
     let mut inferior = Inferiors::new();
@@ -313,8 +314,7 @@ pub fn dependencies<'t>(statements: &'t StatementSpec,
                 let name = imp_map.get(&imp.obj)
                     .map_or_else(||imp.obj.imported_name(), |s|s.as_str());
                 debug!("Mapped import {:?} to {:?}", imp.obj, name);
-                inferior.insert(name,
-                                InferiorVariant::Import(imp));
+                inferior.insert(name, InferiorVariant::Import(imp));
                 if imp.cond == ExistCondition::Always {
                     unconditional_references.insert(name);
                 }
@@ -480,7 +480,7 @@ type RankedTemplates<'t> = (HashMap<&'t str, TemplateRef<'t>>,
 pub fn rank_templates<'t>(real_templates: &HashMap<&'t str,
                                                    &'t ObjectDecl<Template>>,
                           files: &HashMap<&'t str, &'t TopLevel>,
-                          imp_map: &'t HashMap<Import, String>,
+                          imp_map: &'t HashMap<Import, CanonPath>,
                           report: &mut Vec<DMLError>)
                           -> RankedTemplates<'t>
 {
@@ -549,7 +549,7 @@ pub const BUILTIN_TEMPLATES: [&str; 47] = ["name",
 
 pub fn rank_templates_aux<'t>(mut templates: HashMap<&'t str,
                                                      TemplateRef<'t>>,
-                              imp_map: &'t HashMap<Import, String>,
+                              imp_map: &'t HashMap<Import, CanonPath>,
                               mut invalid_isimps: HashMap<InferiorVariant<'t>,
                                                           Vec<&'t str>>,
                               report: &mut Vec<DMLError>)
@@ -717,7 +717,7 @@ pub fn rank_templates_aux<'t>(mut templates: HashMap<&'t str,
                     match stmnt {
                         StatementSpecStatement::Import(imp) => {
                             if imp_map.get(&imp.obj).is_some_and(
-                                |iname|iname == templ2.get_name()) {
+                                |iname|iname.as_str() == templ2.get_name()) {
                                 is_import_cycle = true;
                                 is_or_imp_sites.push(imp.span());
                             }
@@ -778,7 +778,7 @@ pub fn rank_templates_aux<'t>(mut templates: HashMap<&'t str,
                         debug!("considering {:?}", stmnt);
 
                         // TODO: Look over if this is actually always safe
-                        if &imp_map[&imp.obj] == second {
+                        if &imp_map[&imp.obj].as_str() == second {
                             trace!("Set to disregard invalid 'import' {:?}",
                                    imp);
                             removed_one = true;

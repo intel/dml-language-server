@@ -35,6 +35,7 @@ use crate::analysis::templating::topology::{InEachStruct, InferiorVariant,
 use crate::analysis::templating::traits::{DMLTemplate, DMLTrait,
                                           get_impls, TraitMemberKind, TemplateTraitInfo};
 use crate::analysis::{LocationSpan, DeclarationSpan, combine_vec_of_decls};
+use crate::file_management::CanonPath;
 
 type InEachSpec = HashMap<String, Vec<(Vec<String>, (ZeroSpan, Arc<ObjectSpec>))>>;
 pub type StructureKey = DefaultKey;
@@ -110,7 +111,7 @@ fn create_spec<'t>(loc: ZeroSpan,
                    in_each_specs: &HashMap<&'t ObjectDecl<InEach>,
                                            Arc<ObjectSpec>>,
                    invalid_isimps: &HashMap<InferiorVariant<'t>, Vec<&'t str>>,
-                   imp_map: &HashMap<Import, String>,
+                   imp_map: &HashMap<Import, CanonPath>,
                    templates: &HashMap<String, Arc<DMLTemplate>>,
                    rank: &Rank,
                    _report: &mut Vec<DMLError>)
@@ -161,17 +162,15 @@ fn create_spec<'t>(loc: ZeroSpan,
     }
     let mut imports = HashMap::default();
     for inst in &spec.imports {
-        if let Some(invalid_names) = invalid_isimps.get(
-            &InferiorVariant::Import(inst)) {
+        if let Some(invalid_names) = invalid_isimps.get(&InferiorVariant::Import(inst)) {
             assert!(invalid_names.len() == 1);
         } else {
             imports.insert(
                 inst.clone(),
                 templates.get(
-                    imp_map.get(&inst.obj)
-                        .map_or_else(||inst.obj.imported_name(),
-                                     |s|s.as_str()))
-                    .cloned().unwrap());
+                    imp_map.get(&inst.obj).map_or_else(||inst.obj.imported_name(),
+                                                       |s|s.as_str())
+                ).cloned().unwrap());
         };
     }
 
@@ -231,7 +230,7 @@ pub fn create_objectspec<'t>(loc: ZeroSpan,
                              in_each_struct: &InEachStruct<'t>,
                              invalid_isimps: &HashMap<InferiorVariant<'t>,
                                                       Vec<&'t str>>,
-                             imp_map: &HashMap<Import, String>,
+                             imp_map: &HashMap<Import, CanonPath>,
                              templates: &HashMap<String, Arc<DMLTemplate>>,
                              rankmaker: &mut RankMaker,
                              report: &mut Vec<DMLError>) -> Arc<ObjectSpec> {
@@ -266,29 +265,29 @@ pub fn create_objectspec<'t>(loc: ZeroSpan,
                 imp_map, templates, &rank, report)
 }
 
-pub fn make_device<'t>(path: &str,
+pub fn make_device<'t>(path: &CanonPath,
                        toplevel: &TopLevel,
                        tt_info: &TemplateTraitInfo,
-                       mut imp_map: HashMap<Import, String>,
+                       mut imp_map: HashMap<Import, CanonPath>,
                        container: &'t mut StructureContainer,
                        rankmaker: &mut RankMaker,
                        report: &mut Vec<DMLError>) -> &'t DMLCompositeObject {
-    debug!("Creating a device for {}", path);
+    debug!("Creating a device for {:?}", path);
     // create the faux spec for the device toplevel, importing the device file
     // and specifying commandline parameters (TODO)
     let mut faux_stmts = StatementSpec::empty();
     let base_import = Import {
-        span: ZeroSpan::invalid(path),
+        span: ZeroSpan::invalid(path.clone()),
         name: DMLString {
             // We need to quote the path here, so as to adhere to all other
             // imports that are quoted
-            val: format!("\"{}\"", path),
-            span: ZeroSpan::invalid(path),
+            val: format!("\"{}\"", path.as_str()),
+            span: ZeroSpan::invalid(path.clone()),
         },
     };
     faux_stmts.imports.push(ObjectDecl::always(&base_import));
     // Sneak the faux statement into the imp_map
-    imp_map.insert(base_import, path.to_string());
+    imp_map.insert(base_import, path.clone());
     // Guaranteed, we do not dispatch device analysis on things
     // without device declarations
     let device_decl = toplevel.device.as_ref().unwrap();

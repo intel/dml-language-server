@@ -31,7 +31,7 @@ use crate::actions::analysis_storage::{TimestampedStorage};
 use crate::actions::semantic_lookup::{DLSLimitation, isolated_template_limitation};
 use crate::analysis::symbols::{DMLSymbolKind, SimpleSymbol, StructureSymbol, SymbolContainer, SymbolMaker, SymbolSource};
 pub use crate::analysis::symbols::SymbolRef;
-use crate::analysis::reference::{GlobalReference, NodeRef, Reference, ReferenceKind, ReferenceVariant, VariableReference};
+use crate::analysis::reference::{GlobalReference, NodeRef, CodeReference, Reference, ReferenceKind, ReferenceVariant, VariableReference};
 use crate::analysis::scope::{Scope, SymbolContext,
                              ContextKey, ContextedSymbol};
 use crate::analysis::parsing::parser::{FileInfo, FileParser};
@@ -573,6 +573,8 @@ impl ReferenceCache {
                       -> ReferenceCacheKey {
         let (object, refr) = key;
         let method_scope =
+            // contexts-to-obj will always give the most-overriding method, but our reference may actually be from a scope in an overridden method.
+            // So here we adjust and find the correct method
             if let Some(meth) = object.and_then(|o|o.as_shallow()).and_then(|s|s.variant.as_method()) {
                 let adjusted_meth = DeviceAnalysis::adjust_method_for_pos(meth, &refr.span().start_position())
                     .unwrap_or(meth);
@@ -1274,16 +1276,23 @@ impl DeviceAnalysis {
                     return Self::adjust_method_for_pos(defmeth, pos);
                 },
                 Some(DefaultCallReference::Ambiguous(defmeths)) => {
+                    // NOTE: We need to make results unique here, since diamond inheritance could cause us
+                    // to hit the same method twice when adjusting
+                    let mut res_make_unique = HashSet::new();
                     let mut res: Vec<_> = defmeths.iter()
                         .filter_map(|df|Self::adjust_method_for_pos(df, pos))
+                        .filter(|m|res_make_unique.insert(m.location()))
                         .collect();
                     if res.len() > 1 {
-                        internal_error!("Invariant broken: multiple methods contain the pos {:?} over method {:?}\nhit methods are: {:?}", pos, method, res);
+                        internal_error!("Invariant broken: multiple methods contain the pos {:?} over method {:?} at {:?}\nhit methods are: {:?}",
+                        pos, method.identity(), method.location(),
+                        res.iter().map(|m|format!("{:?} at {:?}", m.identity(), m.location())).collect::<Vec<_>>());
                     }
                     return res.pop();
                 },
+                // NOTE: we would like to report this as an internal error somewhere, but it turns out to be too
+                // costly to do so
                 _ => {
-                    internal_error!("Fell through recursive method noderef resolution for {:?} in method {:?}", pos, method);
                     return None;
                 }
             }
@@ -1299,12 +1308,14 @@ impl DeviceAnalysis {
                                             method_structure: &HashMap
                                             <ZeroSpan, RangeEntry>,
                                             ref_matches: &mut ReferenceMatches) {
-        // When resolving a noderef from an overridden method, meth here will be
-        // a bottom-most overriding method. So instead find the correct method
+        // Context-to-obj will always give the most-overriding method, but our reference may actually
+        // be from a scope in an overridden method. So here we adjust and find the correct method
         // by recursing to parent
         trace!("Resolving simple noderef {:?} in method {:?}", node, meth);
         let Some(adjusted_meth) = Self::adjust_method_for_pos(meth, &node.span().start_position())
-        else { return; };
+        else {
+            return;
+        };
         trace!("After adjusting, looking up in {:?}", adjusted_meth);
         match node.val.as_str() {
             "this" =>
@@ -1544,7 +1555,7 @@ impl DeviceAnalysis {
     }
 
     fn handle_symbol_ref(symbol: &SymbolRef,
-                         reference: &Reference) {
+                         reference: &CodeReference) {
         let mut sym = symbol.lock().unwrap();
         sym.references.insert(*reference.loc_span());
         if sym.kind == DMLSymbolKind::Template && reference.extra_info.was_instantiation {
@@ -1567,6 +1578,11 @@ impl DeviceAnalysis {
         let current_scope = scope_chain.last().unwrap();
         let context_chain: Vec<ContextKey> = scope_chain
             .iter().map(|s|s.create_context()).collect();
+        // NOTE: Awkwardly, this will _not_ give the correct override level
+        // for scopes that are overridden methods. So we will re-adjust
+        // the method reference at later points (when caching and looking up
+        // refs in method). This cannot be done at this level because we are
+        // dealing with a concrete object, and not a method reference.
         let objects_of_scope =
             if context_chain.len() == 1 {
                 // Must be device object
@@ -1592,48 +1608,50 @@ impl DeviceAnalysis {
             |mut local_reports, references|{
                 status.check_alive()?;
                 for reference in references {
-                    for object in &objects_of_scope {
-                        trace!("In {:?}, Matching {:?}", object, reference);
-                        let symbol_lookup = match &reference.variant {
-                            ReferenceVariant::Variable(var) => self.find_target_for_reference(
-                                Some(object),
-                                var,
-                                method_structure,
-                                reference_cache),
+                    // Non-coderef references will be resolved on-demand as requests are made
+                    if let Some(code_ref) = reference.as_code_ref() {
+                        for object in &objects_of_scope {
+                            trace!("In {:?}, Matching {:?}", object, reference);
+                            let symbol_lookup = match &code_ref.variant {
+                                ReferenceVariant::Variable(var) => self.find_target_for_reference(
+                                    Some(object),
+                                    var,
+                                    method_structure,
+                                    reference_cache),
                                 ReferenceVariant::Global(glob) =>
-                                self.lookup_global_from_ref(glob),
-                        };
-
-                        match symbol_lookup.kind {
-                            ReferenceMatchKind::NotFound =>
-                            // TODO: report suggestions?
-                            // TODO: Uncomment reporting of errors here when
-                            // semantics are strong enough that they are rare
-                            // for correct devices
-                            // report.lock().unwrap().push(DMLError {
-                            //     span: reference.span().clone(),
-                            //     description: format!("Unknown reference {}",
-                            //                          reference.to_string()),
-                            //     related: vec![],
-                            // })
+                                    self.lookup_global_from_ref(glob),
+                            };
+                                
+                            match symbol_lookup.kind {
+                                ReferenceMatchKind::NotFound =>
+                                // TODO: report suggestions?
+                                // TODO: Uncomment reporting of errors here when
+                                // semantics are strong enough that they are rare
+                                // for correct devices
+                                // report.lock().unwrap().push(DMLError {
+                                //     span: reference.span().clone(),
+                                //     description: format!("Unknown reference {}",
+                                //                          reference.to_string()),
+                                //     related: vec![],
+                                // })
                                 (),
-                            // This maps symbols->references, this is later
-                            // used to create the inverse map
-                            // (not done here because of ownership issues)
+                                // This maps symbols->references, this is later
+                                // used to create the inverse map
+                                // (not done here because of ownership issues)
                             ReferenceMatchKind::Found =>
                                 for symbol in &symbol_lookup.references {
-                                    Self::handle_symbol_ref(symbol, reference);
+                                    Self::handle_symbol_ref(symbol, code_ref);
                                 },
                             ReferenceMatchKind::MismatchedFind =>
-                            //TODO: report mismatch,
+                                //TODO: report mismatch,
                                 (),
+                            }
+                            local_reports.extend(symbol_lookup.messages);
                         }
-                        local_reports.extend(symbol_lookup.messages);
                     }
                 }
                 Ok(local_reports)
-            })
-            .try_reduce(Vec::new, |mut vec1, vec2|{ vec1.extend(vec2); Ok(vec1) });
+        }).try_reduce(Vec::new, |mut vec1, vec2|{ vec1.extend(vec2); Ok(vec1) });
         report.extend(errs?);
         Ok(())
     }
@@ -2328,7 +2346,7 @@ impl DeviceAnalysis {
                              unique_templates: &HashMap<
                                      &str, &ObjectDecl<Template>>,
                              files: &HashMap<&str, &TopLevel>,
-                             imp_map: &HashMap<Import, String>,
+                             imp_map: &HashMap<Import, CanonPath>,
                              errors: &mut Vec<DMLError>)
                              -> TemplateTraitInfo {
         info!("Rank templates");
@@ -2392,7 +2410,7 @@ impl DeviceAnalysis {
 
     pub fn new(root: IsolatedAnalysis,
                timed_bases: Vec<TimestampedStorage<IsolatedAnalysis>>,
-               imp_map: HashMap<Import, String>,
+               imp_map: HashMap<Import, CanonPath>,
                device_job_options: DeviceAnalysisJobOptions,
                status: AliveStatus)
                -> AnalysisProcessResult<DeviceAnalysis> {
@@ -2483,7 +2501,7 @@ impl DeviceAnalysis {
         // TODO: this is where we would do type resolution
         let mut container = StructureContainer::default();
         info!("Make device");
-        let device_key = make_device(root.path.as_str(), &root.toplevel,
+        let device_key = make_device(&root.path, &root.toplevel,
                                      &tt_info, imp_map, &mut container,
                                      &mut rank_maker, &mut errors).key;
         status.check_alive()?;

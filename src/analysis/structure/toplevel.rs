@@ -860,7 +860,7 @@ impl TopLevel {
             // for checking if a range is within a file (it will be if the
             // files match)
             filespan: ZeroSpan::from_range(ZeroRange::from_u32(
-                0,0,u32::MAX,u32::MAX), filespec.path),
+                0, u32::MAX, 0, u32::MAX), filespec.path),
             filename: filespec.path.to_path_buf(),
             version,
             device,

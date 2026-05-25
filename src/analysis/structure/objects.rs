@@ -11,7 +11,7 @@ use crate::analysis::structure::types::{DMLType, deconstruct_cdecl, to_type};
 use crate::analysis::FileSpec;
 use crate::analysis::{LocalDMLError, DeclarationSpan, LocationSpan, DMLNamed,
                       Named};
-use crate::analysis::reference::{ReferenceKind, Reference,
+use crate::analysis::reference::{CodeReference, ReferenceKind, Reference,
                                  ReferenceContainer};
 use crate::analysis::symbols::{StructureSymbol, SimpleSymbol,
                                DMLSymbolKind,
@@ -1789,11 +1789,11 @@ fn to_composite_object<'a>(content: &structure::CompositeObjectContent,
     content.instantiation.references(&mut references, file);
     content.statements.references(&mut references, file);
     let kind = interpret_kind(&content.kind, file);
-    references.push(Reference::global_from_string(
+    references.push(CodeReference::global_from_string(
         kind.kind_name().to_string(),
         ZeroSpan::from_range(content.kind.range(),
                              file.path),
-        ReferenceKind::Template));
+        ReferenceKind::Template).into());
     Some(CompositeObject {
         kind,
         object,

@@ -95,7 +95,7 @@ type AnalysisDirectDependencies =
 type AnalysisImportMap =
     HashMap<CanonPath,
             HashMap<Option<CanonPath>,
-                    HashMap<Import, String>>>;
+                    HashMap<Import, CanonPath>>>;
 
 // General note, all functions on AnalysisStorage assume that incoming PathBufs
 // are canonicalized
@@ -410,7 +410,7 @@ impl AnalysisStorage {
             for (dependency, import) in direct_dependencies {
                 context_dependencies.insert(dependency.clone());
                 context_import_maps.insert(
-                    import, dependency.as_str().to_string());
+                    import, dependency.clone());
 
                 // We need to request an analysis here, because this dependency
                 // might have just been found due to changed context

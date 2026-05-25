@@ -12,11 +12,12 @@ use crate::actions::analysis_storage::{AnalysisLookupError, AnalysisStorage};
 use crate::actions::{ContextDefinition, InitActionContext};
 use crate::analysis::scope::{ContextedSymbol, ContextKey};
 use crate::analysis::structure::objects::MaybeAbstract;
+use crate::analysis::structure::expressions::DMLString;
 use crate::analysis::symbols::DMLSymbolKind;
-use crate::analysis::{DeviceAnalysis, IsolatedAnalysis, LocationSpan, SymbolRef};
+use crate::analysis::{DeviceAnalysis, IsolatedAnalysis, LocationSpan, SymbolRef, ZeroRange};
 
 use crate::analysis::parsing::tree::{ZeroSpan, ZeroFilePosition};
-use crate::analysis::reference::{Reference, ReferenceKind};
+use crate::analysis::reference::{CodeReference, Reference, ReferenceKind};
 use crate::file_management::CanonPath;
 use crate::server::Output;
 
@@ -91,6 +92,7 @@ struct SemanticLookup<'t> {
     pub stored_symbols: DeviceSymbols<'t>,
     pub found_ref: Option<Reference>,
     pub analysis_info: AnalysisInfo<'t>,
+    pub targeted_files: Vec<CanonPath>,
     pub recognized_limitations: HashSet<DLSLimitation>,
 }
 
@@ -107,8 +109,8 @@ impl std::fmt::Debug for SemanticLookup<'_> {
 
 impl <'t> SemanticLookup<'t> {
     pub fn create_lookup(fp: &ZeroFilePosition,
-                        analysis_lock: &'t AnalysisStorage,
-                        ctx: &'t InitActionContext<impl Output>)
+                         analysis_lock: &'t AnalysisStorage,
+                         ctx: &'t InitActionContext<impl Output>)
         -> Result<Self, AnalysisLookupError> {
         let active_filter = ctx.device_active_contexts.lock().unwrap().clone();
         let analysis_info = analysises_at_fp(analysis_lock, fp, Some(&active_filter))?;
@@ -122,14 +124,20 @@ impl <'t> SemanticLookup<'t> {
 
         let mut stored_symbols = vec![];
         let mut found_ref = None;
+        let mut targeted_files = vec![];
         match lookup_result {
             SymbolsOrReference::Symbols(symbol_refs) => stored_symbols = symbol_refs,
             SymbolsOrReference::Reference(reference) => {
                 found_ref = Some(reference.clone());
-                stored_symbols = get_symbols_of_ref(
-                    &reference,
-                    &analysis_info,
-                    &mut recognized_limitations)
+                match reference {
+                    Reference::CodeReference(code_ref) => {
+                        stored_symbols = get_symbols_of_ref(&code_ref, &analysis_info, &mut recognized_limitations);
+                    },
+                    Reference::FileReference(file_ref) => {
+                        targeted_files = get_import_target_of(&file_ref, analysis_lock)
+                            .into_iter().cloned().collect();
+                    },
+                }
             },
             SymbolsOrReference::Nothing => (),
         }
@@ -139,6 +147,7 @@ impl <'t> SemanticLookup<'t> {
             found_ref, 
             analysis_info,
             recognized_limitations,
+            targeted_files,
         })
     }
 
@@ -194,7 +203,7 @@ fn get_refs_and_syms_at_fp<'t>(
         }
         return Ok(SymbolsOrReference::Symbols(syms));
     }
-    if let Some(refr) = ref_at_pos {
+    if let Some(refr) = ref_at_pos.and_then(|r|r.as_code_ref()) {
         if refr.reference_kind() == ReferenceKind::Type {
             relevant_limitations.insert(type_semantic_limitation());
         }
@@ -207,7 +216,7 @@ fn get_refs_and_syms_at_fp<'t>(
     }
 }
 
-fn get_symbols_of_ref<'t>(reference: &Reference,
+fn get_symbols_of_ref<'t>(reference: &CodeReference,
                           analysis_info: &AnalysisInfo<'t>,
                           relevant_limitations: &mut HashSet<DLSLimitation>)
     -> DeviceSymbols<'t> {
@@ -248,6 +257,22 @@ fn get_symbols_of_ref<'t>(reference: &Reference,
     }
 
     symbols
+}
+
+fn get_import_target_of<'t>(import_file_ref: &DMLString, analysis_info: &'t AnalysisStorage) -> Vec<&'t CanonPath> {
+    debug!("Mapping file reference {:?} to import target",import_file_ref);
+    let contexts_map = analysis_info.import_map.get(&CanonPath::from_path_buf(import_file_ref.span.path()).unwrap());
+    let all_imports = contexts_map.map(|file_imports|file_imports.values());
+    let mut result = vec![];
+    if let Some(maps) = all_imports {
+        for map in maps {
+            if let Some((_, resolved)) = map.iter()
+                .find(|(import_decl, _)|import_decl.name.val.as_str() == import_file_ref.val.as_str()) {
+                result.push(resolved);
+            }
+        }
+    }
+    result
 }
 
 fn context_symbol_at_pos<'t>(isolated_analysis: &'t IsolatedAnalysis, pos: &ZeroFilePosition) ->
@@ -382,10 +407,18 @@ pub fn definitions_at_fp(context: &InitActionContext<impl Output>,
         &analysis_lock,
         context)?;
     mem::swap(relevant_limitations, &mut semantic_lookup.recognized_limitations);
-    Ok(semantic_lookup.symbols()
-       .into_iter()
-       .flat_map(|s|definitions_of_symbol(&s, semantic_lookup.found_ref.as_ref()))
-       .collect())
+    if let Some(refr) = semantic_lookup.found_ref.as_ref().and_then(Reference::as_file_ref) {
+        let targets = get_import_target_of(refr, &analysis_lock);
+        Ok(targets.into_iter().map(|t|
+            ZeroSpan::from_range(ZeroRange::from_u32(0,0,0,0),
+                                 t.as_path().to_path_buf())
+        ).collect())
+    } else {
+        Ok(semantic_lookup.symbols()
+                .into_iter()
+                .flat_map(|s|definitions_of_symbol(&s, semantic_lookup.found_ref.as_ref()))
+                .collect())
+    }
 }
 
 pub fn declarations_at_fp(context: &InitActionContext<impl Output>,
