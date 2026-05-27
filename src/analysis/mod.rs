@@ -1932,7 +1932,7 @@ fn extend_with_templates(maker: &SymbolMaker,
 
 fn new_symbol_from_object(maker: &SymbolMaker,
                           object: &DMLCompositeObject) -> SymbolRef {
-    let all_decl_defs = &object.all_decls;
+    let all_decl_defs: Vec<ZeroSpan> = object.all_decls.iter().map(|spec|*spec.loc_span()).collect();
     symbol_ref!(
         maker,
         object.declloc,
