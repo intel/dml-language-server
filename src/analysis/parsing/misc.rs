@@ -665,7 +665,7 @@ pub fn objident_filter(token: TokenKind) -> bool {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::test::*;
+    use crate::test_helpers::*;
 
     #[test]
     fn initializer() {

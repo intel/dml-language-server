@@ -2031,7 +2031,7 @@ pub fn dmlstatement_first_token_matcher(token: TokenKind) -> bool {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::test::*;
+    use crate::test_helpers::*;
 
     #[allow(clippy::ptr_arg)]
     fn test_statement_tree(source: &str,

@@ -43,7 +43,7 @@ pub mod span;
 pub mod utility;
 pub mod vfs;
 #[cfg(test)]
-pub mod test;
+pub mod test_helpers;
 pub mod logging;
 pub mod file_tests;
 

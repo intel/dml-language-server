@@ -12,17 +12,17 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 
-use crate::actions::analysis_storage::{AnalysisStorage, TimestampedStorage, AnalysisLookupError};
-use crate::actions::{InitActionContext, DeviceAnalysisJobOptions};
-use crate::concurrency::JobStatusKeeper;
-use crate::analysis::{DeviceAnalysis, IsolatedAnalysis, ZeroFilePosition};
-use crate::analysis::parsing::tree::{LeafToken, TreeElement, ZeroPosition, ZeroSpan};
-use crate::analysis::structure::objects::Import;
-use crate::vfs::{TextFile, Vfs};
-use crate::span::{Position, ZeroIndexed};
-use crate::file_management::{CanonPath, PathResolver};
-use crate::server::io::Output;
-use crate::actions::semantic_lookup::{definitions_at_fp, declarations_at_fp,
+use dls::actions::analysis_storage::{AnalysisStorage, TimestampedStorage, AnalysisLookupError};
+use dls::actions::{InitActionContext, DeviceAnalysisJobOptions};
+use dls::concurrency::JobStatusKeeper;
+use dls::analysis::{DeviceAnalysis, IsolatedAnalysis, ZeroFilePosition};
+use dls::analysis::parsing::tree::{LeafToken, TreeElement, ZeroPosition, ZeroSpan};
+use dls::analysis::structure::objects::Import;
+use dls::vfs::{TextFile, Vfs};
+use dls::span::{Position, ZeroIndexed};
+use dls::file_management::{CanonPath, PathResolver};
+use dls::server::io::Output;
+use dls::actions::semantic_lookup::{definitions_at_fp, declarations_at_fp,
                                        implementations_at_fp, references_at_fp, DLSLimitation};
 
 // Mock output for testing
@@ -34,8 +34,8 @@ impl Output for MockOutput {
         // noop
     }
 
-    fn provide_id(&self) -> crate::server::RequestId {
-        use crate::server::message::RequestId as MessageRequestId;
+    fn provide_id(&self) -> dls::server::RequestId {
+        use dls::server::message::RequestId as MessageRequestId;
         MessageRequestId::Num(1)
     }
 }
@@ -117,7 +117,7 @@ enum TargetKind {
 #[derive(Debug, Clone)]
 struct TargetSpec {
     name: String,
-    filename: Option<String>,  // Relative path under `src/test/test_files/`, exactly as passed to `setup_test`
+    filename: Option<String>,  // Relative path under `tests/test_files/`, exactly as passed to `setup_test`
     kind: TargetKind,
 }
 
@@ -145,7 +145,7 @@ impl Deref for ResolvedTarget {
 
 impl ResolvedTarget {
     /// Path of the file containing the target `@loc`, relative to
-    /// `src/test/test_files/`. Always populated post-resolution.
+    /// `tests/test_files/`. Always populated post-resolution.
     fn filename(&self) -> &str {
         self.spec.filename.as_deref()
             .expect("BUG: collect_file_annotations should have prefixed all bare targets with a filename")
@@ -497,7 +497,7 @@ fn create_test_init_context<O: Output>(
         let analysis_lock = analysis.lock().unwrap();
         let mut active_contexts = ctx.device_active_contexts.lock().unwrap();
         for device_path in analysis_lock.device_analysis.keys() {
-            active_contexts.insert(crate::actions::ContextDefinition::Device(device_path.clone()));
+            active_contexts.insert(dls::actions::ContextDefinition::Device(device_path.clone()));
         }
     }
 
@@ -653,9 +653,9 @@ fn setup_test_with_imports(
     assert!(!filenames.is_empty(), "At least one filename must be provided");
 
     let vfs = Arc::new(Vfs::new());
-    let (sender, _receiver) = crossbeam::channel::unbounded::<crate::server::ServerToHandle>();
+    let (sender, _receiver) = crossbeam::channel::unbounded::<dls::server::ServerToHandle>();
     let analysis = Arc::new(Mutex::new(AnalysisStorage::init(sender)));
-    let base_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/test/test_files");
+    let base_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/test_files");
 
     let loaded_files: Vec<LoadedFile> = filenames.iter().map(|filename| {
         let file_path = base_dir.join(filename);
@@ -1015,11 +1015,11 @@ mod tests {
             all_sections.join("\n\n"));
     }
 
-    /// Path of `p` relative to `src/test/test_files/`, or the full path
+    /// Path of `p` relative to `tests/test_files/`, or the full path
     /// string if it falls outside that directory.
     fn rel_to_test_files(p: &Path) -> String {
         let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("src/test/test_files");
+            .join("tests/test_files");
         let canon_base = base.canonicalize().unwrap_or(base);
         let raw = p.strip_prefix(&canon_base)
             .map(|r| r.to_string_lossy().into_owned())
@@ -1272,7 +1272,7 @@ mod tests {
 
         // Find the canonical paths of the two expected `shared.dml` targets.
         let base_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("src/test/test_files");
+            .join("tests/test_files");
         let expected_a = CanonPath::from_path_buf(
             base_dir.join("imports/test3_inc_a/shared.dml")).unwrap();
         let expected_b = CanonPath::from_path_buf(

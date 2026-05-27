@@ -694,7 +694,7 @@ impl CTypeDeclContent {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::test::*;
+    use crate::test_helpers::*;
 
     #[test]
     fn ctypedecl() {

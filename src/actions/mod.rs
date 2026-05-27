@@ -407,7 +407,7 @@ impl <O: Output> InitActionContext<O> {
     }
 
     /// Used in semantic lookup tests to hack together an inited context without going through an actual server
-    #[cfg(test)]
+    #[doc(hidden)]
     pub fn new_for_testing(
         analysis: Arc<Mutex<AnalysisStorage>>,
         vfs: Arc<Vfs>,

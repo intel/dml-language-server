@@ -2280,7 +2280,7 @@ pub fn post_parse_toplevel(toplevel: &TopAst,
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::test::*;
+    use crate::test_helpers::*;
 
     // discovered a particular case while running towards test cases
     #[test]
