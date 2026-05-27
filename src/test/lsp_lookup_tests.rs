@@ -1023,9 +1023,14 @@ mod tests {
         let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("src/test/test_files");
         let canon_base = base.canonicalize().unwrap_or(base);
-        p.strip_prefix(&canon_base)
+        let raw = p.strip_prefix(&canon_base)
             .map(|r| r.to_string_lossy().into_owned())
-            .unwrap_or_else(|_| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|_| p.to_string_lossy().into_owned());
+        if std::path::MAIN_SEPARATOR != '/' {
+            raw.replace(std::path::MAIN_SEPARATOR, "/")
+        } else {
+            raw
+        }
     }
 
     /// Check whether a span matches a target's expected position and file.
