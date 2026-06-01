@@ -245,17 +245,20 @@ fn is_scip_identifier_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || matches!(c, '_' | '+' | '-' | '$')
 }
 
-/// Encode a name as a SCIP descriptor identifier.
+/// Append a name to `out` as a SCIP descriptor identifier.
 ///
 /// Names consisting entirely of SCIP identifier characters are emitted
 /// as-is (a "simple identifier").  Names that contain other characters
 /// (e.g. dots, spaces) are backtick-escaped, with interior backticks
 /// doubled.
-fn sanitize_name(name: &str) -> String {
+///
+/// Writing directly into a caller-provided buffer avoids the
+/// intermediate `String` allocation that `sanitize_name` would
+/// otherwise produce on every emission.
+fn push_sanitized(out: &mut String, name: &str) {
     if !name.is_empty() && name.chars().all(is_scip_identifier_char) {
-        name.to_string()
+        out.push_str(name);
     } else {
-        let mut out = String::new();
         out.push('`');
         for c in name.chars() {
             if c == '`' {
@@ -265,8 +268,14 @@ fn sanitize_name(name: &str) -> String {
             }
         }
         out.push('`');
-        out
     }
+}
+
+/// Encode a name as a SCIP descriptor identifier (allocating variant).
+fn sanitize_name(name: &str) -> String {
+    let mut out = String::new();
+    push_sanitized(&mut out, name);
+    out
 }
 
 /// Build a SCIP symbol string representing a DML source file.
@@ -275,14 +284,21 @@ fn sanitize_name(name: &str) -> String {
 /// full path for external files) as the descriptor.  Each path
 /// component becomes a term descriptor with proper SCIP escaping.
 fn make_file_symbol(path: &Path, project_root: &Path) -> String {
+    let mut out = String::from("dml simics . . ");
+    push_file_descriptors(&mut out, path, project_root);
+    out
+}
+
+/// Append the file-path descriptor block (each path component as a
+/// term descriptor) to `out`.
+fn push_file_descriptors(out: &mut String, path: &Path, project_root: &Path) {
     let rel = path.strip_prefix(project_root).unwrap_or(path);
-    let descriptors: String = rel.components()
-        .filter_map(|c| {
-            let s = c.as_os_str().to_str()?;
-            Some(format!("{}.", sanitize_name(s)))
-        })
-        .collect();
-    format!("dml simics . . {}", descriptors)
+    for component in rel.components() {
+        if let Some(s) = component.as_os_str().to_str() {
+            push_sanitized(out, s);
+            out.push('.');
+        }
+    }
 }
 
 /// Extract import resolution data from an AnalysisStorage for a set
@@ -390,41 +406,52 @@ impl DescriptorSuffix {
     }
 }
 
-/// A single segment of the code-namespace path embedded in a SCIP
-/// symbol string.
-struct NamespaceSegment {
-    name: String,
-    suffix: DescriptorSuffix,
+/// Incremental builder for the SCIP symbol string of nested
+/// declarations within a single file.
+///
+/// Maintains the full symbol prefix
+/// `dml simics . . <file_descriptors> <segment_descriptors>...`
+/// in a single `String` that grows on `push` and shrinks on `pop`.
+/// This avoids rebuilding the entire prefix (file path components +
+/// every ancestor segment, each re-sanitized) for every emitted
+/// declaration, which was previously the dominant cost of the walk
+/// for deep object trees.
+struct NamespaceBuilder {
+    /// Current accumulated symbol string.
+    buf: String,
+    /// Stack of buffer lengths so `pop` can truncate back to the
+    /// pre-push state in O(1).
+    lengths: Vec<usize>,
 }
 
-/// Build a global SCIP symbol string from file-relative path and
-/// a chain of namespace segments.
-///
-/// Format:
-///   `dml simics . . <file_path_descriptors> <namespace_descriptors>`
-fn make_namespace_symbol(
-    file_path: &Path,
-    project_root: &Path,
-    namespace: &[NamespaceSegment],
-) -> String {
-    let rel = file_path.strip_prefix(project_root).unwrap_or(file_path);
-    let mut descriptors = String::new();
-
-    // File path components as term descriptors
-    for component in rel.components() {
-        if let Some(s) = component.as_os_str().to_str() {
-            descriptors.push_str(&sanitize_name(s));
-            descriptors.push('.');
+impl NamespaceBuilder {
+    fn new(file_path: &Path, project_root: &Path) -> Self {
+        let mut buf = String::from("dml simics . . ");
+        push_file_descriptors(&mut buf, file_path, project_root);
+        Self {
+            buf,
+            lengths: Vec::new(),
         }
     }
 
-    // Code-level namespace descriptors
-    for seg in namespace {
-        descriptors.push_str(&sanitize_name(&seg.name));
-        descriptors.push_str(seg.suffix.as_str());
+    /// Push a code-namespace segment onto the builder, appending its
+    /// sanitized name and descriptor suffix to the buffer.
+    fn push(&mut self, name: &str, suffix: DescriptorSuffix) {
+        self.lengths.push(self.buf.len());
+        push_sanitized(&mut self.buf, name);
+        self.buf.push_str(suffix.as_str());
     }
 
-    format!("dml simics . . {descriptors}")
+    /// Pop the most recently pushed segment, truncating the buffer.
+    fn pop(&mut self) {
+        let len = self.lengths.pop().expect("unbalanced NamespaceBuilder pop");
+        self.buf.truncate(len);
+    }
+
+    /// The current full SCIP symbol string for the active namespace.
+    fn current(&self) -> &str {
+        &self.buf
+    }
 }
 
 /// Build a document-local SCIP symbol for a method argument or local.
@@ -442,22 +469,16 @@ fn emit_term_symbol(
     object: &DMLObjectCommon,
     scip_kind: ScipSymbolKind,
     doc_text: &str,
-    file_path: &Path,
-    project_root: &Path,
-    namespace: &mut Vec<NamespaceSegment>,
+    namespace: &mut NamespaceBuilder,
     file_data: &mut FileData,
     span_map: &mut SpanSymbolMap,
 ) {
-    let name = object.name.val.clone();
+    let name = &object.name.val;
     let name_span = &object.name.span;
     let full_span = &object.span;
 
-    namespace.push(NamespaceSegment {
-        name: name.clone(),
-        suffix: DescriptorSuffix::Term,
-    });
-
-    let sym = make_namespace_symbol(file_path, project_root, namespace);
+    namespace.push(name, DescriptorSuffix::Term);
+    let sym: String = namespace.current().to_string();
 
     span_map.insert(*name_span, sym.clone());
 
@@ -471,7 +492,7 @@ fn emit_term_symbol(
     let mut sym_info = SymbolInformation::new();
     sym_info.symbol = sym;
     sym_info.kind = scip_kind.into();
-    sym_info.display_name = name;
+    sym_info.display_name = name.clone();
     sym_info.documentation = vec![doc_text.to_string()];
     file_data.add_symbol_info(sym_info);
 
@@ -486,29 +507,27 @@ fn emit_term_symbol(
 /// occurrences and SymbolInformation entries for every declaration.
 fn walk_spec(
     spec: &StatementSpec,
-    file_path: &Path,
-    project_root: &Path,
-    namespace: &mut Vec<NamespaceSegment>,
+    namespace: &mut NamespaceBuilder,
     file_data: &mut FileData,
     local_counter: &mut u64,
     span_map: &mut SpanSymbolMap,
 ) {
     // --- Templates ---
     for template_decl in &spec.templates {
-        emit_template(template_decl, file_path, project_root,
-                      namespace, file_data, local_counter, span_map);
+        emit_template(template_decl, namespace, file_data,
+                      local_counter, span_map);
     }
 
     // --- Composite objects (bank, register, group, …) ---
     for obj_decl in &spec.objects {
-        emit_composite_object(obj_decl, file_path, project_root,
-                              namespace, file_data, local_counter, span_map);
+        emit_composite_object(obj_decl, namespace, file_data,
+                              local_counter, span_map);
     }
 
     // --- Methods ---
     for method_decl in &spec.methods {
-        emit_method(method_decl, file_path, project_root,
-                    namespace, file_data, local_counter, span_map);
+        emit_method(method_decl, namespace, file_data,
+                    local_counter, span_map);
     }
 
     // --- Parameters ---
@@ -522,7 +541,7 @@ fn walk_spec(
             &param_decl.obj.object,
             ScipSymbolKind::Constant,
             doc,
-            file_path, project_root, namespace, file_data, span_map,
+            namespace, file_data, span_map,
         );
     }
 
@@ -533,7 +552,7 @@ fn walk_spec(
                 &var_decl.object,
                 ScipSymbolKind::Variable,
                 "session",
-                file_path, project_root, namespace, file_data, span_map,
+                namespace, file_data, span_map,
             );
         }
     }
@@ -545,7 +564,7 @@ fn walk_spec(
                 &var_decl.object,
                 ScipSymbolKind::Variable,
                 "saved",
-                file_path, project_root, namespace, file_data, span_map,
+                namespace, file_data, span_map,
             );
         }
     }
@@ -557,7 +576,7 @@ fn walk_spec(
             &hook_decl.obj.object,
             ScipSymbolKind::Event,
             doc,
-            file_path, project_root, namespace, file_data, span_map,
+            namespace, file_data, span_map,
         );
     }
 
@@ -567,7 +586,7 @@ fn walk_spec(
             &const_decl.obj.object,
             ScipSymbolKind::Constant,
             "constant",
-            file_path, project_root, namespace, file_data, span_map,
+            namespace, file_data, span_map,
         );
     }
 
@@ -596,14 +615,9 @@ fn walk_spec(
             .collect::<Vec<_>>()
             .join(", ");
         let scope_name = format!("<in each #{ineach_idx}: {targets}>");
-        namespace.push(NamespaceSegment {
-            name: scope_name,
-            suffix: DescriptorSuffix::Term,
-        });
+        namespace.push(&scope_name, DescriptorSuffix::Term);
         walk_spec(
             &ineach_decl.spec,
-            file_path,
-            project_root,
             namespace,
             file_data,
             local_counter,
@@ -620,24 +634,18 @@ fn walk_spec(
 /// Emit SCIP data for a template declaration and recurse into its body.
 fn emit_template(
     template_decl: &ObjectDecl<crate::analysis::structure::objects::Template>,
-    file_path: &Path,
-    project_root: &Path,
-    namespace: &mut Vec<NamespaceSegment>,
+    namespace: &mut NamespaceBuilder,
     file_data: &mut FileData,
     local_counter: &mut u64,
     span_map: &mut SpanSymbolMap,
 ) {
     let tmpl = &template_decl.obj;
-    let name = tmpl.object.name.val.clone();
+    let name = &tmpl.object.name.val;
     let name_span = &tmpl.object.name.span;
     let full_span = &tmpl.object.span;
 
-    namespace.push(NamespaceSegment {
-        name: name.clone(),
-        suffix: DescriptorSuffix::Type,
-    });
-
-    let sym = make_namespace_symbol(file_path, project_root, namespace);
+    namespace.push(name, DescriptorSuffix::Type);
+    let sym: String = namespace.current().to_string();
 
     span_map.insert(*name_span, sym.clone());
 
@@ -653,15 +661,13 @@ fn emit_template(
     let mut sym_info = SymbolInformation::new();
     sym_info.symbol = sym;
     sym_info.kind = ScipSymbolKind::Class.into();
-    sym_info.display_name = name;
+    sym_info.display_name = name.clone();
     sym_info.documentation = vec!["template".to_string()];
     file_data.add_symbol_info(sym_info);
 
     // Recurse into the template's flattened spec
     walk_spec(
         &template_decl.spec,
-        file_path,
-        project_root,
         namespace,
         file_data,
         local_counter,
@@ -674,26 +680,20 @@ fn emit_template(
 /// Emit SCIP data for a composite object declaration and recurse.
 fn emit_composite_object(
     obj_decl: &ObjectDecl<crate::analysis::structure::objects::CompositeObject>,
-    file_path: &Path,
-    project_root: &Path,
-    namespace: &mut Vec<NamespaceSegment>,
+    namespace: &mut NamespaceBuilder,
     file_data: &mut FileData,
     local_counter: &mut u64,
     span_map: &mut SpanSymbolMap,
 ) {
     let comp = &obj_decl.obj;
-    let name = comp.object.name.val.clone();
+    let name = &comp.object.name.val;
     let name_span = &comp.object.name.span;
     let full_span = &comp.object.span;
     let scip_kind = dml_kind_to_scip_kind(
         &DMLSymbolKind::CompObject(comp.kind.kind));
 
-    namespace.push(NamespaceSegment {
-        name: name.clone(),
-        suffix: DescriptorSuffix::Term,
-    });
-
-    let sym = make_namespace_symbol(file_path, project_root, namespace);
+    namespace.push(name, DescriptorSuffix::Term);
+    let sym: String = namespace.current().to_string();
 
     span_map.insert(*name_span, sym.clone());
 
@@ -707,15 +707,13 @@ fn emit_composite_object(
     let mut sym_info = SymbolInformation::new();
     sym_info.symbol = sym;
     sym_info.kind = scip_kind.into();
-    sym_info.display_name = name;
+    sym_info.display_name = name.clone();
     sym_info.documentation = vec![comp.kind.kind.kind_name().to_string()];
     file_data.add_symbol_info(sym_info);
 
     // Recurse into nested declarations
     walk_spec(
         &obj_decl.spec,
-        file_path,
-        project_root,
         namespace,
         file_data,
         local_counter,
@@ -728,24 +726,18 @@ fn emit_composite_object(
 /// Emit SCIP data for a method declaration, including its arguments.
 fn emit_method(
     method_decl: &ObjectDecl<crate::analysis::structure::objects::Method>,
-    file_path: &Path,
-    project_root: &Path,
-    namespace: &mut Vec<NamespaceSegment>,
+    namespace: &mut NamespaceBuilder,
     file_data: &mut FileData,
     local_counter: &mut u64,
     span_map: &mut SpanSymbolMap,
 ) {
     let meth = &method_decl.obj;
-    let name = meth.object.name.val.clone();
+    let name = &meth.object.name.val;
     let name_span = &meth.object.name.span;
     let full_span = &meth.object.span;
 
-    namespace.push(NamespaceSegment {
-        name: name.clone(),
-        suffix: DescriptorSuffix::Method,
-    });
-
-    let sym = make_namespace_symbol(file_path, project_root, namespace);
+    namespace.push(name, DescriptorSuffix::Method);
+    let sym: String = namespace.current().to_string();
 
     span_map.insert(*name_span, sym.clone());
 
@@ -778,7 +770,7 @@ fn emit_method(
     let mut sym_info = SymbolInformation::new();
     sym_info.symbol = sym;
     sym_info.kind = ScipSymbolKind::Method.into();
-    sym_info.display_name = name;
+    sym_info.display_name = name.clone();
     sym_info.documentation = vec![doc_parts.join(" ")];
     file_data.add_symbol_info(sym_info);
 
@@ -827,7 +819,7 @@ fn process_file(
     let file_path: PathBuf = analysis.path.clone().into();
     let mut file_data = FileData::default();
     let mut local_counter: u64 = 0;
-    let mut namespace = Vec::new();
+    let mut namespace = NamespaceBuilder::new(&file_path, project_root);
 
     // File-level symbol (definition at line 0)
     let file_sym = make_file_symbol(&file_path, project_root);
@@ -883,8 +875,6 @@ fn process_file(
                 &var_decl.object,
                 ScipSymbolKind::Variable,
                 "extern",
-                &file_path,
-                project_root,
                 &mut namespace,
                 &mut file_data,
                 span_map,
@@ -895,11 +885,9 @@ fn process_file(
     // Top-level typedefs (not in StatementSpec)
     for typedef in &tl.typedefs {
         // Typedefs are type-like; use a type descriptor.
-        namespace.push(NamespaceSegment {
-            name: typedef.object.name.val.clone(),
-            suffix: DescriptorSuffix::Type,
-        });
-        let sym = make_namespace_symbol(&file_path, project_root, &namespace);
+        let typedef_name = &typedef.object.name.val;
+        namespace.push(typedef_name, DescriptorSuffix::Type);
+        let sym: String = namespace.current().to_string();
 
         let mut occ = Occurrence::new();
         occ.range = span_to_scip_range(&typedef.object.name.span);
@@ -909,14 +897,13 @@ fn process_file(
         file_data.add_occurrence(occ);
 
         if typedef.is_extern {
-            extern_typedef_map.insert(
-                typedef.object.name.val.clone(), sym.clone());
+            extern_typedef_map.insert(typedef_name.clone(), sym.clone());
         }
 
         let mut sym_info = SymbolInformation::new();
         sym_info.symbol = sym;
         sym_info.kind = ScipSymbolKind::TypeAlias.into();
-        sym_info.display_name = typedef.object.name.val.clone();
+        sym_info.display_name = typedef_name.clone();
         sym_info.documentation = vec![if typedef.is_extern {
             "extern typedef".to_string()
         } else {
@@ -936,8 +923,6 @@ fn process_file(
             },
             ScipSymbolKind::Constant,
             "loggroup",
-            &file_path,
-            project_root,
             &mut namespace,
             &mut file_data,
             span_map,
@@ -947,8 +932,6 @@ fn process_file(
     // Walk the main StatementSpec (templates, objects, methods, …)
     walk_spec(
         &tl.spec,
-        &file_path,
-        project_root,
         &mut namespace,
         &mut file_data,
         &mut local_counter,
@@ -1226,10 +1209,12 @@ pub fn build_scip_indices(
         let mut external_symbols = Vec::new();
 
         // Files belonging to this root → Documents.
-        if let Some(files) = root_buckets.get(&Some(canon_root)) {
+        // Move the bucket out so we don't have to clone each
+        // FileData (which carries hashmaps full of String keys).
+        if let Some(files) = root_buckets.remove(&Some(canon_root)) {
             for (path, data) in files {
-                let (occs, syms) = data.clone().into_vecs();
-                let rel = path.strip_prefix(canon_root).unwrap_or(path);
+                let (occs, syms) = data.into_vecs();
+                let rel = path.strip_prefix(canon_root).unwrap_or(&path);
                 let mut doc = Document::new();
                 doc.relative_path = rel.to_string_lossy().to_string();
                 doc.language = "dml".to_string();
