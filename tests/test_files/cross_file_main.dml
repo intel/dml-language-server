@@ -7,13 +7,11 @@ device cross_file_test;
 import "imported_file.dml";
 
 // Bank using imported template
-// @loc[6]=imported_bank
 // @loc[23]=imported_template_is
 bank imported_bank is imported_template { // @goto-def-decl[27]->imported_file.dml:imported_template
     // @loc[11]=bank_specific_param
     param bank_specific_param default 99; // @goto-ref[11]->imported_file.dml:bank_specific_param_ref
     
-    // @loc[12]=test_call
     method test_call() {
         // Reference to imported method
         this.imported_method(); // @goto-def-decl[14]->imported_file.dml:imported_method
@@ -23,7 +21,6 @@ bank imported_bank is imported_template { // @goto-def-decl[27]->imported_file.d
     }
 }
 
-// @loc[10]=shared_reg
 // @loc[24]=shared_method_template_is
 register shared_reg is shared_method_template { // @goto-def-decl[24]->imported_file.dml:shared_method_template
     // @loc[12]=abstract_shared_def
@@ -32,7 +29,6 @@ register shared_reg is shared_method_template { // @goto-def-decl[24]->imported_
     }
     
     // Call site for the shared method
-    // @loc[12]=caller
     method caller() {
         // @loc[14]=abstract_shared_call
         this.abstract_shared(); // @goto-def[14]->abstract_shared_def @goto-decl[14]->imported_file.dml:abstract_shared_decl

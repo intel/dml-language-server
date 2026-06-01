@@ -66,7 +66,6 @@ template multi_test_c {
 }
 
 // Positive: Object with both templates A and B
-// @loc[6]=both_single
 bank both_templates is (multi_test_a, multi_test_b) { // @goto-impl[6]->both_ab_ineach,split_ineach
     param single_custom default 300;
 }
@@ -77,7 +76,6 @@ in each (multi_test_a, multi_test_b) {
 }
 
 // Positive: Object with all three templates
-// @loc[6]=has_three
 bank has_all_three is (multi_test_a, multi_test_b, multi_test_c) { // @goto-impl[6]->three_ineach,both_ab_ineach,split_ineach
     param complete default 888;
 }
@@ -88,19 +86,16 @@ in each (multi_test_a, multi_test_b, multi_test_c) {
 }
 
 // Negative: Object with only one template (missing multi_test_b)
-// @loc[6]=only_a
 bank only_one_template is multi_test_a { // @goto-impl[6]->
     param only_a_param default 400;
 }
 
 // Negative: Object with two templates but missing the third
-// @loc[6]=has_two
 bank has_only_two is (multi_test_a, multi_test_b) { // @goto-impl[6]->both_ab_ineach,split_ineach
     param incomplete default 666;
 }
 
 // Test 4: Split object declaration with multiple templates
-// @loc[7]=split_grp
 group split_group is multi_test_a { // // @goto-impl[7]->both_ab_ineach,split_ineach
     param first_part default 100;
 }
@@ -115,17 +110,14 @@ in each (multi_test_a, multi_test_b) {
 }
 
 // Test 5: Objects with no template instantiations - verify goto-impl returns nothing
-// @loc[6]=lonely
 bank lonely_bank { // @goto-impl[6]->
     param lonely_param default 0;
 }
 
-// @loc[11]=test_iface
 interface test_interface { // @goto-impl[11]->
     param interface_param default 77;
 }
 
-// @loc[9]=test_conn
 connect test_connect { // @goto-impl[9]->
     param connect_param default 88;
 }

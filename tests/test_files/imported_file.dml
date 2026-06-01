@@ -12,13 +12,11 @@ template imported_template { // @goto-impl[10]->cross_file_main.dml:imported_tem
     
     // @loc[12]=imported_method
     method imported_method() {
-        // @loc[27]=imported_method_self_ref
         // @loc[64]=imported_param_self_ref
         log info: "Called imported_method with param=%d", this.imported_param;
     }
     
     // Method that references a parameter defined in the importing file
-    // @loc[12]=use_bank_param
     method use_bank_param() {
         // This will reference bank_specific_param from cross_file_main.dml
         // @loc[28]=bank_specific_param_ref

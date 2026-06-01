@@ -11,7 +11,7 @@ template base_template { // @goto-ref[10]->base_template_ref @goto-impl[10]->bas
     // @loc[11]=base_param_def
     param base_param default 42;
     // @loc[12]=base_method_def
-    method base_method() default {
+    method base_method() default { // @goto-impl[12]->base_method_def, override_base_method
         log info: "base implementation";
     }
 }

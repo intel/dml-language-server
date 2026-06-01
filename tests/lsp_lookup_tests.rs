@@ -713,6 +713,7 @@ fn setup_test_with_imports(
 
     let name_map = build_name_mapping(&all_locations);
     let annotations = resolve_annotations(all_operations, &name_map);
+    assert_all_locs_used(&all_locations, &annotations);
 
     let ctx: InitActionContext<MockOutput> = create_test_init_context(
         Arc::clone(&analysis),
@@ -720,6 +721,35 @@ fn setup_test_with_imports(
     );
 
     TestSetup { ctx, analysis, main_file, main_canon_path: main_canon, annotations }
+}
+
+/// Verify every `@loc` declaration is referenced by at least one annotation
+/// target. An unused `@loc` is dead weight: either a typo in the using site
+/// or coverage that was intended but never written.
+#[track_caller]
+fn assert_all_locs_used(
+    locations: &[LocationDeclaration],
+    annotations: &[ResolvedAnnotation],
+) {
+    let used: HashSet<String> = annotations.iter()
+        .flat_map(|ann| ann.targets.iter().map(|t| t.spec.key()))
+        .collect();
+    let mut unused: Vec<&LocationDeclaration> = locations.iter()
+        .filter(|loc| !used.contains(&loc.name))
+        .collect();
+    if unused.is_empty() {
+        return;
+    }
+    unused.sort_by_key(|loc| (loc.name.clone(), loc.position.row.0, loc.position.col.0));
+    let details: Vec<String> = unused.iter()
+        .map(|loc| format!("'{}' at line {} col {}",
+                           loc.name, loc.position.row.0 + 1, loc.position.col.0 + 1))
+        .collect();
+    panic!(
+        "{} unused @loc declaration(s) (not referenced by any annotation target):\n  {}",
+        unused.len(),
+        details.join("\n  ")
+    );
 }
 
 #[track_caller]
@@ -1087,6 +1117,10 @@ mod tests {
 
     /// Deduplicate spans and optionally filter to the query file.
     /// Returns the relevant (deduplicated) spans.
+    ///
+    /// An empty target list asserts "no results anywhere", so we keep spans
+    /// from every file in that case. With non-empty same-file-only targets,
+    /// we only assert about same-file spans and ignore cross-file results.
     fn deduplicate_spans<'a>(
         spans: &'a [ZeroSpan],
         ann: &ResolvedAnnotation,
@@ -1095,6 +1129,7 @@ mod tests {
         let query_file_path = ann.location.file_path.as_deref().unwrap_or(test_file);
         let query_rel = rel_to_test_files(query_file_path);
         let has_cross_file_targets = ann.targets.iter().any(|t| t.filename() != query_rel);
+        let keep_all_files = has_cross_file_targets || ann.targets.is_empty();
         let mut seen_positions = HashSet::new();
         let mut result = Vec::new();
         for span in spans {
@@ -1103,7 +1138,7 @@ mod tests {
             if !seen_positions.insert(key) {
                 continue;
             }
-            if has_cross_file_targets || span_rel == query_rel {
+            if keep_all_files || span_rel == query_rel {
                 result.push(span);
             }
         }
