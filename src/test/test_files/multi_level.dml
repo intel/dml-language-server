@@ -30,7 +30,7 @@ template level_1_template is level_0_template {
     // @loc[11]=level_1_param
     param level_1_param default 10;
     // @loc[12]=level_1_level_0_method
-    method level_0_method() default { // @goto-decl[12]->shared_level_method // @goto-impl->level_1_level_0_method, level_2_level_0_method
+    method level_0_method() default { // @goto-decl[12]->shared_level_method // @goto-impl[12]->level_1_level_0_method, level_2_level_0_method
         log info: "level_1";
     }
     // @loc[12]=level_1_method
@@ -43,7 +43,7 @@ template level_1_template is level_0_template {
 // @loc[10]=level_2_template
 template level_2_template is level_1_template { // @goto-ref[10]->reg1_level_2_template_use, reg2_level_2_template_use @goto-def-decl[30]->level_1_template
     // @loc[11]=level_2_level_0_param
-    param level_0_param default 2; // @goto-ref[11] -> reg1_level_0_param_ref, reg1_level_1_param_ref
+    param level_0_param default 2; // @goto-ref[11]->reg1_level_0_param_ref, reg2_level_0_param_ref
     // @loc[11]=level_2_level_1_param
     // @loc[33]=upwards_this_ref
     // @loc[38]=upwards_param_ref
@@ -51,7 +51,7 @@ template level_2_template is level_1_template { // @goto-ref[10]->reg1_level_2_t
     // @loc[11]=level_2_param
     param level_2_param default 100; // @goto-ref[11]->reg_1_level_2_param_ref,reg_2_level_2_param_ref
     // @loc[12]=level_2_level_0_method
-    method level_0_method() { // @goto-decl[12]-> shared_level_method // @goto-impl->level_2_level_0_method
+    method level_0_method() { // @goto-decl[12]-> shared_level_method // @goto-impl[12]->level_2_level_0_method
         default(); // @goto-def[9]->level_1_level_0_method @goto-decl[9]->shared_level_method
     }
     // @loc[12]=level_2_level_1_method
@@ -104,7 +104,7 @@ bank multi_instance_bank {
 // @loc[10]=shared_decl_template
 template shared_decl_template {
     // @loc[19]=shared_method_decl
-    shared method shared_method(); // @goto-impl[19]->shared_method_def @goto-def[19]=shared_method_def @goto-ref[19]->
+    shared method shared_method(); // @goto-impl[19]->shared_method_def @goto-def[19]->shared_method_def @goto-ref[19]->
     // @loc[19]=late_shared_method_decl
     shared method late_shared_method(); // @goto-impl[19]->late_shared_template_def, late_shared_method_override @goto-def[19]->late_shared_template_def @goto-ref[19]->
     // @loc[12]=late_shared_template_def

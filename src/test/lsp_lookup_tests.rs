@@ -270,17 +270,15 @@ fn parse_annotations(content: &str, file_path: Option<PathBuf>) -> (Vec<Location
             line_num
         };
 
+        // Report missing column specifiers (test writer error)
         if let Some(m) = RE_OP_NO_COL.find(line) {
-            // Report missing column specifiers (test writer error)
             let arrow_offset = m.as_str().find("->")
                 .expect("BUG: RE_OP_NO_COL matched without '->' present");
             let prefix_end = m.start() + arrow_offset;
             let prefix_text = &line[m.start()..prefix_end];
-            if !RE_OP.is_match(line) {
-                panic!("annotation '{}' is missing a column: use {}[col]->target\n  \
-                        on line {}: {}",
-                       m.as_str(), prefix_text, line_num + 1, line.trim());
-            }
+            panic!("annotation '{}' is missing a column: use {}[col]->target\n  \
+                    on line {}: {}",
+                   m.as_str(), prefix_text, line_num + 1, line.trim());
         }
 
         // Parse @loc annotations, converting their 1-indexing to the internal 0-indexing
