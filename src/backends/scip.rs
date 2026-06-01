@@ -582,12 +582,20 @@ fn walk_spec(
     // `>`, `:`, `,`, ` `).  `sanitize_name` will backtick-escape
     // the whole segment, guaranteeing it cannot collide with a
     // real DML object name.
+    //
+    // A per-spec counter is folded into the segment so that two
+    // in-each blocks with the *same* target template list in the
+    // same enclosing scope still produce distinct namespace
+    // segments — otherwise equally-named members would collide in
+    // `file_data.symbols` and silently overwrite one another.
     for ineach_decl in &spec.ineachs {
+        *local_counter += 1;
+        let ineach_idx = *local_counter;
         let targets = ineach_decl.obj.spec.iter()
             .map(|t| t.val.as_str())
             .collect::<Vec<_>>()
             .join(", ");
-        let scope_name = format!("<in each: {targets}>");
+        let scope_name = format!("<in each #{ineach_idx}: {targets}>");
         namespace.push(NamespaceSegment {
             name: scope_name,
             suffix: DescriptorSuffix::Term,
