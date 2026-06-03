@@ -25,6 +25,19 @@ name = "dfa"
 test = false
 path = "src/dfa/main.rs"
 
+[[bin]]
+name = "dml-fuzz-runner"
+test = false
+bench = false
+doc = false
+path = "src/bin/dml-fuzz-runner.rs"
+required-features = ["fuzzing"]
+
+[[test]]
+name = "fuzzing"
+path = "tests/fuzzing.rs"
+required-features = ["fuzzing"]
+
 [dependencies]
 anyhow = "1.0"
 clap = { version = "4.2", features = ["cargo", "derive"] }
@@ -53,3 +66,11 @@ urlencoding = "2.1"
 utf8-read = "0.4"
 walkdir = "2"
 heck = "0.5"
+
+[features]
+# Internal-only: enables building the `dml-fuzz-runner` helper binary
+# used by the fuzzing tests. Not intended for end users.
+fuzzing = []
+
+[dev-dependencies]
+rand = "0.10"
