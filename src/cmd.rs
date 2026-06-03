@@ -302,6 +302,7 @@ pub fn get_contexts(paths: Vec<String>) -> Request<requests::GetKnownContextsReq
             paths: Some(paths.into_iter()
                 .map(|p|parse_uri(&p).unwrap())
                 .collect()),
+            blocking: Some(true),
         },
         action: PhantomData,
         id: next_id(),
