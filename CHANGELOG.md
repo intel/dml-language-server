@@ -4,6 +4,9 @@
 -->
 # Change Log
 
+## 0.9.20
+
+
 ## 0.9.19
 - Added configuration option to control the max cache size while resolving references in semantic analysis, defaulting to 500MB
 - Added environment variable to control max per-log output length for most logging from the DLS, defaulting to 1000 bytes
