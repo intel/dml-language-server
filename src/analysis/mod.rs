@@ -695,6 +695,15 @@ pub enum AnalysisError {
     Cancelled,
 }
 
+impl std::fmt::Debug for AnalysisError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            AnalysisError::VFSError(v) => write!(f, "VFSError({:?})", v),
+            AnalysisError::Cancelled => write!(f, "Cancelled"),
+        }
+    }
+}
+
 pub type AnalysisProcessResult<T> = Result<T, AnalysisError>;
 
 impl From<VFSError> for AnalysisError {

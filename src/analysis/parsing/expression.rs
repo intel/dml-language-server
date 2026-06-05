@@ -1236,7 +1236,7 @@ pub fn ensure_string_concatenation(expr: &Expression) -> Vec<LocalDMLError> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::test::*;
+    use crate::test_helpers::*;
 
     #[allow(clippy::ptr_arg)]
     fn test_expression_tree(source: &str,

@@ -1,0 +1,5 @@
+dml 1.4;
+
+device test2_device;
+
+import "./test2_common_a.dml"; // @goto-def[11]->imports/test2_common_a.dml:test2_common_a_start
