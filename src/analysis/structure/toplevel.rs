@@ -2,6 +2,7 @@
 //  SPDX-License-Identifier: Apache-2.0 and MIT
 use std::fmt::{Display, Formatter, self as fmt};
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use crate::logging::trace;
 
@@ -30,7 +31,11 @@ pub enum ExistCondition {
     // Note: Right now we are implicitly assuming this has some ordering, such
     // that two objectdecls within the same hashif block will have the same
     // existcondition
-    Conditional(Vec<(bool, Expression)>),
+    // These conditions are _hugely_ duplicated between objects, and are stored
+    // in an Arc to save memory. TODO: We could optimize this even further by
+    // storing references into a slice of conditional expression from outer
+    // to inner contexts
+    Conditional(Arc<Vec<(bool, Expression)>>),
 }
 
 impl ExistCondition {
@@ -156,14 +161,9 @@ impl <T: Clone> ObjectDecl<T>
 where T: DeclarationSpan {
     pub fn depending_on_context(obj: &T,
                                 context: StatementContext,
-                                conds: &[(bool, Expression)])
+                                conds: &Arc<Vec<(bool, Expression)>>)
     -> ObjectDecl<T> {
-        match context {
-            StatementContext::HashIfTrue |
-            StatementContext::HashIfElse =>
-                ObjectDecl::conditional(obj, conds),
-            _ => ObjectDecl::always(obj),
-        }
+        ObjectDecl::conditional(obj, conds)
     }
 
     pub fn always(obj: &T) -> ObjectDecl<T> {
@@ -174,10 +174,10 @@ where T: DeclarationSpan {
         }
     }
     pub fn conditional(obj: &T,
-                       conds: &[(bool, Expression)])
+                       conds: &Arc<Vec<(bool, Expression)>>)
                        -> ObjectDecl<T> {
         ObjectDecl {
-            cond: ExistCondition::Conditional(conds.to_vec()),
+            cond: ExistCondition::Conditional(Arc::clone(conds)),
             obj: obj.clone(),
             spec: StatementSpec::empty(),
         }
@@ -330,7 +330,7 @@ impl StatementSpec {
 // Flattens hashifs
 fn flatten_hashif_branch(context: StatementContext,
                          stmnts: &Statements,
-                         conds: Vec<(bool, Expression)>,
+                         conds: Arc<Vec<(bool, Expression)>>,
                          report: &mut Vec<LocalDMLError>)
                          -> StatementSpec {
     let mut objects = vec![];
@@ -357,14 +357,13 @@ fn flatten_hashif_branch(context: StatementContext,
     for ineach in stmnts.ineachs.iter() {
         let spec = flatten_hashif_branch(StatementContext::InEach,
                                          &ineach.statements,
-                                         vec![], report);
+                                         Arc::default(), report);
         ineachs.push(
             ObjectDecl {
                 cond: match context {
                     StatementContext::HashIfTrue |
                     StatementContext::HashIfElse =>
-                        ExistCondition::Conditional(
-                            conds.clone()),
+                        ExistCondition::Conditional(Arc::clone(&conds)),
                     _ => ExistCondition::Always,
                 },
                 obj: ineach.clone(),
@@ -412,7 +411,7 @@ fn flatten_hashif_branch(context: StatementContext,
                         let subspec = flatten_hashif_branch(
                             StatementContext::Template,
                             &tmpl.statements,
-                            vec![],
+                            Arc::default(),
                             report);
                         templates.push(
                             ObjectDecl {
@@ -464,14 +463,13 @@ fn flatten_hashif_branch(context: StatementContext,
                         let subspec = flatten_hashif_branch(
                             StatementContext::Object,
                             &compobj.statements,
-                            vec![], report);
+                            Arc::clone(&conds), report);
                         objects.push(
                             ObjectDecl {
                                 cond: match context {
                                     StatementContext::HashIfTrue |
                                     StatementContext::HashIfElse =>
-                                        ExistCondition::Conditional(
-                                            conds.clone()),
+                                        ExistCondition::Conditional(Arc::clone(&conds)),
                                     _ => ExistCondition::Always,
                                 },
                                 obj: compobj.clone(),
@@ -515,21 +513,21 @@ fn flatten_hashif_branch(context: StatementContext,
                 }
             },
             DMLStatement::HashIf(hi) => {
-                let mut true_conds = conds.clone();
+                let mut true_conds = (*conds).clone();
                 true_conds.push(
                     (true, hi.condition.clone()));
-                let mut false_conds = conds.clone();
+                let mut false_conds = (*conds).clone();
                 false_conds.push(
                     (false, hi.condition.clone()));
                 let truebranchspec = flatten_hashif_branch(
                     StatementContext::HashIfTrue,
                     &hi.truebranch,
-                    true_conds,
+                    Arc::new(true_conds),
                     report);
                 let falsebranchspec = flatten_hashif_branch(
                     StatementContext::HashIfElse,
                     &hi.falsebranch,
-                    false_conds,
+                    Arc::new(false_conds),
                     report);
                 truebranchspec.consume(&mut objects,
                                        &mut sessions,
@@ -695,7 +693,7 @@ impl TopLevel {
         for ineach in &statements.ineachs {
             let spec = flatten_hashif_branch(StatementContext::Object,
                                              &ineach.statements,
-                                             vec![], report);
+                                             Arc::default(), report);
             ineachs.push(
                 ObjectDecl {
                     cond: ExistCondition::Always,
@@ -748,7 +746,7 @@ impl TopLevel {
                             let subspec = flatten_hashif_branch(
                                 StatementContext::Template,
                                 &tmpl.statements,
-                                vec![],
+                                Arc::default(),
                                 report);
                             templates.push(
                                 ObjectDecl {
@@ -768,7 +766,7 @@ impl TopLevel {
                             let subspec = flatten_hashif_branch(
                                 StatementContext::Object,
                                 &compobj.statements,
-                                vec![], report);
+                                Arc::default(), report);
                             objects.push(
                                 ObjectDecl {
                                     cond: ExistCondition::Always,
@@ -803,8 +801,8 @@ impl TopLevel {
                 DMLStatement::HashIf(hi) => {
                     // First element of the cond tuple is whether the
                     // condition is NOT in an elsebranch
-                    let true_conds = vec![(true, hi.condition.clone())];
-                    let false_conds = vec![(false, hi.condition.clone())];
+                    let true_conds = Arc::new(vec![(true, hi.condition.clone())]);
+                    let false_conds = Arc::new(vec![(false, hi.condition.clone())]);
                     let truebranchspec = flatten_hashif_branch(
                         StatementContext::HashIfTrue,
                         &hi.truebranch,
