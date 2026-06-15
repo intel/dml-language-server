@@ -1601,10 +1601,10 @@ impl FileWatch {
     #[inline]
     fn relevant_change_kind(&self, change_uri: &Uri,
                             _kind: FileChangeType) -> bool {
-        let path = change_uri.as_str();
+        let path = change_uri.path().to_string();
         self.file_paths.iter()
             .filter_map(|ws|ws.full.to_str())
-            .any(|our_path|our_path == path)
+            .any(|our_path|our_path == path.as_str())
     }
 
     #[inline]
