@@ -1,7 +1,10 @@
 //  © 2024 Intel Corporation
 //  SPDX-License-Identifier: Apache-2.0 and MIT
 
+use std::io::Write;
 use std::sync::LazyLock;
+
+use chrono::Local;
 
 macro_rules! info {
     ($($arg:tt)*) => {
@@ -73,8 +76,34 @@ pub fn init() {
     let max_level = dummy_logger.filter();
     env_logger::Builder::from_default_env()
         .filter_level(log::LevelFilter::Trace)
+        .format(local_time_format)
         .init();
     set_global_log_level(max_level);
+}
+
+/// Replicates `env_logger`'s default record format, except the timestamp is
+/// rendered in the system's local time zone
+fn local_time_format(
+    buf: &mut env_logger::fmt::Formatter,
+    record: &log::Record<'_>,
+) -> std::io::Result<()> {
+    // ISO 8601 with seconds precision (env_logger's default), but local time
+    // with the local UTC offset instead of the "Z" suffix.
+    let ts = Local::now().format("%Y-%m-%dT%H:%M:%S%:z");
+    let level = record.level();
+    let style = buf.default_level_style(level);
+    // Formatting 'style' normally enables it, doing it with :# disables it
+    write!(buf, "[{ts} {style}{level:<5}{style:#}")?;
+    let target = record.target();
+    if !target.is_empty() {
+        write!(buf, " {target}")?;
+    }
+    let msg = record.args().to_string();
+    if msg.contains('\n') {
+        writeln!(buf, "] {}", msg.replace('\n', "\n    "))
+    } else {
+        writeln!(buf, "] {msg}")
+    }
 }
 
 pub fn set_global_log_level(level: log::LevelFilter) {

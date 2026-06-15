@@ -44,6 +44,7 @@ clap = { version = "4.2", features = ["cargo", "derive"] }
 crossbeam = "0.8"
 crossbeam-deque = "0.8.1"
 crossbeam-utils = "0.8.7"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 env_logger = "0.11"
 hashlink = "0.12"
 itertools = "0.14"
