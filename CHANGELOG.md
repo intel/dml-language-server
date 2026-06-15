@@ -5,7 +5,7 @@
 # Change Log
 
 ## 0.9.20
-
+- The language server logs will now be in local time of whatever machine they are running on, rather than UTC.
 
 ## 0.9.19
 - Added configuration option to control the max cache size while resolving references in semantic analysis, defaulting to 500MB
