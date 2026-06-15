@@ -5,6 +5,7 @@
 # Change Log
 
 ## 0.9.20
+- Fix issue where the server would internally format URIs incorrectly in some cases
 - The language server logs will now be in local time of whatever machine they are running on, rather than UTC.
 
 ## 0.9.19
