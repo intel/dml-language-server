@@ -100,7 +100,7 @@ pub fn parse_uri(pathb: &str) -> Result<Uri, UriGenerationError> {
         ""
     };
 
-    let to_parse = format!("file:{}{}", extra_slash, fixed_path);
+    let to_parse = format!("file://{}{}", extra_slash, fixed_path);
     Uri::from_str(to_parse.as_str())
         .map_err(|e|UriGenerationError(
             format!("Invalid URI '{}'; {}", to_parse, e)))

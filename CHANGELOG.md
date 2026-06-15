@@ -5,7 +5,7 @@
 # Change Log
 
 ## 0.9.20
-
+- Fix issue where the server would internally format URIs incorrectly in some cases
 
 ## 0.9.19
 - Added configuration option to control the max cache size while resolving references in semantic analysis, defaulting to 500MB
