@@ -803,9 +803,8 @@ impl <O: Output> InitActionContext<O> {
                     }]
                 },
                 out);
-        } else {
-            self.register_new_watchers(out);
         }
+        self.register_new_watchers(out);
     }
 
     pub fn register_new_watchers(&self, out: &O) {
@@ -824,6 +823,7 @@ impl <O: Output> InitActionContext<O> {
                     register_options: Some(watchers_spec.watchers_config()),
                 }],
             };
+            info!("Registered as {:?}", reg_params);
             self.send_request::<RegisterCapability>(reg_params, out);
         } else {
             error!("Failed to register file watchers with config: {:?}",
@@ -1506,7 +1506,7 @@ fn find_word_at_pos(line: &str, pos: Column) -> (Column, Column) {
 #[derive(Debug, Clone)]
 pub struct FileWatchSpec {
     full: CanonPath,
-    base: WorkspaceFolder,
+    base: Uri,
     relative: String,
 }
 
@@ -1540,54 +1540,50 @@ impl FileWatch {
                                     not a canonizable path", lint_cfg_path);
                         }
                 }
-                fn path_to_relative(path: CanonPath,
-                                    roots: &Vec<Workspace>,
-                                    hit_paths: &mut HashMap<CanonPath,
-                                                            bool>)
-                                    -> Option<Vec<FileWatchSpec>> {
-                    let mut globs = vec![];
-                    for root in roots {
-                        let root_path =
-                            parse_file_path!(&root.uri, "workspace").ok()?;
-                        let root_canon_path =
-                            CanonPath::from_path_buf(root_path)?;
-                        info!("watch {:?} under {:?}", path, root);
-                        if let Ok(relative_path) = path
-                            .strip_prefix(root_canon_path.as_path()) {
-                                hit_paths.insert(path.clone(),  true);
-                                globs.push(
-                                    FileWatchSpec {
-                                        full: root_canon_path,
-                                        base: root.clone(),
-                                        relative: relative_path
-                                            .to_string_lossy().to_string(),
-                                    }
-                                );
-                            }
-                    }
-                    Some(globs)
+                // Anchor each watcher at the file's immediate parent directory
+                // and use just the file name as the glob pattern. This avoids
+                // VS Code's "non-recursive unless the pattern starts with **/"
+                // behaviour for RelativePattern bases that aren't (recognised
+                // as) workspace folders, which previously caused us to never
+                // receive change events for files in subdirectories.
+                fn path_to_spec(path: CanonPath,
+                                hit_paths: &mut HashMap<CanonPath, bool>)
+                                -> Option<FileWatchSpec> {
+                    let parent = path.as_path().parent()?;
+                    let file_name = path.as_path().file_name()?
+                        .to_string_lossy().into_owned();
+                    let base = match parse_uri(&parent.to_string_lossy()) {
+                        Ok(uri) => uri,
+                        Err(e) => {
+                            error!("Could not build URI for watch parent \
+                                    dir {:?}: {}", parent, e);
+                            return None;
+                        }
+                    };
+                    hit_paths.insert(path.clone(), true);
+                    Some(FileWatchSpec {
+                        full: path,
+                        base,
+                        relative: file_name,
+                    })
                 }
 
-                let watch_paths: Vec<_> = {
-                    let lock_workspaces = ctx.workspace_roots.lock().unwrap();
-                    file_paths.keys().cloned()
-                        .collect::<Vec<_>>().into_iter()
-                        .flat_map(|post_path|path_to_relative(
-                            post_path,
-                            &lock_workspaces,
-                            &mut file_paths))
-                        .flatten()
-                        .collect()
-                };
+                let watch_paths: Vec<_> = file_paths.keys().cloned()
+                    .collect::<Vec<_>>().into_iter()
+                    .filter_map(|p|path_to_spec(p, &mut file_paths))
+                    .collect();
                 for (path, watched) in &file_paths {
                     if !watched {
-                        error!("Could not watch {:?}, not under any \
-                                workspace root", path);
+                        error!("Could not register watcher for {:?}", path);
                     }
                 }
-                Some(FileWatch {
-                    file_paths: watch_paths,
-                })
+                if !watch_paths.is_empty() {
+                    Some(FileWatch {
+                        file_paths: watch_paths,
+                    })
+                } else {
+                    None
+                }
             },
             Err(e) => {
                 error!("Unable to access configuration: {:?}", e);
@@ -1601,10 +1597,11 @@ impl FileWatch {
     #[inline]
     fn relevant_change_kind(&self, change_uri: &Uri,
                             _kind: FileChangeType) -> bool {
-        let path = change_uri.path().to_string();
-        self.file_paths.iter()
-            .filter_map(|ws|ws.full.to_str())
-            .any(|our_path|our_path == path.as_str())
+        let Ok(changed_path) = parse_file_path!(change_uri, "watched_change")
+        else { return false; };
+        let Some(changed_canon) = CanonPath::from_path_buf(changed_path)
+        else { return false; };
+        self.file_paths.iter().any(|ws|ws.full == changed_canon)
     }
 
     #[inline]
@@ -1621,11 +1618,11 @@ impl FileWatch {
 
     /// Returns json config for desired file watches
     pub fn watchers_config(&self) -> serde_json::Value {
-        fn watcher(base: WorkspaceFolder, pat: String) -> FileSystemWatcher {
+        fn watcher(base: Uri, pat: String) -> FileSystemWatcher {
             FileSystemWatcher {
                 glob_pattern: GlobPattern::Relative(
                     RelativePattern {
-                        base_uri: OneOf::Left(base),
+                        base_uri: OneOf::Right(base),
                         pattern: pat,
                     }),
                 kind: Some(WatchKind::all()),
