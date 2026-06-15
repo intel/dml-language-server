@@ -132,10 +132,13 @@ Requests:
   ```typescript
   interface GetKnownContextsParams {
       paths?: DocumentUri[];
+      blocking?: boolean;
   }
   ```
   'paths' specifies the paths for which the known contexts should be reported,
-  will report all contexts if paths is empty or not set.
+  will report all contexts if paths is empty or not set. 'blocking' if set and `true`,
+  will cause the response to wait for any ongoing device analysises on the specified paths.
+  
   The response is
   ```typescript
   interface ContextDefinitionKindParam {

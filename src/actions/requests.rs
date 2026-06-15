@@ -868,6 +868,7 @@ pub struct GetKnownContextsRequest;
 pub struct GetKnownContextsParams {
     // None or empty implies to get ALL contexts
     pub paths: Option<Vec<lsp_types::Uri>>,
+    pub blocking: Option<bool>,
 }
 
 impl LSPRequest for GetKnownContextsRequest {
@@ -916,11 +917,12 @@ impl RequestAction for GetKnownContextsRequest {
             } else {
                 vec![]
             };
-        ctx.wait_for_state(
-            AnalysisProgressKind::Isolated,
-            AnalysisWaitKind::Existence,
-            AnalysisCoverageSpec::Paths(for_these_paths.clone())).ok();
-
+        if params.blocking.unwrap_or(false) {
+            ctx.wait_for_state(
+                AnalysisProgressKind::Isolated,
+                AnalysisWaitKind::Existence,
+                AnalysisCoverageSpec::Paths(for_these_paths.clone())).ok();
+        }
         let contexts: HashSet<(ContextDefinition, bool, bool)>
             = if for_these_paths.is_empty() {
                 ctx.get_all_context_info()
