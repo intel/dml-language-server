@@ -45,6 +45,7 @@ jobs:
       - name: Build
         shell: bash
         run: |
+          set -o pipefail
           VERSION_SUFFIX=PUBLIC-$(git rev-parse --short HEAD) cargo build --release --verbose 2>&1 | tee -a ${{ inputs.log-dir }}/build.log
       - name: Test
         id: test
