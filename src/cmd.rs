@@ -10,6 +10,7 @@ use crate::config::{Config, DeviceContextMode};
 use crate::lsp_data::parse_uri;
 use crate::file_management::CanonPath;
 use crate::server::{self, LsService, Notification, Request, RequestId};
+use crate::version;
 use crate::vfs::Vfs;
 
 use lsp_types::{
@@ -41,13 +42,14 @@ use std::time::{Duration, Instant};
 use serde_json;
 use lazy_static::lazy_static;
 
-use crate::logging::debug;
+use crate::logging::{debug, info};
 
 /// Runs the DLS in command line mode.
 pub fn run(compile_info_path: Option<PathBuf>,
            linting_enabled: Option<bool>,
            lint_cfg: Option<PathBuf>) {
     let sender = init(compile_info_path, linting_enabled, lint_cfg);
+    info!("DLS cmdline started. Version: {}", version());
 
     loop {
         // Present a prompt and read from stdin.

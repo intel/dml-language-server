@@ -44,7 +44,9 @@ jobs:
         run: mkdir -p ${{ inputs.log-dir }}
       - name: Build
         shell: bash
-        run: cargo build --release --verbose 2>&1 | tee -a ${{ inputs.log-dir }}/build.log
+        run: |
+          set -o pipefail
+          VERSION_SUFFIX=PUBLIC-$(git rev-parse --short HEAD) cargo build --release --verbose 2>&1 | tee -a ${{ inputs.log-dir }}/build.log
       - name: Test
         id: test
         shell: bash
@@ -79,6 +81,11 @@ jobs:
           rustup component add clippy
           cargo clippy --version
           cargo clippy --all-targets -- --deny warnings 2>&1 | tee -a ${{ inputs.log-dir }}/clippy.log
+      - name: Check Version
+        shell: bash
+        if: ${{ success() }}
+        run: ./target/release/${{ inputs.binary_name }} -V
+
       - name: Upload logs
         if: ${{ success() || failure() }}
         uses: actions/upload-artifact@v4
