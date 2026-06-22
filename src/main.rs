@@ -4,7 +4,6 @@
 //!
 //! The DLS provides a server that runs in the background, providing IDEs,
 //! editors, and other tools with information about DML devices.
-use log::debug;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -20,7 +19,7 @@ pub fn main() {
 
 #[derive(Parser, Debug)]
 #[command(name = "dls")]
-#[command(version)]
+#[command(version = dls::version())]
 #[command(about = "The DML language server binary",
           long_about = "The DML language server binary, communicates over \
                         stdin/out using the language server protocol in \

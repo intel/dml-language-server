@@ -49,6 +49,14 @@ pub mod file_tests;
 
 type Span = span::Span<span::ZeroIndexed>;
 
-pub fn version() -> String {
-    env!("CARGO_PKG_VERSION").to_string()
+pub fn version() -> &'static str {
+    static VERSION: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    VERSION.get_or_init(|| {
+        format!("{}{}",
+                env!("CARGO_PKG_VERSION"),
+                option_env!("VERSION_SUFFIX")
+                .map_or_else(||"".to_string(),
+                             |h|format!("-{}",h))
+        )
+    })
 }

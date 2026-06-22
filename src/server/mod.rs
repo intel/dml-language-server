@@ -244,7 +244,7 @@ impl BlockingRequestAction for InitializeRequest {
         let result = InitializeResult {
             server_info: Some(ServerInfo {
                 name: "DML Language Server".to_string(),
-                version: Some(crate::version()),
+                version: Some(crate::version().to_string()),
             }),
             capabilities: server_caps(ctx),
         };
