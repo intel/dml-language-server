@@ -42,7 +42,6 @@ pub struct Args {
 }
 
 fn main_inner() -> i32 {
-    debug!("server main called");
     let Args {
         cli,
         compile_info_path,
