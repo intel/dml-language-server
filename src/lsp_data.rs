@@ -93,7 +93,9 @@ pub fn parse_uri(pathb: &str) -> Result<Uri, UriGenerationError> {
     // Replace windows slashes with unix-style
     let fixed_path = path.replace('\\', "/");
 
-    // Add an extra slash on windows, on unix it is implicit
+    // A file URI is `file://` (scheme + empty authority) followed by an
+    // absolute path. On unix the canonical path already starts with `/`, on
+    // windows it doesn't (e.g. `C:/foo`) so we add one.
     let extra_slash = if !fixed_path.starts_with('/') {
         "/"
     } else {
