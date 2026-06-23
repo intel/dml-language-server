@@ -298,3 +298,100 @@ fn template_incorrect() {
     );
     assert_snippet(TEMPLATE_INCORRECT, expected_errors, &rules);
 }
+
+static TOPLEVEL_HASHIF_CORRECT: &str = "
+constant FEATURE_SUPPORTED = false;
+
+#if (!FEATURE_SUPPORTED) {
+attribute target_sb_port is uint64_attr {}
+} #else {
+attribute target_sb_fid is uint64_attr {}
+}
+
+#if (!FEATURE_SUPPORTED) {
+method signal_feature() {
+    return 1;
+}
+} #else {
+method signal_feature() { return 0; }
+}
+";
+
+#[test]
+fn toplevel_hashif_correct() {
+    let rules = set_up();
+    assert_snippet(TOPLEVEL_HASHIF_CORRECT, vec![], &rules);
+}
+
+static TOPLEVEL_HASHIF_INCORRECT: &str = "
+constant FEATURE_SUPPORTED = false;
+
+#if (!FEATURE_SUPPORTED) {
+    attribute target_sb_port is uint64_attr {}
+} #else {
+    attribute target_sb_fid is uint64_attr {}
+}
+
+#if (!FEATURE_SUPPORTED) {
+    method signal_feature() {
+        return 1;
+    }
+} #else {
+    method signal_feature() { return 0; }
+}
+";
+
+#[test]
+fn toplevel_hashif_incorrect() {
+    let rules = set_up();
+    let expected_errors = define_expected_errors!(
+        RuleType::IN3,
+        (4, 4, 4, 46),
+        (6, 6, 4, 45),
+        (10, 12, 4, 5),
+        (11, 11, 8, 17),
+        (14, 14, 4, 41),
+    );
+    assert_snippet(TOPLEVEL_HASHIF_INCORRECT, expected_errors, &rules);
+}
+
+static NESTED_HASHIF_CORRECT: &str = "
+constant FEATURE_SUPPORTED = false;
+
+method signal_feature() {
+    #if (!FEATURE_SUPPORTED) {
+        return 1;
+    } #else {
+        return 0;
+    }
+}
+";
+
+#[test]
+fn nested_hashif_correct() {
+    let rules = set_up();
+    assert_snippet(NESTED_HASHIF_CORRECT, vec![], &rules);
+}
+
+static NESTED_HASHIF_INCORRECT: &str = "
+constant FEATURE_SUPPORTED = false;
+
+method signal_feature() {
+    #if (!FEATURE_SUPPORTED) {
+return 1;
+    } #else {
+            return 0;
+    }
+}
+";
+
+#[test]
+fn nested_hashif_incorrect() {
+    let rules = set_up();
+    let expected_errors = define_expected_errors!(
+        RuleType::IN3,
+        (5, 5, 0, 9),
+        (7, 7, 12, 21),
+    );
+    assert_snippet(NESTED_HASHIF_INCORRECT, expected_errors, &rules);
+}
