@@ -113,6 +113,8 @@ define_dispatch_request_enum!(
     ExecuteCommand,
     CodeLensRequest,
     GetKnownContextsRequest,
+    ExportScipRequest,
+    ExportObjectHierarchyRequest,
 );
 
 /// Provides ability to dispatch requests to a worker thread that will
