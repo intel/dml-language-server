@@ -1,0 +1,60 @@
+//  © 2024 Intel Corporation
+//  SPDX-License-Identifier: Apache-2.0 and MIT
+
+dml 1.4;
+
+device type_test_device;
+
+// @loc[16]=register_addr_t_def
+typedef uint32 register_addr_t; // @goto-ref[16]->register_addr_t_use_saved,register_addr_t_use_arg
+
+typedef struct {
+    // @loc[12]=packet_addr_field_def
+    uint32 addr; // @goto-ref[12]->packet_addr_field_use,packet_addr_field_use_2
+    // @loc[12]=packet_size_field_def
+    uint32 size; // @goto-ref[12]->packet_size_field_use
+    uint8 data[16];
+// @loc[3]=packet_t_def
+} packet_t; // @goto-ref[3]->packet_t_use_arg,packet_t_use_saved
+
+saved register_addr_t current_addr; // @goto-def-decl[7]->register_addr_t_def @goto-type-def[23]->register_addr_t_def @goto-ref[23]->current_addr_use_1,current_addr_use_2
+
+// @loc[7]=packet_t_use_saved
+// @loc[16]=last_packet_def
+saved packet_t last_packet; // @goto-def-decl[7]->packet_t_def @goto-type-def[16]->packet_t_def @goto-ref[16]->last_packet_use,last_packet_use_2
+
+// @loc[8]=process_method_def
+method process( // @goto-ref[8]->process_method_use
+    // @loc[5]=packet_t_use_arg
+    // @loc[14]=pkt_arg_def
+    packet_t pkt, // @goto-ref[14]->pkt_arg_use_1,pkt_arg_use_2,pkt_arg_use_3,pkt_arg_use_4
+    // @loc[5]=register_addr_t_use_arg
+    // @loc[21]=base_addr_arg_def
+    register_addr_t base_addr // @goto-ref[21]->base_addr_arg_use_1,base_addr_arg_use_2
+) {
+    // @loc[5]=current_addr_use_1
+    // @loc[20]=base_addr_arg_use_1
+    current_addr = base_addr; // @goto-def-decl[5]->current_addr_def @goto-def-decl[20]->base_addr_arg_def
+
+    // @loc[20]=pkt_arg_use_1
+    // @loc[24]=packet_addr_field_use
+    // @loc[31]=base_addr_arg_use_2
+    // @loc[5]=current_addr_use_2
+    current_addr = pkt.addr + base_addr; // @goto-def-decl[5]->current_addr_def @goto-def-decl[20]->pkt_arg_def @goto-def-decl[24]->packet_addr_field_def @goto-def-decl[31]->base_addr_arg_def
+
+    // @loc[34]=pkt_arg_use_2
+    // @loc[38]=packet_addr_field_use_2
+    // @loc[44]=pkt_arg_use_3
+    // @loc[48]=packet_size_field_use
+    log info: "addr=%d size=%d", pkt.addr, pkt.size; // @goto-def-decl[34]->pkt_arg_def @goto-def-decl[38]->packet_addr_field_def @goto-def-decl[44]->pkt_arg_def @goto-def-decl[48]->packet_size_field_def
+
+    // @loc[5]=last_packet_use
+    // @loc[19]=pkt_arg_use_4
+    last_packet = pkt; // @goto-def-decl[5]->last_packet_def @goto-def-decl[19]->pkt_arg_def @goto-type-def[5]->packet_t_def @goto-type-def[19]->packet_t_def
+}
+
+method kickoff() {
+    // @loc[5]=process_method_use
+    // @loc[13]=last_packet_use_2
+    process(last_packet, 0); // @goto-def-decl[5]->process_method_def @goto-def-decl[13]->last_packet_def
+}

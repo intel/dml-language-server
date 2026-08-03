@@ -64,6 +64,7 @@ enum OperationType {
     GotoDeclaration, // @goto-decl -> name
     GotoImplementation, // @goto-impl -> name,name,...
     FindReferences,  // @goto-ref -> name,name,...
+    GotoTypeDefinition, // @goto-type-def -> name
 }
 
 impl std::fmt::Display for OperationType {
@@ -73,6 +74,7 @@ impl std::fmt::Display for OperationType {
             OperationType::GotoDeclaration => write!(f, "goto-decl"),
             OperationType::GotoImplementation => write!(f, "goto-impl"),
             OperationType::FindReferences => write!(f, "goto-ref"),
+            OperationType::GotoTypeDefinition => write!(f, "goto-type-def"),
         }
     }
 }
@@ -209,13 +211,13 @@ static RE_LOC: LazyLock<Regex> = LazyLock::new(|| {
 
 /// Regex for operation annotations
 static RE_OP: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"@(goto-def-decl|goto-def|goto-decl|goto-impl|goto-ref)\[(\d+)\]->([^@]*)").unwrap()
+    Regex::new(r"@(goto-def-decl|goto-def|goto-decl|goto-impl|goto-ref|goto-type-def)\[(\d+)\]->([^@]*)").unwrap()
 });
 
 /// Regex for an operation annotation that is missing the required column bracket.
 /// Used for detecting test-writer errors
 static RE_OP_NO_COL: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"@(goto-def-decl|goto-def|goto-decl|goto-impl|goto-ref)->").unwrap()
+    Regex::new(r"@(goto-def-decl|goto-def|goto-decl|goto-impl|goto-ref|goto-type-def)->").unwrap()
 });
 
 /// Catch-all regex for any `@word[...]->` or `@word->` pattern.
@@ -301,6 +303,7 @@ fn parse_annotations(content: &str, file_path: Option<PathBuf>) -> (Vec<Location
                 "goto-def-decl" => vec![OperationType::GotoDefinition, OperationType::GotoDeclaration],
                 "goto-impl" => vec![OperationType::GotoImplementation],
                 "goto-ref" => vec![OperationType::FindReferences],
+                "goto-type-def" => vec![OperationType::GotoTypeDefinition],
                 other => unreachable!("regex does not match '{}'", other),
             };
             let col: u32 = cap[2].parse()
@@ -326,11 +329,11 @@ fn parse_annotations(content: &str, file_path: Option<PathBuf>) -> (Vec<Location
         for cap in RE_UNKNOWN_OP.captures_iter(line) {
             let tag = &cap[1];
             let known = matches!(tag,
-                "goto-def" | "goto-decl" | "goto-def-decl" | "goto-impl" | "goto-ref");
+                "goto-def" | "goto-decl" | "goto-def-decl" | "goto-impl" | "goto-ref" | "goto-type-def");
             if !known {
                 panic!(
                     "unrecognized annotation '@{}' on line {}, \
-                     expected one of: @goto-def, @goto-decl, @goto-def-decl, @goto-impl, @goto-ref\n  \
+                     expected one of: @goto-def, @goto-decl, @goto-def-decl, @goto-impl, @goto-ref, @goto-type-def\n  \
                      line {}: {}",
                     tag, line_num + 1, line_num + 1, line.trim()
                 );
@@ -768,6 +771,18 @@ mod tests {
                       &mut HashSet<DLSLimitation>)
                       -> Result<Vec<ZeroSpan>, AnalysisLookupError>;
 
+    /// Stub for `textDocument/typeDefinition` support. The production
+    /// `type_definitions_at_fp` does not exist yet — see analysis notes on
+    /// the type-lookup system. Once implemented, replace this with an import
+    /// from `dls::actions::semantic_lookup`.
+    fn type_definitions_at_fp(
+        _ctx: &InitActionContext<MockOutput>,
+        _fp: &ZeroFilePosition,
+        _limitations: &mut HashSet<DLSLimitation>,
+    ) -> Result<Vec<ZeroSpan>, AnalysisLookupError> {
+        Ok(vec![])
+    }
+
     fn init_logging() {
         let _ = env_logger::try_init();
     }
@@ -994,6 +1009,33 @@ mod tests {
         run_annotation_tests(&setup.ctx, &setup.main_file, setup.annotations);
     }
 
+    /// Aspirational tests for the type-lookup system.
+    ///
+    /// Exercises goto-def, goto-ref, and goto-type-def on:
+    ///   - a `typedef` of a primitive type,
+    ///   - a `typedef` of a struct with fields,
+    ///   - method arguments (including one with a struct-typed argument),
+    ///   - `saved` variables (one primitive, one struct-typed).
+    ///
+    /// Marked `#[ignore]` because the required plumbing does not exist yet:
+    ///   - `DMLSymbolKind::Typedef` global lookup returns `Ok(vec![])`
+    ///     ([`analysis::mod`](../../src/analysis/mod.rs)),
+    ///   - `ReferenceKind::Type` global lookup is a no-op,
+    ///   - `Symbol::typed` is never populated (`eval_type` returns a dummy),
+    ///   - no `textDocument/typeDefinition` handler exists; the harness
+    ///     stubs `type_definitions_at_fp` to return an empty vec.
+    ///
+    /// Once the type-lookup work lands, drop the `#[ignore]` and swap the
+    /// stub for `dls::actions::semantic_lookup::type_definitions_at_fp`.
+    #[test]
+    #[ignore]
+    fn test_type_lookup() {
+        init_logging();
+        let setup = setup_test(&["type_lookup.dml"]);
+
+        run_annotation_tests(&setup.ctx, &setup.main_file, setup.annotations);
+    }
+
     /// Helper function to run annotation tests.
     #[track_caller]
     fn run_annotation_tests(
@@ -1005,6 +1047,7 @@ mod tests {
         let mut goto_decl = Vec::new();
         let mut goto_impl = Vec::new();
         let mut find_refs = Vec::new();
+        let mut goto_type_def = Vec::new();
 
         for ann in &annotations {
             match ann.operation_type {
@@ -1012,6 +1055,7 @@ mod tests {
                 OperationType::GotoDeclaration => goto_decl.push(ann),
                 OperationType::GotoImplementation => goto_impl.push(ann),
                 OperationType::FindReferences => find_refs.push(ann),
+                OperationType::GotoTypeDefinition => goto_type_def.push(ann),
             }
         }
 
@@ -1038,6 +1082,7 @@ mod tests {
         run(&goto_decl, OperationType::GotoDeclaration,    declarations_at_fp);
         run(&goto_impl, OperationType::GotoImplementation, implementations_at_fp);
         run(&find_refs, OperationType::FindReferences,     references_at_fp);
+        run(&goto_type_def, OperationType::GotoTypeDefinition, type_definitions_at_fp);
 
         assert!(all_sections.is_empty(),
             "{} annotation failure(s):\n\n{}",
