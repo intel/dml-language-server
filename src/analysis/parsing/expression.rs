@@ -184,7 +184,7 @@ impl TreeElement for ParenExpressionContent {
     fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, aux: AuxParams) {
         rules.indent_paren_expr.check(IndentParenExprArgs::from_paren_expression(self), acc);
         rules.break_func_call_open_paren.check(
-            BreakFuncCallOpenParenArgs::from_paren_expression(self, aux.depth), acc);
+            BreakFuncCallOpenParenArgs::from_paren_expression(self, aux.depth.depth()), acc);
     }
 }
 
@@ -236,7 +236,7 @@ impl TreeElement for FunctionCallContent {
         rules.sp_punct.check(SpPunctArgs::from_function_call(self), acc);
         rules.indent_paren_expr.check(IndentParenExprArgs::from_function_call(self), acc);
         rules.break_func_call_open_paren
-            .check(BreakFuncCallOpenParenArgs::from_function_call(self, aux.depth), acc);
+            .check(BreakFuncCallOpenParenArgs::from_function_call(self, aux.depth.depth()), acc);
     }
 }
 
@@ -353,7 +353,7 @@ impl TreeElement for CastContent {
     fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, aux: AuxParams) {
         rules.indent_paren_expr.check(IndentParenExprArgs::from_cast(self), acc);
         rules.break_func_call_open_paren
-            .check(BreakFuncCallOpenParenArgs::from_cast(self, aux.depth), acc);
+            .check(BreakFuncCallOpenParenArgs::from_cast(self, aux.depth.depth()), acc);
     }
 }
 
