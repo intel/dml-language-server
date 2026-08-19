@@ -565,10 +565,13 @@ pub fn rank_templates_aux<'t>(mut templates: HashMap<&'t str,
             in_eachs,
             unconditional_references,
         } = dependencies(template.get_spec(), imp_map);
+
         let referenced: HashSet<&'t str>
-            = inferior.keys().filter(|s|!invalid_isimps.values().flatten().
-                                     any(|s2|&s2 == s))
-            .cloned().collect();
+            = inferior.iter().filter(
+                |(name, kind)| invalid_isimps.get(kind)
+                    .is_none_or(|invalid_names| !invalid_names.contains(name)))
+            .map(|(name, _)| *name)
+            .collect();
         trace!("Template {:?} requires {:?}", template.get_name(), referenced);
         required_templates.insert(template.get_name(), referenced.clone());
         let all_missing: HashSet<&'t str> = referenced.difference(
