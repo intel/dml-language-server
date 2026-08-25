@@ -1071,6 +1071,15 @@ pub fn deconstruct_typedecl<'a>(
                                                          file.path))),
                                 unresolved: Box::new(modified_outer),
                             }),
+                    TokenKind::Vect =>
+                        modified_outer = UnresolvedType::Vector(
+                            UnresolvedVectorType {
+                                base: TypeBase::from_span(ZeroSpan::combine(
+                                    *modified_outer.span(),
+                                    ZeroSpan::from_range(modifier.range(),
+                                                         file.path))),
+                                unresolved: Box::new(modified_outer),
+                            }),
                     _ => internal_error!(
                         "Unexpected token in cdecl modifier list: \
                          {:?}", modifier.read_leaf(file.file).unwrap()),
@@ -1341,6 +1350,15 @@ pub fn deconstruct_cdecl<'a>(content: &misc::CDeclContent,
                             file.path))),
                     unresolved: Box::new(base),
                 }),
+            TokenKind::Vect =>
+                base = UnresolvedType::Vector(
+                    UnresolvedVectorType {
+                        base: TypeBase::from_span(ZeroSpan::combine(
+                            *base.span(),
+                            ZeroSpan::from_range(modifier.range(),
+                                                 file.path))),
+                        unresolved: Box::new(base),
+                    }),
             _ => internal_error!("Unexpected token in cdecl modifier list: \
                                   {:?}",
                                  modifier.read_leaf(file.file).unwrap()),
@@ -1391,7 +1409,15 @@ pub fn to_type<'a>(maybe_content: &types::CTypeDecl,
                                 modifier.range(),
                                 file.path))),
                         unresolved: Box::new(b),
-                }),
+                    }),
+                TokenKind::Vect => b = UnresolvedType::Vector(
+                    UnresolvedVectorType {
+                        base: TypeBase::from_span(ZeroSpan::combine(
+                            *b.span(),
+                            ZeroSpan::from_range(modifier.range(),
+                                                 file.path))),
+                        unresolved: Box::new(b),
+                    }),
                 _ => internal_error!(
                     "Unexpected token in cdecl modifier list: {:?}",
                     modifier.read_leaf(file.file).unwrap()),

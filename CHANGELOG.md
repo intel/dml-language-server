@@ -13,6 +13,7 @@
 - Fixed template cycle breaking so it will be deterministic in all cases
 - Added basic type system. Goto definition/declaration and find
   references will now work on types. Goto type-def will work on simple references
+- Fixed internal error when `vect` modifiers were made inside type declaration
 
 ## 0.9.19
 - Added configuration option to control the max cache size while resolving references in semantic analysis, defaulting to 500MB
