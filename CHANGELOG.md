@@ -8,6 +8,12 @@
 - Made GetKnownContexts custom request not wait for analysis results by default, reducing the chances of overfilling workpool capacity while analysises are running.
 - Fix issue where the server would internally format URIs incorrectly in some cases
 - The language server logs will now be in local time of whatever machine they are running on, rather than UTC.
+- Fixed bug in template cycle detection that could cause crashes when an object
+  instantiated a template involved in a cycle
+- Fixed template cycle breaking so it will be deterministic in all cases
+- Added basic type system. Goto definition/declaration and find
+  references will now work on types. Goto type-def will work on simple references
+- Fixed internal error when `vect` modifiers were made inside type declaration
 
 ## 0.9.19
 - Added configuration option to control the max cache size while resolving references in semantic analysis, defaulting to 500MB

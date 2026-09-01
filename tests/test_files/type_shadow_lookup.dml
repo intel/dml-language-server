@@ -1,0 +1,27 @@
+//  © 2024 Intel Corporation
+//  SPDX-License-Identifier: Apache-2.0 and MIT
+
+// check that variable names and type names do not conflict
+dml 1.4;
+
+device type_shadow_test;
+
+// @loc[16]=packet_t_type_def
+typedef uint32 packet_t; // @goto-ref[16]->packet_t_type_use_saved,packet_t_type_use_local
+
+// @loc[7]=packet_t_type_use_saved
+// @loc[16]=packet_t_var_def
+saved packet_t packet_t; // @goto-def-decl[7]->packet_t_type_def @goto-type-def[16]->packet_t_type_def @goto-ref[16]->packet_t_var_use_1,packet_t_var_use_2
+
+method touch() {
+    // @loc[5]=packet_t_var_use_1
+    packet_t = 42; // @goto-def-decl[5]->packet_t_var_def
+
+    // @loc[11]=packet_t_type_use_local
+    // @loc[20]=local_pkt_def
+    local packet_t local_pkt = 7; // @goto-def-decl[11]->packet_t_type_def @goto-ref[20]->local_pkt_use
+
+    // @loc[5]=packet_t_var_use_2
+    // @loc[16]=local_pkt_use
+    packet_t = local_pkt; // @goto-def-decl[5]->packet_t_var_def @goto-def-decl[16]->local_pkt_def
+}

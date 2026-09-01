@@ -23,7 +23,8 @@ use dls::span::{Position, ZeroIndexed};
 use dls::file_management::{CanonPath, PathResolver};
 use dls::server::io::Output;
 use dls::actions::semantic_lookup::{definitions_at_fp, declarations_at_fp,
-                                       implementations_at_fp, references_at_fp, DLSLimitation};
+                                       implementations_at_fp, references_at_fp,
+                                       type_definitions_at_fp, DLSLimitation};
 
 // Mock output for testing
 #[derive(Clone, Debug)]
@@ -64,6 +65,7 @@ enum OperationType {
     GotoDeclaration, // @goto-decl -> name
     GotoImplementation, // @goto-impl -> name,name,...
     FindReferences,  // @goto-ref -> name,name,...
+    GotoTypeDefinition, // @goto-type-def -> name
 }
 
 impl std::fmt::Display for OperationType {
@@ -73,6 +75,7 @@ impl std::fmt::Display for OperationType {
             OperationType::GotoDeclaration => write!(f, "goto-decl"),
             OperationType::GotoImplementation => write!(f, "goto-impl"),
             OperationType::FindReferences => write!(f, "goto-ref"),
+            OperationType::GotoTypeDefinition => write!(f, "goto-type-def"),
         }
     }
 }
@@ -209,13 +212,13 @@ static RE_LOC: LazyLock<Regex> = LazyLock::new(|| {
 
 /// Regex for operation annotations
 static RE_OP: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"@(goto-def-decl|goto-def|goto-decl|goto-impl|goto-ref)\[(\d+)\]->([^@]*)").unwrap()
+    Regex::new(r"@(goto-def-decl|goto-def|goto-decl|goto-impl|goto-ref|goto-type-def)\[(\d+)\]->([^@]*)").unwrap()
 });
 
 /// Regex for an operation annotation that is missing the required column bracket.
 /// Used for detecting test-writer errors
 static RE_OP_NO_COL: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"@(goto-def-decl|goto-def|goto-decl|goto-impl|goto-ref)->").unwrap()
+    Regex::new(r"@(goto-def-decl|goto-def|goto-decl|goto-impl|goto-ref|goto-type-def)->").unwrap()
 });
 
 /// Catch-all regex for any `@word[...]->` or `@word->` pattern.
@@ -301,6 +304,7 @@ fn parse_annotations(content: &str, file_path: Option<PathBuf>) -> (Vec<Location
                 "goto-def-decl" => vec![OperationType::GotoDefinition, OperationType::GotoDeclaration],
                 "goto-impl" => vec![OperationType::GotoImplementation],
                 "goto-ref" => vec![OperationType::FindReferences],
+                "goto-type-def" => vec![OperationType::GotoTypeDefinition],
                 other => unreachable!("regex does not match '{}'", other),
             };
             let col: u32 = cap[2].parse()
@@ -326,11 +330,11 @@ fn parse_annotations(content: &str, file_path: Option<PathBuf>) -> (Vec<Location
         for cap in RE_UNKNOWN_OP.captures_iter(line) {
             let tag = &cap[1];
             let known = matches!(tag,
-                "goto-def" | "goto-decl" | "goto-def-decl" | "goto-impl" | "goto-ref");
+                "goto-def" | "goto-decl" | "goto-def-decl" | "goto-impl" | "goto-ref" | "goto-type-def");
             if !known {
                 panic!(
                     "unrecognized annotation '@{}' on line {}, \
-                     expected one of: @goto-def, @goto-decl, @goto-def-decl, @goto-impl, @goto-ref\n  \
+                     expected one of: @goto-def, @goto-decl, @goto-def-decl, @goto-impl, @goto-ref, @goto-type-def\n  \
                      line {}: {}",
                     tag, line_num + 1, line_num + 1, line.trim()
                 );
@@ -761,8 +765,6 @@ fn setup_test(filenames: &[&str]) -> TestSetup {
 mod tests {
     use super::*;
 
-    /// Signature shared by all semantic-lookup entry points
-    /// (`definitions_at_fp`, `declarations_at_fp`, ...).
     type LookupFn = fn(&InitActionContext<MockOutput>,
                       &ZeroFilePosition,
                       &mut HashSet<DLSLimitation>)
@@ -824,7 +826,9 @@ mod tests {
             .expect("Failed to get device analysis");
 
         // Check that symbols were created
-        let all_symbols: Vec<_> = device_analysis.symbol_info.all_symbols().collect();
+        let all_symbols: Vec<_> = device_analysis.symbol_info
+            .all_symbols()
+            .collect();
         assert!(!all_symbols.is_empty(), "No symbols were created");
     }
 
@@ -994,7 +998,22 @@ mod tests {
         run_annotation_tests(&setup.ctx, &setup.main_file, setup.annotations);
     }
 
-    /// Helper function to run annotation tests.
+    #[test]
+    fn test_type_lookup() {
+        init_logging();
+        let setup = setup_test(&["type_lookup.dml"]);
+
+        run_annotation_tests(&setup.ctx, &setup.main_file, setup.annotations);
+    }
+
+    #[test]
+    fn test_type_variable_name_shadowing() {
+        init_logging();
+        let setup = setup_test(&["type_shadow_lookup.dml"]);
+
+        run_annotation_tests(&setup.ctx, &setup.main_file, setup.annotations);
+    }
+
     #[track_caller]
     fn run_annotation_tests(
         ctx: &InitActionContext<MockOutput>,
@@ -1005,6 +1024,7 @@ mod tests {
         let mut goto_decl = Vec::new();
         let mut goto_impl = Vec::new();
         let mut find_refs = Vec::new();
+        let mut goto_type_def = Vec::new();
 
         for ann in &annotations {
             match ann.operation_type {
@@ -1012,6 +1032,7 @@ mod tests {
                 OperationType::GotoDeclaration => goto_decl.push(ann),
                 OperationType::GotoImplementation => goto_impl.push(ann),
                 OperationType::FindReferences => find_refs.push(ann),
+                OperationType::GotoTypeDefinition => goto_type_def.push(ann),
             }
         }
 
@@ -1038,6 +1059,7 @@ mod tests {
         run(&goto_decl, OperationType::GotoDeclaration,    declarations_at_fp);
         run(&goto_impl, OperationType::GotoImplementation, implementations_at_fp);
         run(&find_refs, OperationType::FindReferences,     references_at_fp);
+        run(&goto_type_def, OperationType::GotoTypeDefinition, type_definitions_at_fp);
 
         assert!(all_sections.is_empty(),
             "{} annotation failure(s):\n\n{}",
@@ -1045,8 +1067,8 @@ mod tests {
             all_sections.join("\n\n"));
     }
 
-    /// Path of `p` relative to `tests/test_files/`, or the full path
-    /// string if it falls outside that directory.
+    // Path of `p` relative to `tests/test_files/`, or the full path
+    // string if it falls outside that directory.
     fn rel_to_test_files(p: &Path) -> String {
         let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("tests/test_files");
@@ -1061,22 +1083,17 @@ mod tests {
         }
     }
 
-    /// Check whether a span matches a target's expected position and file.
     fn target_matches_span(target: &ResolvedTarget, span: &ZeroSpan) -> bool {
         let position_matches = span.range.row_start.0 == target.line()
             && span.range.col_start.0 == target.col();
         position_matches && rel_to_test_files(&span.path()) == target.filename()
     }
 
-    /// Format a human-readable display string for a missing target.
     fn format_missing_target(target: &ResolvedTarget) -> String {
         format!("'{}' @ {}:{}:{}",
                 target.name, target.filename(), target.line() + 1, target.col() + 1)
     }
 
-    /// Match targets against returned spans.
-    /// Returns `(found_positive, found_questionable, failures)` where
-    /// `failures` are formatted error strings.
     fn match_targets_against_spans(
         targets: &[ResolvedTarget],
         spans: &[&ZeroSpan],
@@ -1115,12 +1132,6 @@ mod tests {
         (found_positive, found_questionable, failures)
     }
 
-    /// Deduplicate spans and optionally filter to the query file.
-    /// Returns the relevant (deduplicated) spans.
-    ///
-    /// An empty target list asserts "no results anywhere", so we keep spans
-    /// from every file in that case. With non-empty same-file-only targets,
-    /// we only assert about same-file spans and ignore cross-file results.
     fn deduplicate_spans<'a>(
         spans: &'a [ZeroSpan],
         ann: &ResolvedAnnotation,
@@ -1129,6 +1140,7 @@ mod tests {
         let query_file_path = ann.location.file_path.as_deref().unwrap_or(test_file);
         let query_rel = rel_to_test_files(query_file_path);
         let has_cross_file_targets = ann.targets.iter().any(|t| t.filename() != query_rel);
+        // keep all files if cross-targeting exists or targets is empty
         let keep_all_files = has_cross_file_targets || ann.targets.is_empty();
         let mut seen_positions = HashSet::new();
         let mut result = Vec::new();
@@ -1145,11 +1157,6 @@ mod tests {
         result
     }
 
-    /// Find extra (unexpected) spans that don't match any positive or
-    /// questionable target. Negated targets are excluded — they're already
-    /// validated in `match_targets_against_spans`. Questionable targets are
-    /// treated like positive ones here so we don't double-report a known bug.
-    /// Returns formatted display strings for each extra span.
     fn find_extra_spans(ann: &ResolvedAnnotation, spans: &[&ZeroSpan]) -> Vec<String> {
         spans.iter()
             .filter(|span| !ann.targets.iter().any(|t|
@@ -1162,8 +1169,6 @@ mod tests {
             .collect()
     }
 
-    /// Evaluate a single annotation against lookup results.
-    /// Returns Ok(summary) on success, Err(detail) on failure.
     fn evaluate_annotation(
         ann: &ResolvedAnnotation,
         spans: &[ZeroSpan],
@@ -1220,9 +1225,7 @@ mod tests {
         Err(detail)
     }
 
-    /// Generic function to test any goto operation.
-    /// Accepts a pre-filtered slice of annotations.
-    /// Returns `(failure_count, total_count, failure_details)`
+    // Returns `(failure_count, total_count, failure_details)`
     fn test_goto_operation(
         ctx: &InitActionContext<MockOutput>,
         test_file: &Path,
@@ -1260,8 +1263,6 @@ mod tests {
         (fail_count, test_annotations.len(), failures)
     }
 
-    /// Goto-def on an `import "./..."` in a device file should resolve to
-    /// the imported commoncode file (relative path resolution).
     #[test]
     fn test_goto_def_on_relative_import() {
         init_logging();
@@ -1271,8 +1272,6 @@ mod tests {
         run_annotation_tests(&setup.ctx, &setup.main_file, setup.annotations);
     }
 
-    /// Goto-def on an import in a commoncode file should also resolve, so
-    /// chains of commoncode-only imports can be navigated.
     #[test]
     fn test_goto_def_on_commoncode_import() {
         init_logging();
@@ -1286,10 +1285,6 @@ mod tests {
         run_annotation_tests(&setup.ctx, &setup.main_file, setup.annotations);
     }
 
-    /// When the same commoncode file is imported by two devices that
-    /// resolve a given import string to different files (via different
-    /// include paths), goto-def on that import should return BOTH
-    /// resolutions.
     #[test]
     fn test_goto_def_on_import_resolves_per_device_context() {
         init_logging();
@@ -1313,9 +1308,6 @@ mod tests {
         let expected_b = CanonPath::from_path_buf(
             base_dir.join("imports/test3_inc_b/shared.dml")).unwrap();
 
-        // The import we're testing is `import "shared.dml";` on line 6
-        // (0-indexed row 5) of test3_common.dml. Position the lookup inside
-        // the quoted import string (col 11, 1-indexed => col 10, 0-indexed).
         let common_path = base_dir.join("imports/test3_common.dml");
         let file_pos = make_file_position(&common_path, 5, 10);
 
@@ -1337,8 +1329,6 @@ mod tests {
                    "expected exactly 2 targets, got {}: {:?}",
                    spans.len(), result_paths);
 
-        // Each result span should be at (0,0) per definitions_at_fp's
-        // file-reference contract.
         for span in &spans {
             assert_eq!(span.range.row_start.0, 0);
             assert_eq!(span.range.col_start.0, 0);

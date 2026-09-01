@@ -1,0 +1,82 @@
+//  © 2024 Intel Corporation
+//  SPDX-License-Identifier: Apache-2.0 and MIT
+
+// Checks for errors related to method arguments, returns, and overrides
+
+dml 1.4;
+
+device errors_methods_test;
+
+// @error[31]="Cannot use anonymous struct type in argument type"
+method anon_struct_arg_method(struct { int x; } bad_arg) {
+}
+
+// @error[40]="Cannot use anonymous struct type in return type"
+method anon_struct_return_method() -> (struct { int x; }) {
+}
+
+template method_mismatch_base_tmpl {
+    // @related[12]of[36]="Overridden method declared here"
+    method shared_target() default {
+    }
+    // @related[12]of[42]="Throwing method declared here"
+    method throwing_target() throws default {
+    }
+    // @related[32]of[48]="Corresponding argument declared here"
+    method arg_type_target(int a) default {
+    }
+    method return_type_target() -> (int) default { // @related[37]of[54]="Corresponding return type declared here"
+        return 0;
+    }
+    // @related[12]of[61]="Attempted to override this declaration"
+    method not_default_target() {}
+}
+
+template bad_shared_override_tmpl is method_mismatch_base_tmpl {
+    // @error[19]="Shared method cannot override non-shared method"
+    shared method shared_target() {
+    }
+}
+
+template bad_throw_override_tmpl is method_mismatch_base_tmpl {
+    // @error[12]="Non-throwing method cannot override throwing method"
+    method throwing_target() {
+    }
+}
+
+template bad_arg_type_override_tmpl is method_mismatch_base_tmpl {
+    // @error[33]="Mismatching argument type in method override"
+    method arg_type_target(bool a) {
+    }
+}
+
+template bad_return_type_override_tmpl is method_mismatch_base_tmpl {
+    // @error[37]="Mismatching return type in method override"
+    method return_type_target() -> (bool) {
+        return false;
+    }
+}
+
+template bad_default_decl is method_mismatch_base_tmpl {
+    // @error[12]="This method attempts to override a non-default method"
+    method not_default_target() {}
+}
+
+typedef int my_int_t;
+typedef int other_int_t;
+
+template typedef_equivalence_base_tmpl {
+    method typedef_return_target() -> (my_int_t) default {
+        return 0;
+    }
+    method typedef_arg_target(my_int_t a) default {
+    }
+}
+
+template typedef_equivalence_override_tmpl is typedef_equivalence_base_tmpl {
+    method typedef_return_target() -> (int) {
+        return 0;
+    }
+    method typedef_arg_target(other_int_t a) {
+    }
+}

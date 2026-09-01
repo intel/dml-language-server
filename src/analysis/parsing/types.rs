@@ -1,22 +1,44 @@
 //  © 2024 Intel Corporation
 //  SPDX-License-Identifier: Apache-2.0 and MIT
-use crate::lint::{rules::{indentation::{IndentCodeBlockArgs, IndentClosingBraceArgs},
-                            spacing::SpBracesArgs,
-                            CurrentRules},
-                            AuxParams,
-                            DMLStyleError};
+use crate::{analysis::structure::types::string_to_endianness, lint::{AuxParams, DMLStyleError, rules::{CurrentRules, indentation::{IndentClosingBraceArgs, IndentCodeBlockArgs}, spacing::SpBracesArgs}}};
 use crate::span::Range;
 use crate::analysis::parsing::lexer::TokenKind;
 use crate::analysis::parsing::parser::{doesnt_understand_tokens,
                                        FileParser, Parse, ParseContext,
                                        FileInfo};
-use crate::analysis::parsing::tree::{AstObject, TreeElement, TreeElements,
-                            LeafToken, ZeroRange};
+use crate::analysis::parsing::tree::{AstObject, TreeElement, TreeElementMember,
+                            TreeElements, LeafToken, ZeroPosition, ZeroRange};
 use crate::analysis::parsing::misc::{CDecl, ident_filter};
 use crate::analysis::parsing::expression::Expression;
 use crate::analysis::reference::{CodeReference, Reference, ReferenceKind};
 use crate::analysis::{FileSpec, LocalDMLError};
 use crate::vfs::TextFile;
+
+#[derive(Debug)]
+pub enum StructOrLayoutRef<'t> {
+    Struct(&'t StructTypeContent),
+    Layout(&'t LayoutContent),
+}
+
+// Find the innermost struct/layout at a position
+pub fn struct_or_layout_at_pos<'t>(node: &'t dyn TreeElementMember, pos: ZeroPosition)
+    -> Option<StructOrLayoutRef<'t>> {
+    if !node.range().contains_pos(pos) {
+        return None;
+    }
+    for sub in node.subs() {
+        if let Some(found) = struct_or_layout_at_pos(sub, pos) {
+            return Some(found);
+        }
+    }
+    if let Some(s) = node.as_any().downcast_ref::<StructTypeContent>() {
+        return Some(StructOrLayoutRef::Struct(s));
+    }
+    if let Some(l) = node.as_any().downcast_ref::<LayoutContent>() {
+        return Some(StructOrLayoutRef::Layout(l));
+    }
+    None
+}
 
 pub fn typeident_filter(token: TokenKind) -> bool {
     match token {
@@ -91,7 +113,7 @@ impl Parse<BaseTypeContent> for StructTypeContent {
             }
         }
         let rbrace = new_context.expect_next_kind(stream, TokenKind::RBrace);
-        BaseTypeContent::StructType(StructTypeContent {
+        BaseTypeContent::Struct(StructTypeContent {
             structtok,
             lbrace,
             members,
@@ -125,9 +147,10 @@ impl TreeElement for LayoutContent {
         for (field, _) in &self.fields {
             errors.append(&mut field.ensure_named());
         }
+        // TODO: Consider not checking this here, and instead
+        // checking during structural conversion (we have to convert anyway)
         if let Some(byteorder) = self.byteorder.read_leaf(file) {
-            if byteorder != r#""big-endian""# &&
-                byteorder != r#""little-endian""# {
+            if string_to_endianness(byteorder.as_str()).is_none() {
                 errors.push(LocalDMLError {
                     range: self.byteorder.range(),
                     description: "Must be 'big-endian' or \
@@ -466,7 +489,7 @@ impl Parse<BaseTypeContent> for HookTypeContent {
             args.push((arg, comma));
         }
         let rparen = new_context.expect_next_kind(stream, TokenKind::RParen);
-        BaseTypeContent::HookType(HookTypeContent {
+        BaseTypeContent::Hook(HookTypeContent {
             hook, lparen, args, rparen
         }).into()
     }
@@ -475,12 +498,12 @@ impl Parse<BaseTypeContent> for HookTypeContent {
 #[derive(Debug, Clone, PartialEq)]
 pub enum BaseTypeContent {
     Ident(LeafToken),
-    StructType(StructTypeContent),
+    Struct(StructTypeContent),
     Layout(LayoutContent),
     Bitfields(BitfieldsContent),
     TypeOf(TypeOfContent),
     Sequence(SequenceContent),
-    HookType(HookTypeContent),
+    Hook(HookTypeContent),
 }
 
 impl TreeElement for BaseTypeContent {
@@ -499,23 +522,23 @@ impl TreeElement for BaseTypeContent {
     fn range(&self) -> ZeroRange {
         match self {
             Self::Ident(content) => content.range(),
-            Self::StructType(content) => content.range(),
+            Self::Struct(content) => content.range(),
             Self::Layout(content) => content.range(),
             Self::Bitfields(content) => content.range(),
             Self::TypeOf(content) => content.range(),
             Self::Sequence(content) => content.range(),
-            Self::HookType(content) => content.range(),
+            Self::Hook(content) => content.range(),
         }
     }
     fn subs(&self) -> TreeElements<'_> {
         match self {
             Self::Ident(content) => create_subs![content],
-            Self::StructType(content) => create_subs![content],
+            Self::Struct(content) => create_subs![content],
             Self::Layout(content) => create_subs![content],
             Self::Bitfields(content) => create_subs![content],
             Self::TypeOf(content) => create_subs![content],
             Self::Sequence(content) => create_subs![content],
-            Self::HookType(content) => create_subs![content],
+            Self::Hook(content) => create_subs![content],
         }
     }
 }
@@ -645,6 +668,7 @@ impl Parse<CTypeDeclSimpleContent> for CTypeDeclSimple {
     }
 }
 
+// NOTE: this is a  'ctypedecl' which is a C-style typedecl with NO identifier
 #[derive(Debug, Clone, PartialEq)]
 pub struct CTypeDeclContent {
     pub consttok: Option<LeafToken>,
@@ -695,6 +719,7 @@ impl CTypeDeclContent {
 mod test {
     use super::*;
     use crate::test_helpers::*;
+    use logos::Logos;
 
     #[test]
     fn ctypedecl() {
@@ -725,5 +750,41 @@ mod test {
                               }),
                       }),
             &vec![])
+    }
+
+    fn parse_base_type(source: &str) -> BaseType {
+        let lexer = TokenKind::lexer(source);
+        let mut fileparse = FileParser::new(lexer);
+        let top_context = ParseContext::new_context(doesnt_understand_tokens);
+        let file_info = FileInfo::default();
+        BaseType::parse(&top_context, &mut fileparse, &file_info)
+    }
+
+    #[test]
+    fn struct_or_layout_at_pos_finds_innermost_nested_match() {
+        let source = "struct { struct { int x; } inner; \
+                       layout \"big-endian\" { int y; } lay; int z; }";
+        let ast = parse_base_type(source);
+        let root: &dyn TreeElementMember = &ast;
+
+        match struct_or_layout_at_pos(root, zero_position(0, 22)) {
+            Some(StructOrLayoutRef::Struct(s)) =>
+                assert_eq!(s.range(), zero_range(0, 0, 9, 26)),
+            other => panic!("Expected inner struct, got {:?}", other),
+        }
+
+        match struct_or_layout_at_pos(root, zero_position(0, 60)) {
+            Some(StructOrLayoutRef::Layout(l)) =>
+                assert_eq!(l.range(), zero_range(0, 0, 34, 64)),
+            other => panic!("Expected layout, got {:?}", other),
+        }
+
+        match struct_or_layout_at_pos(root, zero_position(0, 74)) {
+            Some(StructOrLayoutRef::Struct(s)) =>
+                assert_eq!(s.range(), ast.range()),
+            other => panic!("Expected outer struct, got {:?}", other),
+        }
+
+        assert!(struct_or_layout_at_pos(root, zero_position(1, 0)).is_none());
     }
 }

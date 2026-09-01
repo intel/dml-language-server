@@ -1,0 +1,13 @@
+//  © 2024 Intel Corporation
+//  SPDX-License-Identifier: Apache-2.0 and MIT
+
+dml 1.4;
+
+device template_cycle_test;
+
+// @error[1]="Template inherits from itself, either directly or indirectly"
+template a is b { // @related[15]of[8]="Imported through here"
+}
+
+template b is a { // @related[15]of[8]="Imported through here"
+}

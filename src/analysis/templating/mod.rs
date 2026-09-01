@@ -6,14 +6,14 @@ pub mod topology;
 pub mod types;
 pub mod traits;
 
-use crate::analysis::templating::types::DMLResolvedType;
+use crate::analysis::templating::types::DMLType;
 use crate::analysis::structure::expressions::DMLString;
 use crate::analysis::structure::objects::MaybeAbstract;
 use crate::analysis::DMLNamed;
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub struct Declaration {
-    pub type_ref: DMLResolvedType,
+    pub type_ref: DMLType,
     pub name: DMLString,
 }
 
