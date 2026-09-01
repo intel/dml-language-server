@@ -1,0 +1,10 @@
+//  © 2024 Intel Corporation
+//  SPDX-License-Identifier: Apache-2.0 and MIT
+
+dml 1.4;
+
+device unknown_type_test;
+
+// @error[7]="Unknown type 'this_type_does_not_exist'"
+// @error[7]="Unknown type 'this_type_does_not_exist'"
+saved this_type_does_not_exist v;

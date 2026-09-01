@@ -5,23 +5,43 @@ dml 1.4;
 
 device type_test_device;
 
+// @loc[10]=template_t_def
+template template_t { // @goto-ref[10]->template_t_use
+    // @loc[11]=template_t_foo_field_def
+    param foo: int; // @goto-ref[11]->template_t_foo_field_use,template_t_foo_field_use_2
+    // @loc[17]=template_t_bar_field_def
+    session int bar; // @goto-ref[17]->template_t_bar_field_use
+}
+
 // @loc[16]=register_addr_t_def
 typedef uint32 register_addr_t; // @goto-ref[16]->register_addr_t_use_saved,register_addr_t_use_arg
 
 typedef struct {
     // @loc[12]=packet_addr_field_def
-    uint32 addr; // @goto-ref[12]->packet_addr_field_use,packet_addr_field_use_2
+    uint32 addr; // @goto-ref[12]->packet_addr_field_use,packet_addr_field_use_2,packet_addr_field_use_3,packet_addr_field_use_4
     // @loc[12]=packet_size_field_def
-    uint32 size; // @goto-ref[12]->packet_size_field_use
+    uint32 size; // @goto-ref[12]->packet_size_field_use,packet_size_field_use_2
     uint8 data[16];
 // @loc[3]=packet_t_def
-} packet_t; // @goto-ref[3]->packet_t_use_arg,packet_t_use_saved
+} packet_t; // @goto-ref[3]->packet_t_use_arg,packet_t_use_saved,packet_t_use_ptr,packet_t_use_arr,packet_t_use_local
 
-saved register_addr_t current_addr; // @goto-def-decl[7]->register_addr_t_def @goto-type-def[23]->register_addr_t_def @goto-ref[23]->current_addr_use_1,current_addr_use_2
+saved register_addr_t current_addr; // @loc[7]=register_addr_t_use_saved @loc[23]=current_addr_def @goto-def-decl[7]->register_addr_t_def @goto-type-def[23]->register_addr_t_def @goto-ref[23]->current_addr_use_1,current_addr_use_2
 
 // @loc[7]=packet_t_use_saved
 // @loc[16]=last_packet_def
 saved packet_t last_packet; // @goto-def-decl[7]->packet_t_def @goto-type-def[16]->packet_t_def @goto-ref[16]->last_packet_use,last_packet_use_2
+
+// @loc[9]=template_t_use
+// @loc[20]=T_def
+session template_t T; // @goto-def-decl[9]->template_t_def @goto-ref[20]->T_use_1,T_use_2,T_use_3 @goto-type-def[20]->template_t_def
+
+// @loc[9]=packet_t_use_ptr
+// @loc[19]=packet_ptr_def
+session packet_t *packet_ptr; // @goto-def-decl[9]->packet_t_def @goto-type-def[19]->packet_t_def @goto-ref[19]->packet_ptr_use
+
+// @loc[9]=packet_t_use_arr
+// @loc[18]=packet_arr_def
+session packet_t packet_arr[2]; // @goto-def-decl[9]->packet_t_def @goto-type-def[18]->packet_t_def @goto-ref[18]->packet_arr_use
 
 // @loc[8]=process_method_def
 method process( // @goto-ref[8]->process_method_use
@@ -57,4 +77,34 @@ method kickoff() {
     // @loc[5]=process_method_use
     // @loc[13]=last_packet_use_2
     process(last_packet, 0); // @goto-def-decl[5]->process_method_def @goto-def-decl[13]->last_packet_def
+
+    // @loc[21]=T_use_1
+    // @loc[23]=template_t_foo_field_use
+    log info: "%d", T.foo; // @goto-def-decl[21]->T_def @goto-def-decl[23]->template_t_foo_field_def
+
+    // @loc[9]=T_use_2
+    // @loc[11]=template_t_foo_field_use_2
+    if (T.foo == 0) { } // @goto-def-decl[9]->T_def @goto-def-decl[11]->template_t_foo_field_def
+
+    // @loc[21]=T_use_3
+    // @loc[23]=template_t_bar_field_use
+    log info: "%d", T.bar; // @goto-def-decl[21]->T_def @goto-def-decl[23]->template_t_bar_field_def
+}
+
+method type_coverage_extra() {
+    // @loc[5]=packet_ptr_use
+    // @loc[16]=packet_addr_field_use_3
+    packet_ptr.addr = 1; // @goto-def-decl[5]->packet_ptr_def @goto-def-decl[16]->packet_addr_field_def @goto-type-def[5]->packet_t_def
+
+    // @loc[5]=packet_arr_use
+    // @loc[19]=packet_size_field_use_2
+    packet_arr[0].size = 2; // @goto-def-decl[5]->packet_arr_def @goto-def-decl[19]->packet_size_field_def
+
+    // @loc[11]=packet_t_use_local
+    // @loc[20]=local_packet_def
+    local packet_t local_packet; // @goto-def-decl[11]->packet_t_def @goto-ref[20]->local_packet_use
+
+    // @loc[5]=local_packet_use
+    // @loc[18]=packet_addr_field_use_4
+    local_packet.addr = 3; // @goto-def-decl[5]->local_packet_def @goto-def-decl[18]->packet_addr_field_def @goto-type-def[5]->packet_t_def
 }

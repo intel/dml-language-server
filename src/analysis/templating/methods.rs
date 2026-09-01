@@ -7,17 +7,19 @@ use crate::analysis::parsing::tree::ZeroSpan;
 use crate::analysis::symbols::{DMLSymbolKind, MakeSymbolContainer,
                                StructureSymbol, SymbolContainer};
 use crate::analysis::structure::expressions::DMLString;
-use crate::analysis::structure::types::DMLType;
+use crate::analysis::structure::types::UnresolvedType;
 use crate::analysis::structure::objects::{MaybeAbstract, MethodArgument,
                                           MethodModifier, Method};
 use crate::analysis::structure::statements::{Statement, StatementKind};
 use crate::analysis::{DeclarationSpan, DMLNamed, DMLError};
 use crate::analysis::templating::Declaration;
 use crate::analysis::templating::objects::DMLNamedMember;
-use crate::analysis::templating::types::{eval_type_simple, DMLResolvedType};
+use crate::analysis::templating::types::{dmltype_equivalent,
+                                         eval_type_simple, DMLType,
+                                         GlobalTypeStorage};
 use crate::analysis::templating::traits::{DMLTrait};
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd)]
 pub enum DMLMethodArg {
     Typed(Declaration),
     Inline(DMLString),
@@ -42,13 +44,13 @@ impl DMLMethodArg {
     pub fn is_inline(&self) -> bool {
         matches!(self, DMLMethodArg::Inline(_))
     }
-    pub fn equivalent(&self, other: &DMLMethodArg) -> bool {
+    pub fn type_equivalent(&self, other: &DMLMethodArg) -> bool {
         match (self, other) {
             (DMLMethodArg::Inline(_), DMLMethodArg::Inline(_)) =>
                 true,
             (DMLMethodArg::Typed(decl1), DMLMethodArg::Typed(decl2)) =>
-                decl1.type_ref.equivalent(&decl2.type_ref),
-            _ => false
+                dmltype_equivalent(&decl1.type_ref, &decl2.type_ref),
+            _ => false,
         }
     }
     pub fn span(&self) -> &ZeroSpan {
@@ -57,34 +59,25 @@ impl DMLMethodArg {
             DMLMethodArg::Typed(decl) => &decl.name.span,
         }
     }
+    pub fn resolved_type(&self) -> DMLType {
+        match self {
+            DMLMethodArg::Inline(_) => None,
+            DMLMethodArg::Typed(decl) => decl.type_ref.clone(),
+        }
+    }
 }
 
-pub fn eval_method_args(args: &[MethodArgument], report: &mut Vec<DMLError>)
+pub fn eval_method_args(args: &[MethodArgument],
+                        types: &mut GlobalTypeStorage,
+                        report: &mut Vec<DMLError>)
                     -> Vec<DMLMethodArg> {
     args.iter().map(|arg|
                     match arg {
                         MethodArgument::Typed(name, typed) => {
-                            let (structs, type_ref) = eval_type_simple(
-                                typed, (), ());
-                            for s in &structs {
-                                report.push(
-                                    DMLError {
-                                        span: *s.span(),
-                                        description:
-                                            "Cannot use anonymous".to_string() +
-                                            " struct type in argument type",
-                                        related: vec![],
-                                        severity: Some(DiagnosticSeverity::ERROR),
-                                    });
-                            }
+                            let type_ref = eval_type_simple(typed, types, report);
                             DMLMethodArg::Typed(Declaration {
-                                type_ref: if structs.is_empty() {
-                                    type_ref.into()
-                                } else {
-                                    DMLResolvedType::Dummy(
-                                        *type_ref.span())
-                                },
-                                name: name.clone()
+                                type_ref,
+                                name: name.clone(),
                             })
                         },
                         MethodArgument::Inline(name) =>
@@ -92,29 +85,20 @@ pub fn eval_method_args(args: &[MethodArgument], report: &mut Vec<DMLError>)
                     }).collect()
 }
 
-pub fn eval_method_returns(returns: &[DMLType], report: &mut Vec<DMLError>)
-                       -> Vec<DMLResolvedType> {
+// NOTE: Returning pairs of spans and types for return, so we can point to
+// the location of the return spans when mismatches occur
+pub fn eval_method_returns(returns: &[UnresolvedType],
+                           types: &mut GlobalTypeStorage,
+                           report: &mut Vec<DMLError>)
+                           -> Vec<(ZeroSpan, DMLType)> {
     returns.iter().map(|ret| {
-        let (structs, type_ref) = eval_type_simple(ret, (), ());
-        for s in &structs {
-            report.push(
-                DMLError {
-                    span: *s.span(),
-                    description:
-                    "Cannot use anonymous struct type in return type".into(),
-                    related: vec![],
-                    severity: Some(DiagnosticSeverity::ERROR),
-                });
-        }
-        if structs.is_empty() {
-            type_ref.into()
-        } else {
-            DMLResolvedType::Dummy(*type_ref.span())
-        }
+        let decl_span = *ret.span();
+        let type_ref = eval_type_simple(ret, types, report);
+        (decl_span, type_ref)
     }).collect()
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd)]
 pub struct MethodDecl {
     pub name: DMLString,
     pub modifier: MethodModifier,
@@ -122,7 +106,7 @@ pub struct MethodDecl {
     pub default: bool,
     pub throws: bool,
     pub method_args: Vec<DMLMethodArg>,
-    pub return_types: Vec<DMLResolvedType>,
+    pub return_types: Vec<(ZeroSpan, DMLType)>,
     pub body: Statement,
     pub span: ZeroSpan,
 }
@@ -174,7 +158,7 @@ pub trait MethodDeclaration : DMLNamedMember + MaybeAbstract {
         true
     }
     fn args(&self) -> &Vec<DMLMethodArg>;
-    fn returns(&self) -> &Vec<DMLResolvedType>;
+    fn returns(&self) -> &Vec<(ZeroSpan, DMLType)>;
 
     // TODO: Let this take multiple overridden methods, as there are allowed cases
     // of that and we can provide better (fewer, more compact) reports, bundling
@@ -228,7 +212,7 @@ pub trait MethodDeclaration : DMLNamedMember + MaybeAbstract {
             });
         }
         for (arg1, arg2) in self.args().iter().zip(overridden.args()) {
-            if !arg1.equivalent(arg2) {
+            if !arg1.type_equivalent(arg2) {
                 report.push(DMLError {
                     span: *arg1.span(),
                     description: "Mismatching argument type in \
@@ -252,13 +236,15 @@ pub trait MethodDeclaration : DMLNamedMember + MaybeAbstract {
                 severity: Some(DiagnosticSeverity::ERROR),
             });
         }
-        for (type1, type2) in self.returns().iter().zip(overridden.returns()) {
-            if !type1.equivalent(type2) {
+        for ((span1, type1), (span2, type2)) in
+            self.returns().iter().zip(overridden.returns()) {
+            if type1.is_some() && type2.is_some()
+                && !dmltype_equivalent(type1, type2) {
                 report.push(DMLError {
-                    span: *type1.span(),
+                    span: *span1,
                     description: "Mismatching return type in \
                                   method override".to_string(),
-                    related: vec![(*type2.span(),
+                    related: vec![(*span2,
                                    "Corresponding return type declared here"
                                    .to_string())],
                     severity: Some(DiagnosticSeverity::ERROR),
@@ -285,13 +271,15 @@ impl MethodDeclaration for MethodDecl {
         &self.method_args
     }
 
-    fn returns(&self) -> &Vec<DMLResolvedType> {
+    fn returns(&self) -> &Vec<(ZeroSpan, DMLType)> {
         &self.return_types
     }
 }
 
 impl MethodDecl {
-    pub fn from_content(content: &Method, report: &mut Vec<DMLError>)
+    pub fn from_content(content: &Method,
+                        types: &mut GlobalTypeStorage,
+                        report: &mut Vec<DMLError>)
                         -> MethodDecl {
         MethodDecl {
             name: content.object.name.clone(),
@@ -300,8 +288,8 @@ impl MethodDecl {
             default: content.default,
             body: content.body.clone(),
             throws: content.throws,
-            method_args: eval_method_args(&content.arguments, report),
-            return_types: eval_method_returns(&content.returns, report),
+            method_args: eval_method_args(&content.arguments, types, report),
+            return_types: eval_method_returns(&content.returns, types, report),
             span: *content.span(),
         }
     }
@@ -372,7 +360,7 @@ impl MethodDeclaration for DMLMethodRef {
         self.concrete_decl.args()
     }
 
-    fn returns(&self) -> &Vec<DMLResolvedType> {
+    fn returns(&self) -> &Vec<(ZeroSpan, DMLType)> {
         self.concrete_decl.returns()
     }
 }
@@ -510,7 +498,7 @@ impl MethodDeclaration for DMLConcreteMethod {
         self.decl.args()
     }
 
-    fn returns(&self) -> &Vec<DMLResolvedType> {
+    fn returns(&self) -> &Vec<(ZeroSpan, DMLType)> {
         self.decl.returns()
     }
 }

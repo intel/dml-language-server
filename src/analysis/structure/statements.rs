@@ -18,7 +18,7 @@ use crate::analysis::parsing::lexer::TokenKind;
 use crate::analysis::parsing::tree::{LeafToken, ZeroSpan, TreeElement};
 use crate::analysis::{DMLNamed, DMLSymbolKind, FileSpec};
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub struct ForEachIdentifier(DMLString);
 
 impl DeclarationSpan for ForEachIdentifier {
@@ -39,7 +39,7 @@ impl StructureSymbol for ForEachIdentifier {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub struct ForEach {
     pub identifier: ForEachIdentifier,
     pub inexpr: Expression,
@@ -78,7 +78,7 @@ impl DeclarationSpan for ForEach {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub struct If {
     pub condition: Expression,
     pub ifbody: Statement,
@@ -119,7 +119,7 @@ impl DeclarationSpan for If {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub struct HashIf {
     pub condition: Expression,
     pub ifbody: Statement,
@@ -159,7 +159,7 @@ impl DeclarationSpan for HashIf {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub struct HashIfCase {
     pub condition: Expression,
     pub truecases: Vec<SwitchCase>,
@@ -200,7 +200,7 @@ impl DeclarationSpan for HashIfCase {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub enum SwitchCase {
     Statement(Statement),
     Case(Expression),
@@ -252,7 +252,7 @@ impl DeclarationSpan for SwitchCase {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub struct Switch {
     pub expr: Expression,
     pub cases: Vec<SwitchCase>,
@@ -285,7 +285,7 @@ impl DeclarationSpan for Switch {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub struct While {
     pub cond: Expression,
     pub body: Statement,
@@ -318,7 +318,7 @@ impl DeclarationSpan for While {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub struct DoWhile {
     pub cond: Expression,
     pub body: Statement,
@@ -351,14 +351,14 @@ impl DeclarationSpan for DoWhile {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub enum ForPostElement {
     Expression(Expression),
     Assign(Vec<Expression>, Assigner),
     AssignOp(Expression, AssignOp, Expression),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub enum ForPre {
     Declaration(Variable),
     Post(Vec<ForPostElement>),
@@ -373,7 +373,7 @@ impl SymbolContainer for ForPre {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub struct For {
     pub pre: Option<ForPre>,
     pub cond: Option<Expression>,
@@ -457,7 +457,7 @@ impl DeclarationSpan for For {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub enum AfterExpression {
     Timer(Expression),
     // Note: We allow None here in order to not double-report
@@ -466,7 +466,7 @@ pub enum AfterExpression {
     Hook(Expression, Vec<Option<String>>),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub struct After {
     pub after: Option<AfterExpression>,
     pub call: Expression,
@@ -516,7 +516,7 @@ impl DeclarationSpan for After {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub struct Return {
     pub ret: Option<Initializer>,
     pub span: ZeroSpan,
@@ -541,7 +541,7 @@ impl DeclarationSpan for Return {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub struct Continue {
     pub span: ZeroSpan,
 }
@@ -564,7 +564,7 @@ impl DeclarationSpan for Continue {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub struct Break {
     pub span: ZeroSpan,
 }
@@ -587,7 +587,7 @@ impl Break {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub struct TryCatch {
     pub tryblock: Statement,
     pub catchblock: Statement,
@@ -623,7 +623,7 @@ impl DeclarationSpan for TryCatch {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub struct Throw {
     pub span: ZeroSpan,
 }
@@ -646,13 +646,13 @@ impl DeclarationSpan for Throw {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub enum LogLevel {
     Simple(Expression),
     Subsequent(Expression, Expression),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub enum LogKind {
     SpecViol,
     Info,
@@ -662,7 +662,7 @@ pub enum LogKind {
     Warning,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub struct Log {
     pub kind: LogKind,
     pub level: Option<LogLevel>,
@@ -734,7 +734,7 @@ impl DeclarationSpan for Log {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub struct Assert {
     pub expression: Expression,
     pub span: ZeroSpan,
@@ -760,7 +760,7 @@ impl DeclarationSpan for Assert {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub struct Delete {
     pub expression: Expression,
     pub span: ZeroSpan,
@@ -786,7 +786,7 @@ impl DeclarationSpan for Delete {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub struct Error {
     pub message: Option<Expression>,
     pub span: ZeroSpan,
@@ -847,14 +847,14 @@ fn to_statement_variable_decl<'a>(content: &statement::VariableDeclContent,
         file)?).into()
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub enum AssignOp {
     Plus, Minus, Times, Divide, Mod,
     BOr, BAnd, BXor,
     LShift, RShift,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub struct AssignOpStatement {
     pub assignee: Expression,
     pub operation: AssignOp,
@@ -907,13 +907,13 @@ impl AssignOpStatement {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub enum Assigner {
     Initializer(Initializer),
     Chain(Vec<Expression>),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub struct AssignStatement {
     pub assignees: Vec<Expression>,
     pub assigner: Assigner,
@@ -981,7 +981,7 @@ impl DeclarationSpan for AssignStatement {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub struct HashSelectIdent(DMLString);
 
 impl DMLNamed for HashSelectIdent {
@@ -996,7 +996,7 @@ impl StructureSymbol for HashSelectIdent {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub struct HashSelect {
     pub ident: HashSelectIdent,
     pub inexpr: Expression,
@@ -1047,7 +1047,7 @@ impl DeclarationSpan for HashSelect {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub struct CompoundStatement {
     pub statements: Vec<Statement>,
     pub span: ZeroSpan,
@@ -1080,7 +1080,7 @@ impl DeclarationSpan for CompoundStatement {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub struct ExpressionStatement {
     pub expression: Expression,
     pub span: ZeroSpan,
@@ -1108,7 +1108,7 @@ impl DeclarationSpan for ExpressionStatement {
 
 pub type Statement = Box<StatementKind>;
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub enum StatementKind {
     ForEach(ForEach),
     HashIf(HashIf),

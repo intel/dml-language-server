@@ -1,0 +1,17 @@
+//  © 2024 Intel Corporation
+//  SPDX-License-Identifier: Apache-2.0 and MIT
+
+// A struct that references itself only through a pointer member (a common
+// linked-list-node pattern, e.g. `simics/util/hashtab.dml`'s
+// `ht_entry_common_t`). This must not be reported as a cyclic typedef.
+
+dml 1.4;
+
+device typedef_self_ref_pointer_test;
+
+typedef struct {
+    node_t *next;
+    int val;
+} node_t;
+
+saved node_t v;

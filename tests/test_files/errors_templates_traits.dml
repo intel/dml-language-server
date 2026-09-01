@@ -1,0 +1,57 @@
+//  © 2024 Intel Corporation
+//  SPDX-License-Identifier: Apache-2.0 and MIT
+
+// Device-level errors for template and type name collisions
+
+dml 1.4;
+
+device errors_templates_traits_test;
+
+// @related[10]of[13]="Previously defined here"
+// @related[10]of[19]="Template defined here"
+template dup_template_name_tmpl { param p default 1; }
+// @error[10]="Duplicate template name; 'dup_template_name_tmpl'"
+template dup_template_name_tmpl { param p default 2; }
+
+typedef int dup_typedef_name_t; // @related[13]of[17]="Previously defined here"
+typedef int dup_typedef_name_t; // @error[13]="Duplicate typedef name; 'dup_typedef_name_t'"
+
+typedef int dup_template_name_tmpl; // @error[13]="Typedef name 'dup_template_name_tmpl' collides with a template name"
+
+template member_collision_tmpl {
+    // @error[11]="Name collision on 'collide_name'"
+    param collide_name: int default 1;
+    session int collide_name; // @related[17]of[22]="Previously defined here"
+}
+
+template method_override_base_tmpl {
+    // @related[12]of[41]="Attempted to override this declaration"
+    // @related[12]of[53]="Attempted to override this declaration"
+    // @related[12]of[52]="Overridden method declared here"
+    method non_default_method() {
+        log info: "base";
+    }
+    // @related[12]of[48]="Overridden definition here"
+    method shared_m() default {
+        log info: "base default";
+    }
+}
+
+template method_override_bad_tmpl is method_override_base_tmpl {
+    // @error[12]="This method attempts to override a non-default method"
+    method non_default_method() {
+        log info: "override";
+    }
+}
+
+template abstract_override_bad_tmpl is method_override_base_tmpl {
+    method shared_m(); // @error[12]="Abstract method cannot override another method"
+}
+
+template wrong_arity_override_tmpl is method_override_base_tmpl {
+    // @error[12]="Wrong number of arguments in method override"
+    // @error[12]="This method attempts to override a non-default method"
+    method non_default_method(int extra_arg) {
+        log info: "override";
+    }
+}

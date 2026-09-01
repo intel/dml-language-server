@@ -17,7 +17,7 @@ use crate::analysis::symbols::DMLSymbolKind;
 use crate::analysis::{DeviceAnalysis, IsolatedAnalysis, LocationSpan, SymbolRef, ZeroRange};
 
 use crate::analysis::parsing::tree::{ZeroSpan, ZeroFilePosition};
-use crate::analysis::reference::{CodeReference, Reference, ReferenceKind};
+use crate::analysis::reference::{CodeReference, Reference};
 use crate::file_management::CanonPath;
 use crate::server::Output;
 
@@ -42,14 +42,6 @@ impl fmt::Display for DLSLimitation {
     }
 }
 
-pub fn type_semantic_limitation() -> DLSLimitation {
-    DLSLimitation {
-        issue_num: 65,
-        description: "The DLS does not currently support semantic analysis of \
-                      types, including reference finding".to_string(),
-    }
-}
-
 pub fn isolated_template_limitation(template_name: &str) -> DLSLimitation {
     DLSLimitation {
         issue_num: 31,
@@ -62,10 +54,6 @@ pub fn isolated_template_limitation(template_name: &str) -> DLSLimitation {
     }
 }
 
-// Because symbols need to be tied to their source analysis that result is
-// a [(DeviceAnalysis, [SymbolRef])] list
-// The reference comes from an isolated analysis, and thus is disconnected from a device
-// context
 type DeviceSymbols<'t> = Vec<(&'t DeviceAnalysis, Vec<SymbolRef>)>;
 enum SymbolsOrReference<'t> {
     Symbols(DeviceSymbols<'t>),
@@ -182,31 +170,27 @@ fn get_refs_and_syms_at_fp<'t>(
     -> Result<SymbolsOrReference<'t>, AnalysisLookupError> {
     debug!("Looking up references and symbols at position {:?}", fp);
     let ref_at_pos = analysis_info.isolated_analysis.lookup_reference(fp);
-    
-    let context_sym_at_pos = context_symbol_at_pos(analysis_info.isolated_analysis, fp);
-    let symbols_at_fp = context_sym_at_pos.map(|cs| {
-        analysis_info.device_analysises.iter().map(
-            |a|(*a, match a.lookup_symbols(&cs, relevant_limitations) {
-                Ok(syms) => syms,
-                Err(e) => {
-                    internal_error!("failed to find context symbol at {:?}: {}", fp, e);
-                    vec![]
-                }
-            }))
-        .collect::<Vec<_>>()
-    });
-    if let Some(syms) = symbols_at_fp {
+
+    if let Some(decl) = declaration_at_pos(fp, analysis_info) {
         if ref_at_pos.is_some() {
             error!("Obtained both symbol and reference at {:?}\
                         (reference is {:?}), defaulted to symbol",
             &fp, ref_at_pos);
         }
+        let syms = match decl {
+            PositionDeclaration::Contexted(cs) =>
+                analysis_info.device_analysises.iter().map(
+                    |a|(*a, match a.lookup_symbols(&cs, relevant_limitations) {
+                        Ok(syms) => syms,
+                        Err(e) => {
+                            internal_error!("failed to find context symbol at {:?}: {}", fp, e);
+                            vec![]
+                        }
+                    }))
+                .collect::<Vec<_>>(),
+            PositionDeclaration::TypeMember(syms) => syms,
+        };
         return Ok(SymbolsOrReference::Symbols(syms));
-    }
-    if let Some(refr) = ref_at_pos.and_then(|r|r.as_code_ref()) {
-        if refr.reference_kind() == ReferenceKind::Type {
-            relevant_limitations.insert(type_semantic_limitation());
-        }
     }
     if let Some(refr) = ref_at_pos {
         Ok(SymbolsOrReference::Reference(refr.clone()))
@@ -283,6 +267,26 @@ fn context_symbol_at_pos<'t>(isolated_analysis: &'t IsolatedAnalysis, pos: &Zero
         ic.remove_head_context();
     }
     context
+}
+
+enum PositionDeclaration<'t> {
+    Contexted(ContextedSymbol<'t>),
+    TypeMember(DeviceSymbols<'t>),
+}
+
+fn declaration_at_pos<'t>(fp: &ZeroFilePosition, analysis_info: &AnalysisInfo<'t>)
+    -> Option<PositionDeclaration<'t>> {
+    if let Some(cs) = context_symbol_at_pos(analysis_info.isolated_analysis, fp) {
+        return Some(PositionDeclaration::Contexted(cs));
+    }
+    let member_syms: DeviceSymbols<'t> = analysis_info.device_analysises.iter()
+        .map(|a|(*a, a.member_symbol_at_pos(fp, &analysis_info.isolated_analysis.ast)
+                 .into_iter().collect()))
+        .collect();
+    if member_syms.iter().any(|(_, syms)|!syms.is_empty()) {
+        return Some(PositionDeclaration::TypeMember(member_syms));
+    }
+    None
 }
 
 fn symbol_implementations_of_symbol<'t>(symbol: &'t SymbolRef,
@@ -459,3 +463,77 @@ pub fn references_at_fp(context: &InitActionContext<impl Output>,
        .flat_map(|s|s.lock().unwrap().references.clone())
        .collect())
 }
+
+/// Walk a resolved `DMLType`, peeling pointer/array/vector wrappers and
+/// typedef indirections, and return the span of the outermost
+/// typedef/template-as-type declaration, if any.
+fn outermost_typedef_span(ty: &crate::analysis::templating::types::DMLType)
+    -> Option<ZeroSpan> {
+    use crate::analysis::templating::types::DMLConcreteType;
+    let mut cur = ty.clone();
+    let mut outermost = None;
+    loop {
+        let concrete = cur?;
+        match concrete.as_ref() {
+            DMLConcreteType::Typedef(td) => { outermost.get_or_insert(td.decl_name.span); }
+            DMLConcreteType::Trait(t) => { outermost.get_or_insert(t.decl_name.span); }
+            _ => {}
+        }
+        cur = match concrete.peel_one() {
+            Some(next) => next.clone(),
+            None => return outermost,
+        };
+    }
+}
+
+/// Resolve the `DMLType` referred to by a symbol's source, if any.
+fn resolved_type_from_symbol_source(source: &crate::analysis::symbols::SymbolSource)
+    -> Option<&crate::analysis::templating::types::DMLType> {
+    source.resolved_type()
+}
+
+
+pub fn type_definitions_at_fp(context: &InitActionContext<impl Output>,
+                              fp: &ZeroFilePosition,
+                              relevant_limitations: &mut HashSet<DLSLimitation>)
+    -> Result<Vec<ZeroSpan>, AnalysisLookupError> {
+    let analysis_lock = context.analysis.lock().unwrap();
+    let mut semantic_lookup = SemanticLookup::create_lookup(
+        fp,
+        &analysis_lock,
+        context)?;
+    mem::swap(relevant_limitations, &mut semantic_lookup.recognized_limitations);
+
+    let mut results: Vec<ZeroSpan> = Vec::new();
+    for (_device, symbols) in &semantic_lookup.stored_symbols {
+        for sym in symbols {
+            let (kind, source) = {
+                let lock = sym.lock().unwrap();
+                (lock.kind, lock.source.clone())
+            };
+            match kind {
+                // A typedef is its own type-definition.
+                DMLSymbolKind::Typedef => {
+                    let lock = sym.lock().unwrap();
+                    results.extend(lock.definitions.iter().copied());
+                }
+                // For variables and method args, walk the resolved type.
+                DMLSymbolKind::Saved
+                | DMLSymbolKind::Session
+                | DMLSymbolKind::Extern
+                | DMLSymbolKind::Local
+                | DMLSymbolKind::Constant
+                | DMLSymbolKind::MethodArg => {
+                    if let Some(ty) = resolved_type_from_symbol_source(&source) {
+                        if let Some(span) = outermost_typedef_span(ty) {
+                            results.push(span);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    Ok(results)
+}
+

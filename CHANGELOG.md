@@ -10,6 +10,9 @@
 - The language server logs will now be in local time of whatever machine they are running on, rather than UTC.
 - Fixed bug in template cycle detection that could cause crashes when an object
   instantiated a template involved in a cycle
+- Fixed template cycle breaking so it will be deterministic in all cases
+- Added basic type system. Goto definition/declaration and find
+  references will now work on types. Goto type-def will work on simple references
 
 ## 0.9.19
 - Added configuration option to control the max cache size while resolving references in semantic analysis, defaulting to 500MB

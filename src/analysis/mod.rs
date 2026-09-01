@@ -1,6 +1,32 @@
 //  © 2024 Intel Corporation
 //  SPDX-License-Identifier: Apache-2.0 and MIT
 // Load parser and tree first to ensure existance of macros
+
+// This macro is made for transparently re-implmeneting trait fns into a
+// wrapper struct
+macro_rules! impl_trait_fns {
+    ($type: ty, $trait:ident, $field:tt,
+     $(fn $fn_name:ident(&self $(, $arg:ident: $arg_ty:ty)*) -> $ret:ty),*) => {
+        impl $trait for $type {
+            $(
+                fn $fn_name(&self, $($arg: $arg_ty),*) -> $ret {
+                    self.$field.$fn_name($($arg),*)
+                }
+            )*
+        }
+    };
+    ($type: ty, $trait:ident, $field:tt,
+     $(fn $fn_name:ident(self $(, $arg:ident: $arg_ty:ty)*) -> $ret:ty),*) => {
+        impl $trait for $type {
+            $(
+                fn $fn_name(self, $($arg: $arg_ty),*) -> $ret {
+                    self.$field.$fn_name($($arg),*)
+                }
+            )*
+        }
+    };
+}
+
 #[macro_use]
 pub mod parsing;
 #[macro_use]
@@ -41,11 +67,12 @@ use crate::analysis::provisionals::ProvisionalsManager;
 pub use crate::analysis::parsing::tree::
 {ZeroRange, ZeroSpan, ZeroPosition, ZeroFilePosition};
 
-use crate::analysis::parsing::tree::{MissingToken, MissingContent, TreeElement};
+use crate::analysis::parsing::tree::{MissingToken, MissingContent, TreeElement, TreeElementMember};
+use crate::analysis::parsing::types::{struct_or_layout_at_pos, StructOrLayoutRef};
 use crate::analysis::structure::objects::{CompObjectKind, Import, MaybeAbstract, ParamValue, Template};
 use crate::analysis::structure::statements::{ForPre, Statement, StatementKind};
 use crate::analysis::structure::toplevel::{ObjectDecl, TopLevel};
-use crate::analysis::structure::types::DMLType;
+use crate::analysis::structure::types::UnresolvedType;
 use crate::analysis::structure::expressions::{Expression, ExpressionKind,
                                               DMLString};
 use crate::analysis::templating::objects::{make_device, DMLObject,
@@ -62,7 +89,7 @@ use crate::analysis::templating::topology::{RankMaker,
 use crate::analysis::templating::methods::{DMLMethodArg, DMLMethodRef, DefaultCallReference, MethodDeclaration};
 use crate::analysis::templating::traits::{DMLTemplate,
                                           TemplateTraitInfo};
-use crate::analysis::templating::types::DMLResolvedType;
+use crate::analysis::templating::types::{DMLConcreteType, DMLStructType, DMLTraitType, DMLType, GlobalTypeStorage, eval_type_simple};
 
 use crate::concurrency::AliveStatus;
 use crate::file_management::{PathResolver, CanonPath};
@@ -161,6 +188,11 @@ impl <T: LocationSpan> LocationFile for T {
     fn loc_file(&self) -> PathBuf {
         self.loc_span().path()
     }
+}
+
+// Used by things which we identify by their span
+pub trait IdentitySpan {
+    fn identity_span(&self) -> &ZeroSpan;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -350,15 +382,38 @@ pub struct SymbolStorage {
     pub method_symbols: HashMap<ZeroSpan, HashMap<StructureKey, SymbolRef>>,
     // constants, sessions, saveds, hooks, method args
     pub variable_symbols: HashMap<ZeroSpan, SymbolRef>,
+    // Typedefs, indexed by decl location
+    pub type_symbols: HashMap<ZeroSpan, SymbolRef>,
+    // struct member fields, indexed by containing struct decl location
+    pub struct_member_symbols: HashMap<ZeroSpan, HashMap<String, SymbolRef>>,
+    // trait member fields, indexed by trait name
+    pub trait_member_symbols: HashMap<String, HashMap<String, SymbolRef>>,
 }
 
 impl SymbolStorage {
-    pub fn all_symbols<'a>(&'a self) -> impl Iterator<Item = &'a SymbolRef> {
-        self.template_symbols.values()
-            .chain(self.param_symbols.values().flat_map(|h|h.values()))
-            .chain(self.object_symbols.values())
-            .chain(self.method_symbols.values().flat_map(|h|h.values()))
-            .chain(self.variable_symbols.values())
+    pub fn all_symbols(&self) -> impl Iterator<Item = SymbolRef> + '_ {
+        self.template_symbols.values().cloned()
+            .chain(self.param_symbols.values().flat_map(|h|h.values().cloned()))
+            .chain(self.object_symbols.values().cloned())
+            .chain(self.method_symbols.values().flat_map(|h|h.values().cloned()))
+            .chain(self.variable_symbols.values().cloned())
+            .chain(self.type_symbols.values().cloned())
+            .chain(self.struct_member_symbols.values().flat_map(|h|h.values().cloned()))
+            .chain(self.trait_member_symbols.values().flat_map(|h|h.values().cloned()))
+    }
+}
+
+fn for_each_struct_type(ty: &DMLType, visited: &mut HashSet<ZeroSpan>,
+                        visit: &mut impl FnMut(&DMLStructType)) {
+    let Some(FieldContainer::Struct(st)) = DeviceAnalysis::peel_to_field_container(ty) else {
+        return;
+    };
+    if !visited.insert(*st.identity_span()) {
+        return;
+    }
+    visit(&st);
+    for (_, member_ty) in &st.members {
+        for_each_struct_type(member_ty, visited, visit);
     }
 }
 
@@ -379,6 +434,8 @@ pub struct DeviceAnalysis {
     pub reference_info: ReferenceStorage,
     pub template_object_implementation_map: HashMap<ZeroSpan,
                                                     Vec<StructureKey>>,
+    pub type_storage: GlobalTypeStorage,
+    pub symbol_maker: Arc<SymbolMaker>,
     pub path: CanonPath,
     pub dependant_files: Vec<CanonPath>,
     pub clientpath: PathBuf,
@@ -492,8 +549,8 @@ impl ReferenceMatches {
     }
 }
 
-/// TODO: Consider usage and variants of type hints
-pub type TypeHint = DMLResolvedType;
+// TODO: Consider usage and variants of type hints
+pub type TypeHint = DMLType;
 
 // Agnostic reference
 type AgnRef = Vec<String>;
@@ -715,6 +772,21 @@ impl From<VFSError> for AnalysisError {
 impl From<AnalysisError> for AnalysisProcessResult<()> {
     fn from(e: AnalysisError) -> Self {
         Err(e)
+    }
+}
+
+enum FieldContainer {
+    Struct(DMLStructType),
+    Trait(DMLTraitType),
+}
+
+// For things which are identified by their spans
+impl IdentitySpan for FieldContainer {
+    fn identity_span(&self) -> &ZeroSpan {
+        match self {
+            Self::Struct(st) => st.identity_span(),
+            Self::Trait(t) => t.identity_span(),
+        }
     }
 }
 
@@ -1134,7 +1206,28 @@ impl DeviceAnalysis {
                     }
             },
             // TODO: type lookup
-            ReferenceKind::Type => (),
+            ReferenceKind::Type => {
+                if let Some(loc) = self.type_storage.typedef_decl_span(&reference.name) {
+                        if let Some(type_sym) =
+                            self.symbol_info.type_symbols.get(&loc) {
+                                ref_matches.add_match(Arc::clone(type_sym));
+                        } else {
+                            error!("Unexpectedly missing a typedef symbol {}",
+                                   reference.name);
+                        }
+                } else if let Some(templ) = self.templates
+                    .templates.get(&reference.name) {
+                    // A Type-kind reference may name a template (DML "trait
+                    // type"). Fall back to the template's symbol so
+                    // goto-def/decl/ref work on template-as-type uses.
+                    if let Some(templ_loc) = &templ.location {
+                        if let Some(templ_sym) =
+                            self.symbol_info.template_symbols.get(templ_loc) {
+                            ref_matches.add_match(Arc::clone(templ_sym));
+                        }
+                    }
+                }
+            },
             _ => error!("Invalid global reference kind in {:?}", reference),
         }
         ref_matches
@@ -1184,8 +1277,17 @@ impl DeviceAnalysis {
                     Err(format!("Unexpectedly missing template matching {:?}", sym))
                 }
             },
-            // TODO: DMLType lookup
-            DMLSymbolKind::Typedef => Ok(vec![]),
+            DMLSymbolKind::Typedef => {
+                if let Some(loc) = self.type_storage.typedef_decl_span(sym.name.as_str()) {
+                    if let Some(type_sym) = self.symbol_info.type_symbols.get(&loc) {
+                        Ok(vec![Arc::clone(type_sym)])
+                    } else {
+                        Err(format!("Unexpectedly missing typedef symbol matching {:?}", sym))
+                    }
+                } else {
+                    Ok(vec![])
+                }
+            },
             // TODO: Extern lookup
             DMLSymbolKind::Extern => Ok(vec![]),
             e => {
@@ -1226,10 +1328,55 @@ impl DeviceAnalysis {
         // We can ignore messages from lookup defs here, as this lookup is
         // live and reporting additional things from here makes no sense
         if let Some(matches) = refs.as_matches() {
-            Ok(matches.into_iter().collect())
-        } else {
-            Ok(vec![])
+            return Ok(matches.into_iter().collect());
         }
+        // No device-tree object implements the innermost enclosing context.
+        // This is expected (not an error) for a param/session/saved declared
+        // inside a template that is only ever used as a type and never
+        // `is`-instantiated: such a template has no corresponding object in
+        // the device tree at all, but its members are still meaningful as
+        // type members. `extend_with_trait_members` registers a symbol for
+        // each of them directly in `self.symbol_info.trait_member_symbols`,
+        // so look it up there instead.
+        if let Some(ContextKey::Template(templ)) = sym.contexts.last() {
+            if let Some(member_sym) = self.symbol_info.trait_member_symbols.get(&templ.get_name())
+                .and_then(|m|m.get(&sym.symbol.get_name())) {
+                    // We successfully resolved this via the template's
+                    // type-member symbols, so the "cannot evaluate without
+                    // an instantiating object" limitation inserted by
+                    // `context_to_objs` above doesn't apply here.
+                    limitations.remove(
+                        &isolated_template_limitation(&templ.get_name()));
+                    return Ok(vec![Arc::clone(member_sym)]);
+                }
+        }
+        Ok(vec![])
+    }
+
+    // Looks up a member-decl. Takes ast passed-in from above to find
+    // containing spans for structs
+    pub fn member_symbol_at_pos(&self, pos: &ZeroFilePosition,
+                                ast: &dyn TreeElementMember) -> Option<SymbolRef> {
+        if let Some(found) = struct_or_layout_at_pos(ast, pos.position) {
+            let range = match found {
+                StructOrLayoutRef::Struct(s) => s.range(),
+                StructOrLayoutRef::Layout(l) => l.range(),
+            };
+            let span = ZeroSpan::from_range(range, pos.path());
+            if let Some(member_sym) = self.symbol_info.struct_member_symbols.get(&span)
+                          .and_then(|m|m.values()
+                          .find(|sym|sym.lock().unwrap().loc.contains_pos(pos))
+                          .cloned()) {
+                return Some(member_sym);
+            }
+        }
+        let container = self.templates.templates.values()
+            .filter(|templ|templ.spec.span().contains_pos(pos))
+            .max_by_key(|templ|templ.spec.span().range.start())?;
+        self.symbol_info.trait_member_symbols.get(&container.name)?
+            .values()
+            .find(|sym|sym.lock().unwrap().loc.contains_pos(pos))
+            .map(Arc::clone)
     }
 
     fn resolve_noderef_in_symbol<'t>(&'t self,
@@ -1241,25 +1388,150 @@ impl DeviceAnalysis {
         let sym = symbol.lock().unwrap();
         match &sym.source {
             SymbolSource::DMLObject(obj) => {
-                // The performance overhead is cloning here
-                // is _probably_ smaller than the one of holding the key
+                // The performance overhead of cloning here is _probably_
+                // smaller than the one of holding the lock
                 let obj_copy = obj.clone();
                 drop(sym);
                 self.resolve_noderef_in_obj(&obj_copy,
                                             node,
                                             method_structure,
                                             ref_matches);
+                // Fall back to resolving the noderef as a field reference
+                if ref_matches.as_matches().is_none() {
+                    if let Some(ty) = obj_copy.resolved_type() {
+                        self.resolve_struct_field_in_type(ty, node, ref_matches);
+                    }
+                }
             },
             SymbolSource::Method(key, method) => {
                 self.resolve_noderef_in_method(key, method, node, method_structure, ref_matches);
             },
-            // TODO: Cannot be resolved without constant folding
-            SymbolSource::MethodArg(_method, _name) => (),
-            SymbolSource::MethodLocal(_method, _name) => (),
-            // TODO: Fix once type system is sorted
-            SymbolSource::Type(_typed) => (),
+            // TODO: For now, we can only resolve noderefs through method args and
+            // locals through their perhaps-struct-typed fields
+
+            // Method args and locals can only be usefully sub-referenced when
+            // their resolved type is (a chain of typedefs down to) a struct
+            // type; in that case a `Simple` sub-ref names a struct field.
+            SymbolSource::MethodArg(..)
+            | SymbolSource::MethodLocal(..)
+            | SymbolSource::Type(..) => {
+                let resolved_type = sym.source.resolved_type().cloned();
+                drop(sym);
+                if let Some(ty) = resolved_type {
+                    self.resolve_struct_field_in_type(&ty, node, ref_matches);
+                }
+            },
             // TODO: Handle lookups inside templates
             SymbolSource::Template(_templ) => (),
+        }
+    }
+
+    // Get the containing struct/template of a field
+    fn peel_to_field_container(ty: &DMLType) -> Option<FieldContainer> {
+        let mut cur: DMLType = ty.clone();
+        loop {
+            let concrete = cur?;
+            cur = match concrete.as_ref() {
+                DMLConcreteType::StructType(st) =>
+                    return Some(FieldContainer::Struct(st.clone())),
+                DMLConcreteType::Trait(t) =>
+                    return Some(FieldContainer::Trait(t.clone())),
+                other => other.peel_one()?.clone(),
+            };
+        }
+    }
+
+    fn struct_field(st: &DMLStructType, name: &str) -> Option<(ZeroSpan, DMLType)> {
+        for (member_name, ty) in &st.members {
+            if let Some(n) = member_name {
+                if n.val == name {
+                    return Some((n.span, ty.clone()));
+                }
+            }
+        }
+        None
+    }
+
+    fn make_struct_field_symbol(&self,
+                                field_span: ZeroSpan,
+                                field_type: DMLType) -> SymbolRef {
+        let sym = self.symbol_maker.new_symbol(
+            field_span,
+            // local symbol kind is similar enough to a field declaration we can re-use it here.
+            DMLSymbolKind::Local,
+            SymbolSource::Type(field_type),
+        );
+        {
+            let mut lock = sym.lock().unwrap();
+            lock.definitions.push(field_span);
+            lock.declarations.push(field_span);
+        }
+        sym
+    }
+
+    fn field_symbol_of(&self, container: &FieldContainer, name: &str)
+        -> Option<SymbolRef> {
+        match container {
+            FieldContainer::Struct(st) =>
+                self.symbol_info.struct_member_symbols.get(st.identity_span())?
+                    .get(name).map(Arc::clone),
+            FieldContainer::Trait(t) =>
+                self.symbol_info.trait_member_symbols.get(&t.decl_name.val)?
+                    .get(name).map(Arc::clone),
+        }
+    }
+
+    pub fn fields_of_type_symbol(&self, type_sym: &SymbolRef)
+        -> Option<HashMap<String, SymbolRef>> {
+        let lock = type_sym.lock().unwrap();
+        let ty = lock.source.resolved_type()?;
+        match Self::peel_to_field_container(ty)? {
+            FieldContainer::Struct(st) =>
+                self.symbol_info.struct_member_symbols.get(st.identity_span()).cloned(),
+            FieldContainer::Trait(t) =>
+                self.symbol_info.trait_member_symbols.get(&t.decl_name.val).cloned(),
+        }
+    }
+
+    fn resolve_struct_field_in_type(&self,
+                                    ty: &DMLType,
+                                    node: &NodeRef,
+                                    ref_matches: &mut ReferenceMatches) {
+        match node {
+            NodeRef::Simple(simple) => {
+                let Some(container) = Self::peel_to_field_container(ty) else { return; };
+                if let Some(sym) = self.field_symbol_of(&container, &simple.val) {
+                    ref_matches.add_match(sym);
+                } else if let FieldContainer::Struct(st) = &container {
+                    if let Some((span, field_ty)) = Self::struct_field(st, &simple.val) {
+                        // Fallback: struct wasn't pre-registered (anonymous or
+                        // otherwise unreachable at analysis-build time). Still
+                        // produce a match so goto-def works, but goto-ref may
+                        // not include this reference.
+                        let sym = self.make_struct_field_symbol(span, field_ty);
+                        ref_matches.add_match(sym);
+                    }
+                }
+            }
+            NodeRef::Sub(subnode, simple, _) => {
+                // Recursively resolve the intermediate expression's type
+                // against this same struct chain.
+                let mut intermediate = ReferenceMatches::new();
+                self.resolve_struct_field_in_type(ty, subnode, &mut intermediate);
+                if let Some(syms) = intermediate.as_matches() {
+                    for sym in syms {
+                        // Clone the typeref so we can drop the lock immediately
+                        let inner_ty = sym.lock().unwrap().source.resolved_type().cloned();
+                        if let Some(inner_ty) = inner_ty {
+                            let wrapped = NodeRef::Simple(simple.clone());
+                            self.resolve_struct_field_in_type(
+                                &inner_ty, &wrapped, ref_matches);
+                        }
+                    }
+                } else {
+                    ref_matches.merge_with(intermediate);
+                }
+            }
         }
     }
 
@@ -1885,6 +2157,7 @@ impl IsolatedAnalysis {
 fn objects_to_symbols(maker: &SymbolMaker,
                       objects: &StructureContainer,
                       errors: &mut Vec<DMLError>,
+                      types: &mut GlobalTypeStorage,
                       method_structure: &mut HashMap
                       <ZeroSpan, RangeEntry>) -> SymbolStorage {
     let mut storage = SymbolStorage::default();
@@ -1900,6 +2173,7 @@ fn objects_to_symbols(maker: &SymbolMaker,
                 add_new_symbol_from_shallow(maker,
                                             shallow,
                                             errors,
+                                            types,
                                             &mut storage,
                                             method_structure);
             }
@@ -1939,6 +2213,85 @@ fn extend_with_templates(maker: &SymbolMaker,
     }
 }
 
+fn extend_with_types(maker: &SymbolMaker,
+                     storage: &mut SymbolStorage,
+                     type_storage: &GlobalTypeStorage) {
+    for (name, loc) in type_storage.typedef_decl_spans() {
+        // Fetch the fully-resolved `DMLType` for this typedef from the
+        // global type storage. Since the typedef declaration itself is the
+        // "definition of the type", the source carries the resolved
+        // `Typedef`-wrapped DMLType.
+        let resolved = type_storage.typedef_as_type(name);
+        let sym = symbol_ref!(
+            maker,
+            loc,
+            DMLSymbolKind::Typedef,
+            SymbolSource::Type(resolved),
+            bases = vec![loc],
+            definitions = vec![loc],
+            declarations = vec![loc]
+        );
+        if let Some(prev) = storage.type_symbols.insert(loc, sym) {
+            internal_error!("Unexpectedly two type symbols defined in the same location");
+            error!("Previous was {:?}", prev);
+        }
+    }
+}
+
+fn extend_with_struct_fields(maker: &SymbolMaker, symbols: &mut SymbolStorage,
+                             type_storage: &GlobalTypeStorage) {
+    let mut visited: HashSet<ZeroSpan> = HashSet::new();
+    for ty in type_storage.resolved_types() {
+        for_each_struct_type(ty, &mut visited, &mut |st| {
+            symbols.struct_member_symbols.entry(*st.identity_span()).or_insert_with(|| {
+                st.members.iter()
+                    .filter_map(|(member_name, member_ty)| {
+                        let name = member_name.as_ref()?;
+                        let field_span = name.span;
+                        let sym = symbol_ref!(
+                            maker,
+                            field_span,
+                            DMLSymbolKind::Local,
+                            SymbolSource::Type(member_ty.clone()),
+                            bases = vec![field_span],
+                            definitions = vec![field_span],
+                            declarations = vec![field_span]
+                        );
+                        Some((name.val.clone(), sym))
+                    })
+                    .collect()
+            });
+        });
+    }
+}
+
+fn extend_with_trait_members(maker: &SymbolMaker, symbols: &mut SymbolStorage,
+                             templates: &TemplateTraitInfo) {
+    for (name, template) in &templates.templates {
+        let trait_info = &template.traitspec;
+        symbols.trait_member_symbols.entry(name.clone()).or_insert_with(|| {
+            trait_info.params.values()
+                .chain(trait_info.sessions.values())
+                .chain(trait_info.saveds.values())
+                .map(|decl| {
+                    let member_span = decl.name.span;
+                    let sym = symbol_ref!(
+                        maker,
+                        member_span,
+                        DMLSymbolKind::Local,
+                        SymbolSource::Type(decl.type_ref.clone()),
+                        bases = vec![member_span],
+                        definitions = vec![member_span],
+                        declarations = vec![member_span]
+                    );
+                    (decl.name.val.clone(), sym)
+                })
+                .collect()
+        });
+    }
+}
+
+
 fn new_symbol_from_object(maker: &SymbolMaker,
                           object: &DMLCompositeObject) -> SymbolRef {
     let all_decl_defs = &object.all_decls;
@@ -1964,7 +2317,8 @@ fn new_symbol_from_arg(maker: &SymbolMaker,
         maker,
         *arg.loc_span(),
         DMLSymbolKind::MethodArg,
-        SymbolSource::MethodArg(Arc::clone(methref), arg.name().clone()),
+        SymbolSource::MethodArg(Arc::clone(methref), arg.name().clone(),
+                               arg.resolved_type()),
         bases = bases,
         definitions = definitions,
         declarations = declarations
@@ -2000,7 +2354,7 @@ where K: std::hash::Hash + Eq + Clone + std::fmt::Debug,
 // Create a symbol for each level of overriding for each object where the method
 // is actualized. We then end up with many symbols for the same decl location,
 // and leave it to requests to collect the aggregate information at the point
-fn add_new_symbol_from_method(maker: &SymbolMaker, parent_obj_key: &StructureKey, method_ref: &Arc<DMLMethodRef>, errors: &mut Vec<DMLError>, storage: &mut SymbolStorage, method_structure: &mut HashMap<ZeroSpan, RangeEntry>) {
+fn add_new_symbol_from_method(maker: &SymbolMaker, parent_obj_key: &StructureKey, method_ref: &Arc<DMLMethodRef>, errors: &mut Vec<DMLError>, types: &mut GlobalTypeStorage, storage: &mut SymbolStorage, method_structure: &mut HashMap<ZeroSpan, RangeEntry>) {
     let (bases, definitions, declarations) = (
         method_ref.get_bases().iter().map(|b|*b.location()).collect(),
         vec![*method_ref.get_decl().location()],
@@ -2022,10 +2376,10 @@ fn add_new_symbol_from_method(maker: &SymbolMaker, parent_obj_key: &StructureKey
             let new_argsymbol = new_symbol_from_arg(maker, method_ref, arg);
             log_non_same_insert(&mut storage.variable_symbols, *arg.loc_span(), new_argsymbol);
         }
-        add_method_scope_symbols(maker, method_ref, method_structure, storage, errors);
+        add_method_scope_symbols(maker, method_ref, method_structure, types, storage, errors);
         if let Some(defaults) = method_ref.get_default() {
             for default in defaults.flat_refs() {
-                add_new_symbol_from_method(maker, parent_obj_key, default, errors, storage, method_structure);
+                add_new_symbol_from_method(maker, parent_obj_key, default, errors, types, storage, method_structure);
             }
         }
     }
@@ -2035,6 +2389,7 @@ fn add_new_symbol_from_method(maker: &SymbolMaker, parent_obj_key: &StructureKey
 fn add_new_symbol_from_shallow(maker: &SymbolMaker,
                                shallow: &DMLShallowObject,
                                errors: &mut Vec<DMLError>,
+                               types: &mut GlobalTypeStorage,
                                storage: &mut SymbolStorage,
                                method_structure: &mut HashMap
                                <ZeroSpan, RangeEntry>) {
@@ -2046,7 +2401,7 @@ fn add_new_symbol_from_shallow(maker: &SymbolMaker,
              param.declarations.iter()
                 .map(|(_, def)|*def.loc_span()).collect()),
         DMLShallowObjectVariant::Method(method_ref) =>
-            return add_new_symbol_from_method(maker, &shallow.parent, method_ref, errors, storage, method_structure),
+            return add_new_symbol_from_method(maker, &shallow.parent, method_ref, errors, types, storage, method_structure),
         DMLShallowObjectVariant::Constant(constant) =>
             (vec![*constant.loc_span()],
              vec![*constant.loc_span()],
@@ -2101,6 +2456,7 @@ fn add_method_scope_symbols(maker: &SymbolMaker,
                             method: &Arc<DMLMethodRef>,
                             method_structure: &mut HashMap<ZeroSpan,
                                                            RangeEntry>,
+                            types: &mut GlobalTypeStorage,
                             storage: &mut SymbolStorage,
                             errors: &mut Vec<DMLError>) {
     let mut entry = RangeEntry {
@@ -2113,6 +2469,7 @@ fn add_method_scope_symbols(maker: &SymbolMaker,
                                      method,
                                      &method.get_decl().body,
                                      errors,
+                                     types,
                                      storage,
                                      &mut entry);
     }
@@ -2126,20 +2483,22 @@ fn add_method_scope_symbols(maker: &SymbolMaker,
 fn add_new_method_scope_symbol<T>(maker: &SymbolMaker,
                                   method: &Arc<DMLMethodRef>,
                                   sym: &T,
-                                  _typ: &DMLType,
+                                  typ: &UnresolvedType,
+                                  types: &mut GlobalTypeStorage,
+                                  errors: &mut Vec<DMLError>,
                                   storage: &mut SymbolStorage,
                                   scope: &mut RangeEntry)
 where
     T : StructureSymbol + DMLNamed + LocationSpan
 {
+    let resolved = eval_type_simple(typ, types, errors);
     let symbol = symbol_ref!(
         maker,
         *sym.loc_span(),
         sym.kind(),
-        SymbolSource::MethodLocal(Arc::clone(method), sym.name().clone()),
+        SymbolSource::MethodLocal(Arc::clone(method), sym.name().clone(), resolved),
         definitions = vec![*sym.loc_span()],
         declarations = vec![*sym.loc_span()]
-        // TODO: resolve type
     );
     scope.symbols.insert(sym.name().val.clone(), Arc::clone(&symbol));
     storage.variable_symbols.insert(*sym.loc_span(), symbol);
@@ -2151,6 +2510,7 @@ fn enter_new_method_scope(maker: &SymbolMaker,
                           stmnt: &Statement,
                           scope_span: &ZeroSpan,
                           errors: &mut Vec<DMLError>,
+                          types: &mut GlobalTypeStorage,
                           storage: &mut SymbolStorage,
                           scope: &mut RangeEntry) {
     // In DMLC, there is no error or warning about this (even if a declaration
@@ -2176,6 +2536,7 @@ fn enter_new_method_scope(maker: &SymbolMaker,
                                  method,
                                  stmnt,
                                  errors,
+                                 types,
                                  storage,
                                  &mut entry);
     scope.sub_ranges.push(entry);
@@ -2185,6 +2546,7 @@ fn add_new_method_scope_symbols(maker: &SymbolMaker,
                                 method: &Arc<DMLMethodRef>,
                                 stmnt: &Statement,
                                 errors: &mut Vec<DMLError>,
+                                types: &mut GlobalTypeStorage,
                                 storage: &mut SymbolStorage,
                                 scope: &mut RangeEntry) {
     match &**stmnt {
@@ -2194,6 +2556,7 @@ fn add_new_method_scope_symbols(maker: &SymbolMaker,
                                              method,
                                              sub_stmnt,
                                              errors,
+                                             types,
                                              storage,
                                              scope);
             },
@@ -2204,6 +2567,7 @@ fn add_new_method_scope_symbols(maker: &SymbolMaker,
                                    &content.ifbody,
                                    content.ifbody.span(),
                                    errors,
+                                   types,
                                    storage,
                                    scope);
             if let Some(elsebody) = &content.elsebody {
@@ -2213,6 +2577,7 @@ fn add_new_method_scope_symbols(maker: &SymbolMaker,
                                        elsebody,
                                        elsebody.span(),
                                        errors,
+                                       types,
                                        storage,
                                        scope);
             }
@@ -2225,6 +2590,7 @@ fn add_new_method_scope_symbols(maker: &SymbolMaker,
                                    &content.ifbody,
                                    content.ifbody.span(),
                                    errors,
+                                   types,
                                    storage,
                                    scope);
             if let Some(elsebody) = &content.elsebody {
@@ -2234,6 +2600,7 @@ fn add_new_method_scope_symbols(maker: &SymbolMaker,
                                        elsebody,
                                        elsebody.span(),
                                        errors,
+                                       types,
                                        storage,
                                        scope);
             }
@@ -2245,6 +2612,7 @@ fn add_new_method_scope_symbols(maker: &SymbolMaker,
                                    &content.body,
                                    content.body.span(),
                                    errors,
+                                   types,
                                    storage,
                                    scope),
         StatementKind::DoWhile(content) =>
@@ -2254,6 +2622,7 @@ fn add_new_method_scope_symbols(maker: &SymbolMaker,
                                    &content.body,
                                    content.body.span(),
                                    errors,
+                                   types,
                                    storage,
                                    scope),
         StatementKind::For(content) => {
@@ -2269,6 +2638,8 @@ fn add_new_method_scope_symbols(maker: &SymbolMaker,
                                                 method,
                                                 decl,
                                                 &decl.typed,
+                                                types,
+                                                errors,
                                                 storage,
                                                 &mut entry);
                 }
@@ -2279,6 +2650,7 @@ fn add_new_method_scope_symbols(maker: &SymbolMaker,
                                    &content.body,
                                    content.body.span(),
                                    errors,
+                                   types,
                                    storage,
                                    &mut entry);
             scope.sub_ranges.push(entry);
@@ -2295,7 +2667,11 @@ fn add_new_method_scope_symbols(maker: &SymbolMaker,
                                         method,
                                         &content.ident,
                                         // TODO: infer type
-                                        content.ident.loc_span(),
+                                        // (element of inexpr type)
+                                        &UnresolvedType::make_invalid(
+                                            *content.inexpr.span()),
+                                        types,
+                                        errors,
                                         storage,
                                         &mut entry);
             enter_new_method_scope(maker,
@@ -2304,6 +2680,7 @@ fn add_new_method_scope_symbols(maker: &SymbolMaker,
                                    &content.selectbranch,
                                    content.selectbranch.span(),
                                    errors,
+                                   types,
                                    storage,
                                    &mut entry);
             scope.sub_ranges.push(entry);
@@ -2313,6 +2690,7 @@ fn add_new_method_scope_symbols(maker: &SymbolMaker,
                                    &content.elsebranch,
                                    content.elsebranch.span(),
                                    errors,
+                                   types,
                                    storage,
                                    scope);
         },
@@ -2323,6 +2701,7 @@ fn add_new_method_scope_symbols(maker: &SymbolMaker,
                                    &content.tryblock,
                                    content.tryblock.span(),
                                    errors,
+                                   types,
                                    storage,
                                    scope);
             enter_new_method_scope(maker,
@@ -2331,6 +2710,7 @@ fn add_new_method_scope_symbols(maker: &SymbolMaker,
                                    &content.catchblock,
                                    content.catchblock.span(),
                                    errors,
+                                   types,
                                    storage,
                                    scope);
         },
@@ -2341,6 +2721,8 @@ fn add_new_method_scope_symbols(maker: &SymbolMaker,
                     method,
                     decl,
                     &decl.typed,
+                    types,
+                    errors,
                     storage,
                     scope);
             },
@@ -2356,6 +2738,7 @@ impl DeviceAnalysis {
                                      &str, &ObjectDecl<Template>>,
                              files: &HashMap<&str, &TopLevel>,
                              imp_map: &HashMap<Import, CanonPath>,
+                             types: &mut GlobalTypeStorage,
                              errors: &mut Vec<DMLError>)
                              -> TemplateTraitInfo {
         info!("Rank templates");
@@ -2365,7 +2748,7 @@ impl DeviceAnalysis {
         create_templates_traits(
             start_of_file,
             rank_maker, templates, order,
-            invalid_isimps, imp_map, rank_struct, errors)
+            invalid_isimps, imp_map, rank_struct, types, errors)
     }
 
     fn match_references(&mut self,
@@ -2497,22 +2880,67 @@ impl DeviceAnalysis {
                    base.path.to_str().unwrap_or("no path"));
         }
         status.check_alive()?;
+        // Register all typedefs from all base files with the global type
+        // storage so they are available for resolution during templating,
+        // reporting conflicts (including template/typedef overlaps) along
+        // the way. Built-in named types ("int", "char", "size_t", ...) are
+        // generated once here as part of construction (see
+        // `GlobalTypeStorage::new`).
+        let mut type_storage = GlobalTypeStorage::new(root.path.clone());
+        for base in &bases {
+            for typedef in &base.toplevel.typedefs {
+                let name = typedef.name();
+                if let Some(prev_span) = type_storage.add_typedef(typedef) {
+                    errors.push(DMLError {
+                        span: *typedef.object.loc_span(),
+                        description: format!("Duplicate typedef name; '{}'",
+                                             name.val),
+                        severity: Some(DiagnosticSeverity::ERROR),
+                        related: vec![(
+                            prev_span,
+                            "Previously defined here".to_string()
+                        )],
+                    });
+                } else if let Some(templ) = unique_templates.get(name.val.as_str()) {
+                    errors.push(DMLError {
+                        span: *typedef.object.loc_span(),
+                        description: format!(
+                            "Typedef name '{}' collides with a template name",
+                            name.val),
+                        severity: Some(DiagnosticSeverity::ERROR),
+                        related: vec![(
+                            *templ.obj.object.loc_span(),
+                            "Template defined here".to_string()
+                        )],
+                    });
+                }
+            }
+        }
+
+        // Track templates-as-types
+        for template in unique_templates.values() {
+            type_storage.add_template(template.obj.object.name.clone());
+        }
+
+        type_storage.resolve_all(&mut errors);
+
         let mut rank_maker = RankMaker::new();
         let tt_info = Self::make_templates_traits(&root.toplevel.start_of_file,
                                                   &mut rank_maker,
                                                   &unique_templates,
                                                   &files,
                                                   &imp_map,
+                                                  &mut type_storage,
                                                   &mut errors);
         status.check_alive()?;
-        // TODO: catch typedef/traitname overlaps
 
-        // TODO: this is where we would do type resolution
         let mut container = StructureContainer::default();
         info!("Make device");
         let device_key = make_device(&root.path, &root.toplevel,
                                      &tt_info, imp_map, &mut container,
-                                     &mut rank_maker, &mut errors).key;
+                                     &mut rank_maker,
+                                     &mut type_storage,
+                                     &mut errors).key;
         status.check_alive()?;
         // maps template declaration loc to objects
         let template_object_implementation_map =
@@ -2526,19 +2954,21 @@ impl DeviceAnalysis {
         // NAME of the methoddecl
         let mut method_structure: HashMap<ZeroSpan, RangeEntry>
             = HashMap::default();
-        let maker = SymbolMaker::new();
+        let maker = Arc::new(SymbolMaker::new());
         let mut symbol_info = objects_to_symbols(&maker,
                                                  &container,
                                                  &mut errors,
+                                                 &mut type_storage,
                                                  &mut method_structure);
         // This needs to be done after all symbols are created, because method
         // symbol order is not correlated to the object iteration order
         bind_method_implementations(&mut symbol_info.method_symbols);
 
         status.check_alive()?;
-        // TODO: how do we store type info?
         extend_with_templates(&maker, &mut symbol_info, &tt_info);
-        //extend_with_types(&mut symbols, ??)
+        extend_with_types(&maker, &mut symbol_info, &type_storage);
+        extend_with_struct_fields(&maker, &mut symbol_info, &type_storage);
+        extend_with_trait_members(&maker, &mut symbol_info, &tt_info);
         let mut device = DeviceAnalysis {
             name: root.toplevel.device.unwrap().name.val,
             errors: HashMap::default(),
@@ -2548,6 +2978,8 @@ impl DeviceAnalysis {
             symbol_info,
             reference_info: ReferenceStorage::default(),
             template_object_implementation_map,
+            type_storage,
+            symbol_maker: maker,
             path: root.path.clone(),
             clientpath: root.path.clone().into(),
             dependant_files: bases.iter().map(|b|&b.path).cloned().collect(),
@@ -2621,7 +3053,7 @@ impl DeviceAnalysis {
             let mut syms = vec![];
             for sym in self.symbol_info.all_symbols() {
                 if sym.lock().unwrap().references.contains(&loc) {
-                    syms.push(Arc::clone(sym));
+                    syms.push(sym);
                 }
             }
             locked_info.insert(loc, syms);

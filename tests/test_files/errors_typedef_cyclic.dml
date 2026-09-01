@@ -1,0 +1,13 @@
+//  © 2024 Intel Corporation
+//  SPDX-License-Identifier: Apache-2.0 and MIT
+
+dml 1.4;
+
+device typedef_cycle_test;
+
+// @related[9]of[11]="Cyclic reference occurs here"
+// @related[13]of[11]="through 'foo' here"
+typedef bar foo;
+typedef foo bar; // @error[13]="Typedef 'bar' is cyclically defined"
+
+saved foo v;

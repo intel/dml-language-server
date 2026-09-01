@@ -3,17 +3,18 @@
 use std::sync::Arc;
 
 use std::collections::HashSet;
-use std::sync::Mutex;
+use std::sync::{Mutex, Weak};
 
-use crate::analysis::{Named, LocationSpan};
+use crate::analysis::{LocationSpan, Named, templating};
 
 use crate::analysis::parsing::tree::ZeroSpan;
 use crate::analysis::structure::objects::{CompObjectKind};
 
 use crate::analysis::structure::expressions::DMLString;
-use crate::analysis::templating::objects::{DMLObject, DMLNamedMember, StructureKey};
 use crate::analysis::templating::methods::{DMLMethodRef};
-use crate::analysis::templating::types::DMLResolvedType;
+use crate::analysis::templating::objects::{DMLObject, DMLNamedMember,
+                                           StructureKey};
+use crate::analysis::templating::types::DMLType;
 use crate::analysis::templating::traits::DMLTemplate;
 
 #[derive(PartialEq, Eq, Debug, Clone, Copy, Hash, PartialOrd, Ord)]
@@ -116,10 +117,10 @@ pub enum SymbolSource {
     // TODO: same principle for shared methods? likely not, there is
     // no object for the topmost method
     Method(StructureKey, Arc<DMLMethodRef>),
-    MethodArg(Arc<DMLMethodRef>, DMLString),
-    MethodLocal(Arc<DMLMethodRef>, DMLString),
+    MethodArg(Arc<DMLMethodRef>, DMLString, DMLType),
+    MethodLocal(Arc<DMLMethodRef>, DMLString, DMLType),
     // TODO: RC this if it's expensive
-    Type(DMLResolvedType),
+    Type(DMLType),
     Template(Arc<DMLTemplate>),
 }
 
@@ -133,12 +134,12 @@ impl std::fmt::Debug for SymbolSource {
                 f.debug_struct("SymbolSource::Method")
                 .field("name", &meth.concrete_decl.decl.name.val)
                 .finish_non_exhaustive(),
-            SymbolSource::MethodArg(meth, name) => 
+            SymbolSource::MethodArg(meth, name, _) => 
                 f.debug_struct("SymbolSource::MethodArg")
                 .field("argument_name", &name.val)
                 .field("method_name", &meth.concrete_decl.decl.name.val)
                 .finish_non_exhaustive(),
-            SymbolSource::MethodLocal(meth, name) => 
+            SymbolSource::MethodLocal(meth, name, _) =>
                 f.debug_struct("SymbolSource::MethodLocal")
                 .field("name", &name.val)
                 .field("method_name", &meth.concrete_decl.decl.name.val)
@@ -170,11 +171,11 @@ impl SymbolSource {
 
     pub fn as_metharg(&self) -> Option<(&Arc<DMLMethodRef>, &DMLString)> {
         match self {
-            Self::MethodArg(arg, name) => Some((arg, name)),
+            Self::MethodArg(arg, name, _) => Some((arg, name)),
             _ => None
         }
     }
-    pub fn as_type(&self) -> Option<&DMLResolvedType> {
+    pub fn as_type(&self) -> Option<&DMLType> {
         match self {
             Self::Type(typ) => Some(typ),
             _ => None
@@ -200,10 +201,20 @@ impl SymbolSource {
         match self {
             SymbolSource::DMLObject(obj) => obj.as_shallow().map(|o| o.identity()),
             SymbolSource::Method(_, methref) => Some(methref.identity()),
-            SymbolSource::MethodArg(_, name) => Some(&name.val),
-            SymbolSource::MethodLocal(_, name) => Some(&name.val),
+            SymbolSource::MethodArg(_, name, _) => Some(&name.val),
+            SymbolSource::MethodLocal(_, name, _) => Some(&name.val),
             SymbolSource::Type(_) => None,
             SymbolSource::Template(templ) => Some(&templ.name),
+        }
+    }
+
+    pub fn resolved_type(&self) -> Option<&DMLType> {
+        match self {
+            SymbolSource::Type(ty) => Some(ty),
+            SymbolSource::DMLObject(obj) => obj.resolved_type(),
+            SymbolSource::MethodArg(_methref, _name, ty) => Some(ty),
+            SymbolSource::MethodLocal(_methref, _name, ty) => Some(ty),
+            _ => None,
         }
     }
 }
@@ -233,8 +244,9 @@ pub struct Symbol {
     // some param or method set in them
     pub implementations: HashSet<ZeroSpan>,
     pub source: SymbolSource,
-    // TODO: RC or box this if it's expensive
-    pub typed: Option<DMLResolvedType>,
+    // NOTE: This is the actual final type of this declaration, if any. Uses 'weak' to store an Rc into
+    // type storage.
+    pub typed: Option<Weak<templating::types::DMLType>>,
 }
 
 // We do this often enough to warrant a reusable pattern,
