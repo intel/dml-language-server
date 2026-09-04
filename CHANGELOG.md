@@ -8,6 +8,8 @@
 - Made GetKnownContexts custom request not wait for analysis results by default, reducing the chances of overfilling workpool capacity while analysises are running.
 - Fix issue where the server would internally format URIs incorrectly in some cases
 - The language server logs will now be in local time of whatever machine they are running on, rather than UTC.
+- The DLS will now properly not report conflicts between statements in a `#if` and its corresponding `#else` branch
+- The DLS will now consider all `#if` branches on conditions directly based on `dml\_1\_2` and `dml\_1\_4` dead or alive appropriately
 
 ## 0.9.19
 - Added configuration option to control the max cache size while resolving references in semantic analysis, defaulting to 500MB

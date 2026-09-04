@@ -4,6 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::iter;
 use std::sync::Arc;
 
+use crate::analysis::templating::evaluation::EvaluationContext;
 use crate::logging::{debug, trace, error};
 use lsp_types::DiagnosticSeverity;
 use slotmap::{DefaultKey, Key, SlotMap};
@@ -770,14 +771,18 @@ impl <T: std::fmt::Debug + Clone + PartialEq> DMLAmbiguousDef<T> {
         }
     }
 
-    pub fn get_likely_definition(&self) -> &T {
+    pub fn get_likely_definition_info(&self) -> &(ExistCondition, T) {
         if let Some(def) = self.used_definitions.first() {
-            &def.1
+            def
         } else if let Some(def) = self.definitions.first() {
-            &def.1
+            def
         } else {
-            &self.declarations.first().unwrap().1
+            self.declarations.first().unwrap()
         }
+    }
+
+    pub fn get_likely_definition(&self) -> &T {
+        &self.get_likely_definition_info().1
     }
 
     pub fn get_last_declaration(&self) -> &T {
@@ -806,6 +811,13 @@ impl <T: std::fmt::Debug + Clone + PartialEq> DMLAmbiguousDef<T> {
     }
     pub fn is_unambiguous(&self) -> bool {
         self.declarations.len() == 1 && self.used_definitions.len() == 1
+    }
+    pub fn get_all_definitions(&self) -> Vec<(&ExistCondition, &T)> {
+        self.used_definitions.iter()
+            .chain(self.definitions.iter())
+            .chain(self.declarations.iter())
+            .map(|(cond, def)| (cond, def))
+            .collect()
     }
 }
 
@@ -958,7 +970,8 @@ impl DMLCompositeObject {
 // Returns all spans of final actually used ineachspecs, needed for
 // implementations tracking for composite objects
 fn add_template_specs(obj_specs: &mut Vec<Arc<ObjectSpec>>,
-                      source_each_stmts: &InEachSpec) -> Vec<ZeroSpan>{
+                      source_each_stmts: &InEachSpec,
+                      report: &mut Vec<DMLError>) -> Vec<ZeroSpan>{
     let mut each_stmts = source_each_stmts.clone();
     // TODO: We need to handle conditional imports and is-es here, as these are
     // allowed in _some_ cases. For now, we merely pretend the conditions do not
@@ -987,9 +1000,11 @@ fn add_template_specs(obj_specs: &mut Vec<Arc<ObjectSpec>>,
 
     let mut used_ineach_spans = vec![];
 
-    while let Some((_, tpl)) = queue.pop() {
-        // TODO: here we would have to consider cond when conditional
-        // is/imports exist
+    while let Some((cond, tpl)) = queue.pop() {
+        if !cond.exists(&EvaluationContext::new(), report) {
+            continue;
+        }
+
         if used_templates.contains(&tpl.name) {
             continue;
         }
@@ -1086,9 +1101,9 @@ fn add_hooks(obj: &mut DMLCompositeObject,
 }
 
 fn add_constants(obj: &mut DMLCompositeObject,
-                 constants: Vec<Constant>) {
+                 constants: Vec<ObjectDecl<Constant>>) {
     for constant in constants {
-        obj.add_shallow_component(DMLShallowObjectVariant::Constant(constant));
+        obj.add_shallow_component(DMLShallowObjectVariant::Constant(constant.obj));
     }
 }
 
@@ -1099,9 +1114,9 @@ enum VariableKind {
 
 fn add_sessions(obj: &mut DMLCompositeObject,
                 sessions: SessionMapping) {
-    for (_, (used, mut decls)) in sessions {
+    for (_, (used, mut cond_decls)) in sessions {
         if used {
-            let (_, (s, i)) = decls.swap_remove(0);
+           let (_, _, (s, i)) = cond_decls.swap_remove(0);
             handle_variable(obj, s, i, VariableKind::Session)
         }
     }
@@ -1109,9 +1124,9 @@ fn add_sessions(obj: &mut DMLCompositeObject,
 
 fn add_saveds(obj: &mut DMLCompositeObject,
               saveds: SavedMapping) {
-    for (_, (used, mut decls)) in saveds {
+    for (_, (used, mut cond_decls)) in saveds {
         if used {
-            let (_, (s, i)) = decls.swap_remove(0);
+            let (_, _, (s, i)) = cond_decls.swap_remove(0);
             handle_variable(obj, s, i, VariableKind::Saved)
         }
     }
@@ -1179,6 +1194,9 @@ fn gather_parameters<'t>(obj_loc: &ZeroSpan,
 
     // Add code-decl parameters
     for spec in specs {
+        if !spec.condition.exists(&EvaluationContext::new(), report) {
+            continue;
+        }
         for param in &spec.params {
             let new_decl = (param.clone(), spec.rank.clone());
             if let Some(e) = parameters.get_mut(
@@ -1312,24 +1330,33 @@ fn resolve_parameter(obj_loc: &ZeroSpan,
         .collect();
     trace!("Top defs for {} are {:?}", name, overriding_defs);
     if overriding_defs.len() > 1 {
-        debug!("Conflicting assignment for {:?}, {:?}",
-               name, overriding_defs);
         // in dmlc, there is a preference for blaming default declarations.
         // we will merely blame all of them, starting at the preferred def
         // TODO: This can be improved for specific cases where a name
         // collision error is more appropriate
-        let mut rest = overriding_defs.iter();
-        let (first, _) = rest.next().unwrap();
-        report.push(DMLError {
-            span: *first.obj.span(),
-            description: format!(
-                "Conflicting assignments to parameter '{}'", name),
-            related: rest.map(
-                |(def2, _)| (*def2.obj.span(),
+        let mut rest: Vec<_> = overriding_defs.clone();
+
+        // Sort declarations by span for consistent reporting
+        rest.sort_by_key(|o|o.0.loc_span());
+
+        // TODO: This could be improved to report conflicts between rest
+        let (first, rest) = rest.split_first().unwrap();
+        let conflicts: Vec<_> = rest.iter().filter(
+            |(o, _)|!first.0.cond.guaranteed_excluded_from(&o.cond)
+        ).collect();
+
+        if !conflicts.is_empty() {
+           report.push(DMLError {
+                span: *first.0.obj.span(),
+                description: format!(
+                    "Conflicting assignments to parameter '{}'", name),
+                related: conflicts.into_iter().map(
+                    |(def2, _)| (*def2.obj.span(),
                              "Conflicting assignment here"
                              .to_string())).collect(),
-            severity: Some(DiagnosticSeverity::ERROR),
-        });
+                severity: Some(DiagnosticSeverity::ERROR),
+            });
+        }
     }
 
     let bad_overrides: Vec<&(ObjectDecl<Parameter>, Rank)>
@@ -1419,9 +1446,13 @@ fn handle_variable(obj: &mut DMLCompositeObject,
         });
 }
 
+
+// NOTE: 'used' here marks if this type of declaration is the one used for the name
+// of this symbol. Which declaration is used in inferred by the ranking and existconditions
+// of the declarations
 // Maps name to (used, definitions), where definitions is a vector of
-//    (Rank, Method) tuples
-type MethodMapping = HashMap<String, (bool, Vec<(Rank, MethodDecl)>)>;
+//    (Rank, Condition, Method) tuples
+type MethodMapping = HashMap<String, (bool, Vec<(Rank, ExistCondition, MethodDecl)>)>;
 // Maps name to (used, definitions), where definitions is a vector of
 //    (Rank, Decl, Spec) tuples
 type ObjectMapping = HashMap<String, (bool, Vec<(Rank,
@@ -1429,20 +1460,22 @@ type ObjectMapping = HashMap<String, (bool, Vec<(Rank,
                                                  Arc<ObjectSpec>)>)>;
 // Maps name to (used, definitions), similar to methodmapping
 type SavedMapping = HashMap<String,
-                            (bool,
+                            (bool, 
                              Vec<(Rank,
+                                  ExistCondition,
                                   (VariableDecl, Option<Initializer>))>)>;
 type SessionMapping = HashMap<String,
                               (bool,
                                Vec<(Rank,
+                                    ExistCondition,
                                     (VariableDecl, Option<Initializer>))>)>;
 type HookMapping = HashMap<String, (bool, Vec<(Rank, ObjectDecl<Hook>)>)>;
 
 // Figure out symbol mappings for these specs
 // reports unguarded error
 // the hashmap is the symbol mapping
-type CollectedSymbols = (HashMap<String, (ZeroSpan, Vec<ZeroSpan>)>,
-                         Vec<Constant>,
+type CollectedSymbols = (HashMap<String, (ExistCondition, ZeroSpan, Vec<ZeroSpan>)>,
+                         Vec<ObjectDecl<Constant>>,
                          SavedMapping, SessionMapping,
                          MethodMapping, HookMapping, ObjectMapping);
 fn collect_symbols(parameters: &[DMLParameter],
@@ -1461,22 +1494,30 @@ fn collect_symbols(parameters: &[DMLParameter],
     let mut methods = MethodMapping::default();
     let mut subobjs = ObjectMapping::default();
     let mut hooks = HookMapping::default();
-    let mut constants: Vec<Constant> = vec![];
+    let mut constants: Vec<ObjectDecl<Constant>> = vec![];
+
+    // In order to not overly complicate the types, 
 
     for spec in obj_specs {
+        // Check if the spec is valid at all
+        // NOTE: we do need to also check the conditions of all sub-statements, as they
+        // may have their own conditionals
+        if !spec.condition.exists(&EvaluationContext::new(), report) {
+            continue;
+        }
         for error in &spec.errors {
-            // TODO: evaluate conditions
-            // for now, conservatively only report the errors for
-            // things not behind hashifs
-            if error.cond == ExistCondition::Always {
-                report.push(DMLError {
-                    span: *error.span(),
-                    // TODO: early-evaluate the error message, somehow
-                    description: "unguarded error statement".to_string(),
-                    related: vec![],
-                    severity: Some(DiagnosticSeverity::ERROR),
-                });
+            // For errors in particular, we will be more lenient and only
+            // report them when they are guaranteed to exist
+            if !error.cond.guaranteed_exists(&EvaluationContext::new(), report) {
+                continue;
             }
+            report.push(DMLError {
+                span: *error.span(),
+                // TODO: early-evaluate the error message, somehow
+                description: "unguarded error statement".to_string(),
+                related: vec![],
+                severity: Some(DiagnosticSeverity::ERROR),
+            });
         }
         // TODO: How to handle extra initializers here?
         // Its a bit to early to eagerly evaluate them, but discarding
@@ -1484,9 +1525,15 @@ fn collect_symbols(parameters: &[DMLParameter],
         // (extra vars is not a problem, since they just become un-inited
         //  declarations)
         for constant in &spec.constants {
-            constants.push(constant.obj.clone());
+            if !constant.cond.exists(&EvaluationContext::new(), report) {
+                continue;
+            }
+            constants.push(constant.clone());
         }
         for saved_objectdecl in &spec.saveds {
+            if !saved_objectdecl.cond.exists(&EvaluationContext::new(), report) {
+                continue;
+            }
             // Pad initializers with 'None' values, so that we handle all the
             // variables
             let saved = &saved_objectdecl.obj;
@@ -1494,6 +1541,7 @@ fn collect_symbols(parameters: &[DMLParameter],
                 saved.values.iter().map(|e|Some(e)).chain(iter::repeat(None))) {
                 // TODO: verify serializability of type
                 let to_insert = (spec.rank.clone(),
+                                 saved_objectdecl.cond.clone(),
                                  (var.clone(), init.cloned()));
                 let name = var.object.name.val.clone();
                 if let Some((_, e)) = saveds.get_mut(&name) {
@@ -1504,14 +1552,18 @@ fn collect_symbols(parameters: &[DMLParameter],
             }
         }
         for session_objectdecl in &spec.sessions {
+            if !session_objectdecl.cond.exists(&EvaluationContext::new(), report) {
+                continue;
+            }
             let session = &session_objectdecl.obj;
             for (var, init) in session.vars.iter().zip(
                 session.values.iter().map(|e|Some(e))
                     .chain(iter::repeat(None))) {
                 let to_insert = (spec.rank.clone(),
+                                 session_objectdecl.cond.clone(),
                                  (var.clone(), init.cloned()));
                 let name = var.object.name.val.clone();
-                if let Some((_,e)) = sessions.get_mut(&name) {
+                if let Some((_, e)) = sessions.get_mut(&name) {
                     e.push(to_insert);
                 } else {
                     sessions.insert(name, (false, vec![to_insert]));
@@ -1519,7 +1571,11 @@ fn collect_symbols(parameters: &[DMLParameter],
             }
         }
         for method in &spec.methods {
+            if !method.cond.exists(&EvaluationContext::new(), report) {
+                continue;
+            }
             let to_insert = (spec.rank.clone(),
+                             method.cond.clone(),
                              MethodDecl::from_content(&method.obj, report));
             let name = method.obj.object.name.val.clone();
             if let Some((_, e)) = methods.get_mut(&name) {
@@ -1529,6 +1585,9 @@ fn collect_symbols(parameters: &[DMLParameter],
             }
         }
         for hook in &spec.hooks {
+            if !hook.cond.exists(&EvaluationContext::new(), report) {
+                continue;
+            }
             let to_insert = (spec.rank.clone(), hook.clone());
             let name = &hook.obj.name().val;
             if let Some((_, e)) = hooks.get_mut(name) {
@@ -1539,6 +1598,9 @@ fn collect_symbols(parameters: &[DMLParameter],
         }
 
         for (subobj, spec) in &spec.subobjs {
+            if !subobj.cond.exists(&EvaluationContext::new(), report) {
+                continue;
+            }
             let to_insert = (spec.rank.clone(),
                              subobj.clone(), Arc::clone(spec));
             let name = subobj.obj.object.name.val.clone();
@@ -1552,14 +1614,14 @@ fn collect_symbols(parameters: &[DMLParameter],
 
     // TODO: the sorting is insertion sort anyway, we could
     // be sorting this while inserting
-    for (_, decls) in saveds.values_mut() {
-        partial_sort_by_key_in_place(decls, |(r, _)|r);
+    for (_, cond_decls) in saveds.values_mut() {
+        partial_sort_by_key_in_place(cond_decls, |(r, _, _)|r);
     }
-    for (_, decls) in sessions.values_mut() {
-        partial_sort_by_key_in_place(decls, |(r, _)|r);
+    for (_, cond_decls) in sessions.values_mut() {
+        partial_sort_by_key_in_place(cond_decls, |(r, _, _)|r);
     }
     for (_, decls) in methods.values_mut() {
-        partial_sort_by_key_in_place(decls, |(r, _)|r);
+        partial_sort_by_key_in_place(decls, |(r, _, _)|r);
     }
     for (_, decls) in hooks.values_mut() {
         partial_sort_by_key_in_place(decls, |(r, _)|r);
@@ -1568,78 +1630,102 @@ fn collect_symbols(parameters: &[DMLParameter],
         partial_sort_by_key_in_place(decls, |(r, _,  _)|r);
     }
 
-    // Map names to most relevant declaration and colliding declarations
+    // Map names to most relevant declaration, its exist condition, and colliding declarations
     // This creates an order for symbol definition precedence
     // constant > parameter > subobj > method > saved > session
     // Grab the most-relevant decl from each ambiguousdecl, if they have
     // parameter-to-parameter collisions then that has already been reported
-    let mut symbols: HashMap<String, (ZeroSpan, Vec<ZeroSpan>)>
+    let mut symbols: HashMap<String, (ExistCondition, ZeroSpan, Vec<ZeroSpan>)>
         = HashMap::new();
+
+    // Helper function, stores spans to report for name conflicts if the
+    // conditions are not provably exclusive
+    fn store_if_not_excluded(cond1: &ExistCondition, cond2: &ExistCondition,
+                             span: &ZeroSpan,
+                             store_in: &mut Vec<ZeroSpan>) {
+        if !cond1.guaranteed_excluded_from(cond2) {
+            store_in.push(*span);
+        }
+    }
 
     // NOTE: constants are top-level only, so ordering doesn't really matter
     for constant in &constants {
-        if let Some((_, rest)) = symbols.get_mut(constant.name().val.as_str()) {
-            rest.push(*constant.loc_span());
+        if let Some((cond, _, rest)) = symbols.get_mut(constant.obj.name().val.as_str()) {
+            store_if_not_excluded(cond, &constant.cond, constant.loc_span(), rest);
         } else {
-            symbols.insert(constant.name().val.clone(),
-                           (*constant.loc_span(), vec![]));
+            symbols.insert(constant.obj.name().val.clone(),
+                           (constant.cond.clone(), *constant.loc_span(), vec![]));
         }
     }
 
     for parameter in parameters {
-        let maybe_auth_decl_span = *parameter.get_likely_definition()
-            .object.loc_span();
-        let name = parameter.get_likely_definition().object.name.val.clone();
-        if let Some((_, rest)) = symbols.get_mut(&name) {
-            rest.push(maybe_auth_decl_span);
+        let (cond, likely_def) = parameter.get_likely_definition_info();
+        let maybe_auth_decl_span = *likely_def.object.loc_span();
+        let name = likely_def.object.name.val.clone();
+        if let Some((auth_cond, _, rest)) = symbols.get_mut(&name) {
+            // For this and other cases where we have multiple possible conflicts, we check
+            // the declaration of each one and report all the ones that are not provably
+            // exclusive with the auth cond
+            for (sub_cond, param) in parameter.get_all_definitions() {
+                store_if_not_excluded(sub_cond, auth_cond, param.span(), rest);
+            }
         } else {
-            symbols.insert(name, (maybe_auth_decl_span, vec![]));
+            symbols.insert(name, (cond.clone(), maybe_auth_decl_span, vec![]));
         }
     }
 
     for (name, (used, objs)) in &mut subobjs {
-        let maybe_auth_decl_span = objs.first().unwrap()
-            .1.obj.object.name.span;
-        if let Some((_, rest)) = symbols.get_mut(name) {
-            rest.push(maybe_auth_decl_span);
+        let first_obj = objs.first().unwrap();
+        let maybe_auth_decl_span = first_obj.1.obj.object.name.span;
+        if let Some((cond, _, rest)) = symbols.get_mut(name) {
+            for (_, subobj, _) in objs {
+                store_if_not_excluded(cond, &subobj.cond, subobj.span(), rest);
+            }
         } else {
             *used = true;
-            symbols.insert(name.to_string(), (maybe_auth_decl_span, vec![]));
+            symbols.insert(name.to_string(), (first_obj.1.cond.clone(), maybe_auth_decl_span, vec![]));
         }
     }
 
     for (name, (used, methods)) in &mut methods {
-        let maybe_auth_decl_span = methods.first().unwrap()
-            .1.name.span;
-        if let Some((_, rest)) = symbols.get_mut(name) {
-            rest.push(maybe_auth_decl_span);
+        let (_, cond, method) = methods.first().unwrap();
+        let maybe_auth_decl_span = method.name.span;
+        if let Some((cond, _, rest)) = symbols.get_mut(name) {
+            for (_, sub_cond, sub_method) in methods {
+                store_if_not_excluded(sub_cond, cond, sub_method.span(), rest);
+            }
         } else {
             *used = true;
-            symbols.insert(name.to_string(), (maybe_auth_decl_span, vec![]));
+            symbols.insert(name.to_string(), (cond.clone(), maybe_auth_decl_span, vec![]));
         }
     }
 
-    for (name, (used, decls)) in &mut saveds {
-        for (_, (var, _)) in decls {
+    // Each entry in saveds here is one particular cond, but contains several names.
+    // So check for name collision first, and then use the cond to mark all such names
+    // conflicting
+    for (name, (used, cond_decls)) in &mut saveds {
+        for (_, cond, (var, _)) in cond_decls {
             let maybe_auth_decl_span = var.object.name.span;
-            if let Some((_, rest)) = symbols.get_mut(name) {
-                rest.push(maybe_auth_decl_span);
+            if let Some((auth_cond, _, rest)) = symbols.get_mut(name) {
+                store_if_not_excluded(auth_cond, cond, &maybe_auth_decl_span, rest);
             } else {
                 *used = true;
+                // We will duplicate the variable cond here for each declaration name,
+                // which is inefficient but in practice should be small
                 symbols.insert(name.to_string(),
-                               (maybe_auth_decl_span, vec![]));
+                               (cond.clone(), maybe_auth_decl_span, vec![]));
             }
         }
     }
-    for (name, (used, decls)) in &mut sessions {
-        for (_, (var, _)) in decls {
+    for (name, (used, cond_decls)) in &mut sessions {
+        for (_, cond, (var, _)) in cond_decls {
             let maybe_auth_decl_span = var.object.name.span;
-            if let Some((_, rest)) = symbols.get_mut(name) {
-                rest.push(maybe_auth_decl_span);
+            if let Some((auth_cond, _, rest)) = symbols.get_mut(name) {
+                store_if_not_excluded(auth_cond, cond, &maybe_auth_decl_span, rest);
             } else {
                 *used = true;
                 symbols.insert(name.to_string(),
-                               (maybe_auth_decl_span, vec![]));
+                               (cond.clone(), maybe_auth_decl_span, vec![]));
             }
         }
     }
@@ -1647,17 +1733,17 @@ fn collect_symbols(parameters: &[DMLParameter],
     for (name, (used, decls)) in &mut hooks {
         for (_, hook) in decls {
             let maybe_auth_decl_span = hook.obj.name().span;
-            if let Some((_, rest)) = symbols.get_mut(name) {
-                rest.push(maybe_auth_decl_span);
+            if let Some((cond, _, rest)) = symbols.get_mut(name) {
+                store_if_not_excluded(&hook.cond, cond, &maybe_auth_decl_span, rest);
             } else {
                 *used = true;
                 symbols.insert(name.to_string(),
-                               (maybe_auth_decl_span, vec![]));
+                               (hook.cond.clone(), maybe_auth_decl_span, vec![]));
             }
         }
     }
 
-    for (name, (auth, others)) in &symbols {
+    for (name, (_, auth, others)) in &symbols {
         if !others.is_empty() {
             report.push(DMLError {
                 span: (*auth),
@@ -1709,7 +1795,14 @@ fn merge_composite_subobj<'c>(name: String,
     let mut array_info: Vec<(ArrayDim, Vec<&ZeroSpan>)> =
         auth_obj.obj.dims.iter()
         .map(|d|(d.clone(), vec![])).collect();
+    // TODO: Starting to seem likely that we might double-report from
+    // bad/invalid conds. Might want to formalize expression resolution in such
+    // a way that we convert constant expressions once first, and then
+    // convert remaining expressions later
     for (decl, _) in &specs {
+        if !decl.cond.exists(&EvaluationContext::new(), report) {
+            continue;
+        }
         if decl.obj.dims.len() != array_info.len() {
             // When an object with no array decl conflicts with an object
             // with one, blame the object decl
@@ -1924,7 +2017,7 @@ fn add_methods(obj: &mut DMLCompositeObject,
         trace!("Handling method {}, which is declared by {:?}",
                name, regular_decls);
         let all_decls: Vec<(&Rank, &MethodDecl)>
-            = regular_decls.iter().map(|(a, b)|(a, b)).collect();
+            = regular_decls.iter().map(|(a, _, b)|(a, b)).collect();
 
         let (default_map, method_order, decl_map) = sort_method_decls(&all_decls);
         let mut decl_to_method: HashMap<MethodDecl, Arc<DMLMethodRef>>
@@ -2273,7 +2366,7 @@ pub fn make_object(loc: ZeroSpan,
     let direct_decls: Vec<Arc<ObjectSpec>> = obj_specs.clone();
 
     let mut each_stmts = parent_each_stmts.clone();
-    let used_ineach_locs = add_template_specs(&mut obj_specs, &each_stmts);
+    let used_ineach_locs = add_template_specs(&mut obj_specs, &each_stmts, report);
     add_template_ineachs(&obj_specs, &mut each_stmts);
 
     trace!("Has specs at {:?}", obj_specs.iter().map(|rc|rc.loc)
