@@ -161,16 +161,14 @@ impl Parse<BaseTypeContent> for LayoutContent {
             stream, TokenKind::StringConstant);
         let lbrace = new_context.expect_next_kind(stream, TokenKind::LBrace);
         let mut fields = vec![];
-        while match new_context.peek_kind(stream) {
-            Some(TokenKind::RBrace) | None => false,
-            Some(_) => {
-                let field = CDecl::parse(&list_context, stream, file_info);
-                let semi = list_context.expect_next_kind(
-                    stream, TokenKind::SemiColon);
-                fields.push((field, semi));
-                true
-            },
-        } {}
+        let mut cont = !new_context.peek_kind(stream).is_none_or(|t|t == TokenKind::RBrace);
+        while cont {
+            let field = CDecl::parse(&list_context, stream, file_info);
+            let semi = list_context.expect_next_kind(
+                stream, TokenKind::SemiColon);
+            fields.push((field, semi));
+            cont = new_context.peek_kind(stream).is_some_and(|t|CDecl::first_token_matcher(t) || t == TokenKind::SemiColon);
+        }
         let rbrace = new_context.expect_next_kind(stream, TokenKind::RBrace);
         BaseTypeContent::Layout(LayoutContent {
             layout,

@@ -10,6 +10,7 @@
 - The language server logs will now be in local time of whatever machine they are running on, rather than UTC.
 - Fixed bug in template cycle detection that could cause crashes when an object
   instantiated a template involved in a cycle
+- Fixed bug in parser that could cause hangs when parsing broken 'layout' types
 
 ## 0.9.19
 - Added configuration option to control the max cache size while resolving references in semantic analysis, defaulting to 500MB
