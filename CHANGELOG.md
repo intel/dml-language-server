@@ -10,6 +10,7 @@
 - Improved server handling of invalid character literals
 - Fixed bug in template cycle detection that could cause crashes when an object
   instantiated a template involved in a cycle
+- Fixed bug in parser that could cause hangs when parsing broken 'layout' types
 
 ## 0.9.22
 - Fixed an issue in server logging where the large allocations could be made by debug prints even at lower debug levels
