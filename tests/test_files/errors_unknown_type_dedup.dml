@@ -1,0 +1,22 @@
+//  © 2024 Intel Corporation
+//  SPDX-License-Identifier: Apache-2.0 and MIT
+
+dml 1.4;
+
+device unknown_type_dedup_test;
+
+// Exactly one diagnostic is expected for each invalid type occurrence, even
+// though the enclosing template is processed by both trait and object paths.
+template unknown_type_template {
+	param parameter: missing_parameter_t default 0; // @error[19]="Unknown type 'missing_parameter_t'"
+	session missing_session_t session_value; // @error[10]="Unknown type 'missing_session_t'"
+	saved missing_saved_t saved_value; // @error[8]="Unknown type 'missing_saved_t'"
+	method use_missing(missing_argument_t argument) -> (missing_return_t) { // @error[21]="Unknown type 'missing_argument_t'" @error[54]="Unknown type 'missing_return_t'"
+	}
+}
+
+bank instantiated is unknown_type_template {
+}
+
+session sequence(int) non_template_sequence; // @error[18]="'int' is not a template"
+session sequence(missing_template_t) unknown_sequence; // @error[18]="Unknown type 'missing_template_t'"

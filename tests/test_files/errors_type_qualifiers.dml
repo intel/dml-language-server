@@ -1,0 +1,45 @@
+//  © 2024 Intel Corporation
+//  SPDX-License-Identifier: Apache-2.0 and MIT
+
+dml 1.4;
+
+device type_qualifier_errors_test;
+
+template builtin_qualifier_base {
+    method builtin_target(size_t value) default { // @related[34]of[17]="Corresponding argument declared here"
+    }
+    method builtin_return_target() -> (size_t) default { // @related[40]of[20]="Corresponding return type declared here"
+        return 0;
+    }
+}
+
+template builtin_qualifier_override is builtin_qualifier_base {
+    // @error[40]="Mismatching argument type in method override"
+    method builtin_target(const size_t value) {
+    }
+    // @error[46]="Mismatching return type in method override"
+    method builtin_return_target() -> (const size_t) {
+        return 0;
+    }
+}
+
+typedef int plain_t;
+typedef const plain_t const_alias_t;
+
+template typedef_qualifier_base {
+    method typedef_target(const_alias_t value) default { // @related[41]of[38]="Corresponding argument declared here"
+    }
+    method typedef_return_target() -> (const_alias_t) default { // @related[40]of[41]="Corresponding return type declared here"
+        return 0;
+    }
+}
+
+template typedef_qualifier_override is typedef_qualifier_base {
+    // @error[35]="Mismatching argument type in method override"
+    method typedef_target(plain_t value) {
+    }
+    // @error[40]="Mismatching return type in method override"
+    method typedef_return_target() -> (plain_t) {
+        return 0;
+    }
+}

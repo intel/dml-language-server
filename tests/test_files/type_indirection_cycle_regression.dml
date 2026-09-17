@@ -1,0 +1,10 @@
+//  © 2024 Intel Corporation
+//  SPDX-License-Identifier: Apache-2.0 and MIT
+
+dml 1.4;
+device type_indirection_cycle_regression_test;
+
+// A pointer on the recursive path should make this finite even though the
+// back-edge crosses another typedef and an array wrapper.
+typedef mixed_b_t *mixed_a_t;
+typedef mixed_a_t mixed_b_t[2];

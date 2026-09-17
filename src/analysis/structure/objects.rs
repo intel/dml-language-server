@@ -7,7 +7,9 @@ use crate::analysis::parsing::tree::{LeafToken, ZeroRange,
 use crate::analysis::structure::expressions::{Expression, Value, DMLString,
                                               ExpressionKind};
 use crate::analysis::structure::statements::{Statement, StatementKind};
-use crate::analysis::structure::types::{DMLType, deconstruct_cdecl, to_type};
+use crate::analysis::structure::types::{UnresolvedType,
+                                        cdecls_to_members,
+                                        deconstruct_cdecl, to_type};
 use crate::analysis::FileSpec;
 use crate::analysis::{LocalDMLError, DeclarationSpan, LocationSpan, DMLNamed,
                       Named};
@@ -45,12 +47,12 @@ pub trait MaybeAbstract {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub enum DMLBitorder {
     BE, LE,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub struct Bitorder {
     pub span: ZeroSpan,
     pub order: Value<DMLBitorder>,
@@ -83,7 +85,7 @@ impl ToStructure<structure::BitorderContent> for Bitorder {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub struct Device {
     pub decl: CompObjectKindDecl,
     pub name: DMLString,
@@ -117,7 +119,7 @@ impl DMLNamed for Device {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub struct Version {
     pub span: ZeroSpan,
     pub major_version: Value<u8>,
@@ -183,7 +185,7 @@ impl DeclarationSpan for Version {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub struct Export {
     pub span: ZeroSpan,
     pub target: Expression,
@@ -212,7 +214,7 @@ impl DeclarationSpan for Export {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub struct CBlock {
     pub span: ZeroSpan,
     pub cblock: String,
@@ -238,26 +240,22 @@ impl DeclarationSpan for CBlock {
 // TODO: We are missing a fair bit of error reporting for hooks:
 // Check uses of hooks (both "send_now" and after bindings) for argument number
 // Check that shared hooks are only declared in traits
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub struct Hook {
     pub shared: bool,
     pub object: DMLObjectCommon,
-    pub args: Vec<DMLType>,
+    pub args: Vec<UnresolvedType>,
 }
 
 impl ToStructure<structure::HookContent> for Hook {
     fn to_structure<'a>(content: &structure::HookContent,
                         report: &mut Vec<LocalDMLError>,
                         file: FileSpec<'a>) -> Option<Hook> {
-        let mut args = vec![];
-        for (cdecl, _) in content.arg_types.iter() {
-            // Name is non-semantic for hooks
-            if let (_, Some(typed)) = cdecl.with_content(
-                |con|deconstruct_cdecl(con, report, file),
-                (None, None)) {
-                args.push(typed);
-            }
-        }
+        let args = cdecls_to_members(content.arg_types.iter()
+                                     .map(|(decl, _)|decl),
+                                     report,
+                                     file)
+            .into_iter().map(|(_, typing)|typing).collect();
         Some(Hook {
             shared: content.shared.is_some(),
             args,
@@ -288,7 +286,7 @@ impl StructureSymbol for Hook {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub struct Import {
     pub span: ZeroSpan,
     pub name: DMLString,
@@ -323,7 +321,7 @@ impl Import {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub struct InEach {
     pub loc: ZeroSpan,
     pub span: ZeroSpan,
@@ -412,7 +410,7 @@ impl ToStructure<structure::InEachContent> for InEach {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub struct Loggroup {
     pub span: ZeroSpan,
     pub name: DMLString,
@@ -447,7 +445,7 @@ impl StructureSymbol for Loggroup {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub struct Instantiation {
     pub span: ZeroSpan,
     pub names: Vec<DMLString>,
@@ -485,7 +483,7 @@ impl DeclarationSpan for Instantiation {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub struct Error {
     pub span: ZeroSpan,
     // No need to track exact location of the message
@@ -517,7 +515,7 @@ impl DeclarationSpan for Error {
 // We store instantiations and errors seperately, since
 // their semantics are special, but storing them is common
 // enough that we want a struct for it
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub struct Statements {
     pub instantiations: Vec<Instantiation>,
     pub errors: Vec<Error>,
@@ -555,7 +553,7 @@ impl SymbolContainer for Statements {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 enum DMLStatementKind {
     Error(Error),
     Instantiation(Instantiation),
@@ -608,7 +606,7 @@ fn to_objectstatements<'a>(list: &structure::ObjectStatementsContent,
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub enum DMLStatement {
     Object(DMLObject),
     HashIf(HashIf),
@@ -653,7 +651,7 @@ impl SymbolContainer for DMLStatement {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub struct Template {
     pub object: DMLObjectCommon,
     pub statements: Statements,
@@ -736,7 +734,7 @@ impl ToStructure<structure::TemplateContent> for Template {
 }
 
 // A special case,
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub struct HashIf {
     pub span: ZeroSpan,
     pub condition: Expression,
@@ -803,7 +801,7 @@ impl DeclarationSpan for HashIf {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub struct DMLObjectCommon {
     pub name: DMLString,
     pub span: ZeroSpan,
@@ -821,7 +819,7 @@ impl DMLNamed for DMLObjectCommon {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub struct ArrayDim {
     pub span: ZeroSpan,
     pub indexvar: DMLString,
@@ -872,7 +870,7 @@ impl CompObjectKind {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub struct CompObjectKindDecl {
     pub kind: CompObjectKind,
     pub span: ZeroSpan,
@@ -902,7 +900,7 @@ impl CompObjectKindDecl {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub struct CompositeObject {
     pub kind: CompObjectKindDecl,
     pub object: DMLObjectCommon,
@@ -970,9 +968,9 @@ pub enum MethodModifier {
     None, Shared, Inline
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub enum MethodArgument {
-    Typed(DMLString, DMLType),
+    Typed(DMLString, UnresolvedType),
     Inline(DMLString),
 }
 
@@ -991,11 +989,11 @@ impl StructureSymbol for MethodArgument {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub struct Method {
     pub object: DMLObjectCommon,
     pub arguments: Vec<MethodArgument>,
-    pub returns: Vec<DMLType>,
+    pub returns: Vec<UnresolvedType>,
     pub modifier: MethodModifier,
     pub independent: bool,
     // TODO: we could track startup here, but is there any
@@ -1056,10 +1054,12 @@ impl ToStructure<structure::MethodContent> for Method {
         for (arg, _) in &content.arguments {
             match arg {
                 structure::ArgumentDecl::Typed(ast_decl) =>
-                    if let (Some(name), Some(typed)) = ast_decl.with_content(
-                        |con|deconstruct_cdecl(con, report, file),
-                        (None, None)) {
-                        arguments.push(MethodArgument::Typed(name, typed));
+                    if let Some(content) = ast_decl.as_actual() {
+                        if let (Some(name), typed)
+                            = deconstruct_cdecl(content, report, file) {
+                                arguments.push(
+                                    MethodArgument::Typed(name, typed));
+                            }
                     },
                 structure::ArgumentDecl::Inline(_, ast_name) =>
                     if let Some(name) = DMLString::from_token(ast_name, file) {
@@ -1074,6 +1074,27 @@ impl ToStructure<structure::MethodContent> for Method {
                 if let Some(ty) = to_type(typedecl, report, file) {
                     returns.push(ty);
                 }
+            }
+        }
+
+        for arg in &arguments {
+            if let MethodArgument::Typed(_, UnresolvedType::Struct(s)) = arg {
+                report.push(LocalDMLError {
+                    range: s.span().range,
+                    description:
+                        "Cannot use anonymous struct type in argument type"
+                        .to_string(),
+                });
+            }
+        }
+        for ret in &returns {
+            if let UnresolvedType::Struct(s) = ret {
+                report.push(LocalDMLError {
+                    range: s.span().range,
+                    description:
+                        "Cannot use anonymous struct type in return type"
+                        .to_string(),
+                });
             }
         }
         let object = DMLObjectCommon {
@@ -1113,18 +1134,18 @@ impl ToStructure<structure::MethodContent> for Method {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub enum ParamValue {
     Set(Expression),
     Auto(ZeroSpan),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub struct Parameter {
     pub object: DMLObjectCommon,
     pub is_default: bool,
     pub value: Option<ParamValue>,
-    pub typed: Option<DMLType>,
+    pub typed: Option<UnresolvedType>,
 }
 
 impl DeclarationSpan for Parameter {
@@ -1179,7 +1200,7 @@ impl ToStructure<structure::ParameterContent> for Parameter {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub struct Initializer {
     span: ZeroSpan,
     kind: InitializerKind
@@ -1214,7 +1235,7 @@ impl From<InitializerKind> for Initializer {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub enum InitializerKind {
     One(Expression),
     List(Vec<Box<Initializer>>),
@@ -1283,7 +1304,7 @@ fn to_initializer<'a>(content: &misc::InitializerContent,
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub enum VariableDeclKind {
     Extern,
     Saved,
@@ -1291,14 +1312,14 @@ pub enum VariableDeclKind {
     Local,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub struct VariableDecl {
     // While-span is hidden away inside object
     pub object: DMLObjectCommon,
     // This is redundant in structure, but becomes highly useful later
     // when we flatten variables into their decls
     pub kind: VariableDeclKind,
-    pub typed: DMLType,
+    pub typed: UnresolvedType,
 }
 
 impl DeclarationSpan for VariableDecl {
@@ -1328,9 +1349,7 @@ fn to_variable_decl_structure<'a>(content: &misc::CDecl,
                                   kind: VariableDeclKind,
                                   report: &mut Vec<LocalDMLError>,
                                   file: FileSpec<'a>) -> Option<VariableDecl> {
-    let (name, typed) = content.with_content(
-        |con|deconstruct_cdecl(con, report, file),
-        (None, None));
+    let (name, typed) = deconstruct_cdecl(content.as_actual()?, report, file);
     // Fair to discard a variable declaration if it doesnt have a name
     let object = DMLObjectCommon {
         name: name?,
@@ -1339,11 +1358,11 @@ fn to_variable_decl_structure<'a>(content: &misc::CDecl,
     Some(VariableDecl {
         object,
         kind,
-        typed: typed?,
+        typed,
     })
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub struct Variable {
     pub vars: Vec<VariableDecl>,
     pub values: Vec<Initializer>,
@@ -1422,7 +1441,7 @@ pub fn to_variable_structure<'a>(decls: &structure::VarDecl,
     })
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub struct Constant {
     pub object: DMLObjectCommon,
     pub value: Expression,
@@ -1464,11 +1483,11 @@ impl ToStructure<structure::ConstantContent> for Constant {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub struct Typedef {
     pub is_extern: bool,
     pub object: DMLObjectCommon,
-    pub typed: DMLType,
+    pub typed: UnresolvedType,
 }
 
 impl ToStructure<structure::TypedefContent> for Typedef {
@@ -1476,9 +1495,8 @@ impl ToStructure<structure::TypedefContent> for Typedef {
                         report: &mut Vec<LocalDMLError>,
                         file: FileSpec<'a>) -> Option<Typedef> {
         let is_extern = content.externtok.is_some();
-        let (name, typed) = content.decl.with_content(
-            |con|deconstruct_cdecl(con, report, file),
-            (None, None));
+        let (name, typed) = deconstruct_cdecl(content.decl.as_actual()?,
+                                              report, file);
         let object = DMLObjectCommon {
             name: name?,
             span: ZeroSpan::from_range(content.range(), file.path),
@@ -1486,9 +1504,7 @@ impl ToStructure<structure::TypedefContent> for Typedef {
         Some(Typedef {
             is_extern,
             object,
-            // TODO: We need to be able to store partially resolved objects
-            // TODO/NOTE: Applies at least everywhere there is a deconstruct_cdecl
-            typed: typed?,
+            typed,
         })
     }
 }
@@ -1505,7 +1521,13 @@ impl DMLNamed for Typedef {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+impl StructureSymbol for Typedef {
+    fn kind(&self) -> DMLSymbolKind {
+        DMLSymbolKind::Typedef
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub enum DMLObject {
     Bitorder(Bitorder),
     CompositeObject(CompositeObject),

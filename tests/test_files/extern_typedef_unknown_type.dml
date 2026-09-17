@@ -1,0 +1,15 @@
+//  © 2024 Intel Corporation
+//  SPDX-License-Identifier: Apache-2.0 and MIT
+
+dml 1.4;
+
+device extern_typedef_unknown_type_test;
+
+extern typedef some_c_only_type extern_alias_t; // @error[16]="Unknown type 'some_c_only_type'"
+
+typedef some_c_only_type non_extern_alias_t; // @error[9]="Unknown type 'some_c_only_type'"
+
+typedef unknown_c_type helper_t; // @error[9]="Unknown type 'unknown_c_type'"
+
+// Typedef depending on typedef of unknown type does not error
+extern typedef helper_t extern_other_alias_t;

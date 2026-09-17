@@ -1,0 +1,46 @@
+//  © 2024 Intel Corporation
+//  SPDX-License-Identifier: Apache-2.0 and MIT
+
+dml 1.4;
+
+device template_member_references_test;
+
+template mixed_members {
+    // @loc[11]=parameter_def
+    param parameter: int; // @goto-ref[11]->parameter_object_use,parameter_second_use,parameter_typed_use
+    // @loc[17]=session_def
+    session int session_value; // @goto-ref[17]->session_object_use,session_second_use,session_typed_use
+    // @loc[15]=saved_def
+    saved int saved_value; // @goto-ref[15]->saved_object_use,saved_second_use,saved_typed_use
+}
+
+bank concrete is mixed_members {
+}
+
+bank second is mixed_members {
+}
+
+session mixed_members typed_value;
+
+method exercise_members() {
+    // @loc[30]=parameter_object_use
+    log info: "%d", concrete.parameter; // @goto-decl[30]->parameter_def @goto-ref[30]->parameter_object_use,parameter_second_use,parameter_typed_use
+    // @loc[28]=parameter_second_use
+    log info: "%d", second.parameter; // @goto-decl[28]->parameter_def @goto-ref[28]->parameter_object_use,parameter_second_use,parameter_typed_use
+    // @loc[33]=parameter_typed_use
+    log info: "%d", typed_value.parameter; // @goto-def[33]->parameter_def @goto-ref[33]->parameter_object_use,parameter_second_use,parameter_typed_use
+
+    // @loc[30]=session_object_use
+    log info: "%d", concrete.session_value; // @goto-def[30]->session_def @goto-ref[30]->session_object_use,session_second_use,session_typed_use
+    // @loc[28]=session_second_use
+    log info: "%d", second.session_value; // @goto-def[28]->session_def @goto-ref[28]->session_object_use,session_second_use,session_typed_use
+    // @loc[33]=session_typed_use
+    log info: "%d", typed_value.session_value; // @goto-def[33]->session_def @goto-ref[33]->session_object_use,session_second_use,session_typed_use
+
+    // @loc[30]=saved_object_use
+    log info: "%d", concrete.saved_value; // @goto-def[30]->saved_def @goto-ref[30]->saved_object_use,saved_second_use,saved_typed_use
+    // @loc[28]=saved_second_use
+    log info: "%d", second.saved_value; // @goto-def[28]->saved_def @goto-ref[28]->saved_object_use,saved_second_use,saved_typed_use
+    // @loc[33]=saved_typed_use
+    log info: "%d", typed_value.saved_value; // @goto-def[33]->saved_def @goto-ref[33]->saved_object_use,saved_second_use,saved_typed_use
+}
