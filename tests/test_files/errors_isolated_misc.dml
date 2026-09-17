@@ -1,0 +1,36 @@
+//  © 2024 Intel Corporation
+//  SPDX-License-Identifier: Apache-2.0 and MIT
+
+// Check some specific errors created in structural parsing
+
+dml 1.4;
+
+device errors_isolated_misc_test;
+
+// @error[19]="Bitfields size cannot be > than 64 bits"
+typedef bitfields 128 {
+    uint32 hi @ [31:0];
+} too_wide_bitfields_t;
+
+// @error[19]="Bitfields size cannot be less than 1"
+typedef bitfields 0 {
+    uint32 lo @ [31:0];
+} too_narrow_bitfields_t;
+
+typedef bitfields 32 {
+    // @error[5]="Bitfield type must be simple integer type"
+    uint32 *bad_field @ [31:0];
+} bad_field_type_bitfields_t;
+
+bank errors_isolated_misc_bank {
+    // @error[33]="Too large integer constant"
+    param too_large_int default 99999999999999999999; 
+    // NOTE: the minus is not part of the integer constant, so this overflows the same as above
+    // @error[34]="Too large integer constant"
+    param too_small_int default -99999999999999999999;
+
+    method use_invalid_log_kind() {
+        // @error[13]="Invalid log kind"
+        log blah: "this log kind does not exist";
+    }
+}

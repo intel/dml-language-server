@@ -24,6 +24,7 @@ use crate::analysis::templating::objects::{create_objectspec};
 use crate::analysis::templating::traits::{TemplateTraitInfo,
                                           DMLTemplate,
                                           DMLTrait};
+use crate::analysis::templating::types::GlobalTypeStorage;
 use crate::file_management::CanonPath;
 
 lazy_static! {
@@ -132,7 +133,7 @@ impl RankDescKind {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub struct RankDesc {
     pub kind: RankDescKind,
     pub desc: String,
@@ -171,6 +172,7 @@ pub fn create_templates_traits<'t>(
     invalid_isimps: HashMap<InferiorVariant<'t>, Vec<&'t str>>,
     imp_map: &'t HashMap<Import, CanonPath>,
     rank_struct: HashMap<&'t str, InEachStruct<'t>>,
+    types: &mut GlobalTypeStorage,
     report: &mut Vec<DMLError>)
     -> TemplateTraitInfo {
     let mut templates = HashMap::default();
@@ -198,7 +200,7 @@ pub fn create_templates_traits<'t>(
         // also creating traits in any case, just with nothing
         // in them
         let traitspec = DMLTrait::process(templname, templ.get_def_loc(),
-                                          &spec, &traits, report);
+                                          &spec, &traits, types, report);
         traits.insert(templname.to_string(), Arc::clone(&traitspec));
         let template = DMLTemplate::make(
             templname,
@@ -774,7 +776,7 @@ pub fn rank_templates_aux<'t>(mut templates: HashMap<&'t str,
                                 removed_one = true;
                                 invalid_isimps.entry(InferiorVariant::Is(inst))
                                     .and_modify(|v|v.push(second))
-                                    .or_default();
+                                    .or_insert_with(||vec![second]);
                             }
                     },
                     StatementSpecStatement::Import(imp) => {
@@ -787,7 +789,7 @@ pub fn rank_templates_aux<'t>(mut templates: HashMap<&'t str,
                             removed_one = true;
                             invalid_isimps.entry(InferiorVariant::Import(imp))
                                 .and_modify(|v|v.push(second))
-                                .or_default();
+                                .or_insert_with(||vec![second]);
                         }
                     }
                     _ => (),
@@ -815,14 +817,16 @@ fn traverse<'t, T>(graph: &HashMap<&'t T, HashSet<&'t T>>,
                    visited: &mut HashSet<&'t T>,
                    result: &mut Vec<&'t T>) -> Option<Vec<&'t T>>
 where
-    T : std::hash::Hash + std::cmp::Eq + ?Sized
+    T : std::hash::Hash + std::cmp::Eq + std::cmp::Ord + ?Sized
 {
     if path.contains(&currnode) {
         let (_, rest) = path.split_at(path.iter().position(
             |prevnode|*prevnode == currnode).unwrap());
         Some(rest.into())
     } else {
-        for nextnode in &graph[currnode] {
+        let mut nextnodes: Vec<&'t T> = graph[currnode].iter().copied().collect();
+        nextnodes.sort();
+        for nextnode in nextnodes {
             if !visited.contains(nextnode) {
                 let mut newpath = path.clone();
                 newpath.push(currnode);
@@ -856,11 +860,13 @@ impl <T> SortResult<T> {
 pub fn bottomsort<'t, T>(graph: &HashMap<&'t T, HashSet<&'t T>>)
                       -> SortResult<&'t T>
 where
-    T : std::hash::Hash + std::cmp::Eq + ?Sized
+    T : std::hash::Hash + std::cmp::Eq + std::cmp::Ord + ?Sized
 {
     let mut visited = HashSet::new();
     let mut result = vec![];
-    for startnode in graph.keys() {
+    let mut startnodes: Vec<&'t T> = graph.keys().copied().collect();
+    startnodes.sort();
+    for startnode in startnodes {
         if !visited.contains(startnode) {
             if let Some(cycle) = traverse(graph, startnode, vec![],
                                           &mut visited, &mut result) {
@@ -874,7 +880,7 @@ where
 pub fn topsort<'t, T>(graph: &HashMap<&'t T, HashSet<&'t T>>)
                       -> SortResult<&'t T>
 where
-    T : std::hash::Hash + std::cmp::Eq + ?Sized
+    T : std::hash::Hash + std::cmp::Eq + std::cmp::Ord + ?Sized
 {
     match bottomsort(graph) {
         SortResult::Sorted(mut result) => {

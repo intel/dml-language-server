@@ -11,6 +11,9 @@
 - Fixed bug in template cycle detection that could cause crashes when an object
   instantiated a template involved in a cycle
 - Fixed bug in parser that could cause hangs when parsing broken 'layout' types
+- Fixed template cycle breaking so it will be deterministic in all cases
+- Added basic type system. Goto definition/declaration and find
+  references will now work on types. Goto type-def will work on simple references
 
 ## 0.9.19
 - Added configuration option to control the max cache size while resolving references in semantic analysis, defaulting to 500MB

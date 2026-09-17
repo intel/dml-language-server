@@ -5,7 +5,7 @@ use crate::analysis::parsing::tree::{LeafToken, TreeElement};
 use crate::analysis::structure::expressions::{DMLString};
 use crate::analysis::FileSpec;
 
-#[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd)]
 pub enum NodeRef {
     Simple(DMLString),
     //// Ignore index here
@@ -42,7 +42,7 @@ impl DeclarationSpan for NodeRef {
     }
 }
 
-#[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd)]
 pub struct VariableReference {
     pub reference: NodeRef,
     pub kind: ReferenceKind,
@@ -67,7 +67,7 @@ impl LocationSpan for VariableReference {
     }
 }
 
-#[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd)]
 pub struct GlobalReference {
     pub name: String,
     pub loc: ZeroSpan,
@@ -93,7 +93,7 @@ impl DeclarationSpan for GlobalReference {
     }
 }
 
-#[derive(Copy, Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Copy, Debug, Clone, Hash, PartialEq, Eq, PartialOrd)]
 pub enum ReferenceKind {
     Template,
     Type,
@@ -101,7 +101,7 @@ pub enum ReferenceKind {
     Callable,
 }
 
-#[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd)]
 pub enum ReferenceVariant {
     Variable(VariableReference),
     Global(GlobalReference),
@@ -110,18 +110,18 @@ pub enum ReferenceVariant {
 // NOTE: Since this information is likely to be sparse, use
 // boxes for any non-trivially small fields. If fields get to be more
 // than a few, the entire info should probably be boxed instead
-#[derive(Debug, Default, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Default, Clone, Hash, PartialEq, Eq, PartialOrd)]
 pub struct ReferenceInfo {
     pub was_instantiation: bool,
 }
 
-#[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd)]
 pub struct CodeReference {
     pub variant: ReferenceVariant,
     pub extra_info: ReferenceInfo,
 }
 
-#[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd)]
 pub enum Reference {
     CodeReference(CodeReference),
     FileReference(DMLString),
@@ -209,6 +209,13 @@ impl CodeReference {
     pub fn as_variable_ref(&self) -> Option<&VariableReference> {
         match &self.variant {
             ReferenceVariant::Variable(var) => Some(var),
+            _ => None,
+        }
+    }
+
+    pub fn as_global_ref(&self) -> Option<&GlobalReference> {
+        match &self.variant {
+            ReferenceVariant::Global(glob) => Some(glob),
             _ => None,
         }
     }
