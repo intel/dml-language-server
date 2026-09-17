@@ -1,0 +1,15 @@
+//  © 2024 Intel Corporation
+//  SPDX-License-Identifier: Apache-2.0 and MIT
+
+dml 1.4;
+device errors_hook_recovery_isolated_test;
+
+// @error[9]="missing name in declaration"
+// @error[20]="Unexpected token identifier, expected ','"
+// @error[25]="Unexpected token identifier, expected ','"
+// @error[26]="Unexpected token ')', expected ','"
+// @error[28]="Unexpected token identifier, expected ','"
+// @error[46]="Expected ',', got ';'"
+// @error[46]="Expected ')', got ';'"
+session hook(int a bool b) missing_hook_comma;
+session int valid_after_hook_error;

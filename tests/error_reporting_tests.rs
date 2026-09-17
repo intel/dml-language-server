@@ -462,12 +462,12 @@ mod tests {
     }
 
     #[test]
-    fn test_pr232_type_qualifier_errors() {
-        check_device_errors(&["pr232_type_qualifier_errors.dml"]);
+    fn test_type_qualifier_errors() {
+        check_device_errors(&["errors_type_qualifiers.dml"]);
     }
 
     #[test]
-    fn test_pr232_unknown_type_is_reported_once() {
-        check_device_errors(&["pr232_unknown_type_dedup.dml"]);
+    fn test_unknown_type_is_reported_once() {
+        check_device_errors(&["errors_unknown_type_dedup.dml"]);
     }
 }

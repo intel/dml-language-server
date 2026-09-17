@@ -1014,23 +1014,23 @@ mod tests {
     }
 
     #[test]
-    fn test_pr232_typed_parameter_type_lookup() {
+    fn test_typed_parameter_type_lookup() {
         init_logging();
-        let setup = setup_test(&["pr232_parameter_type_lookup.dml"]);
+        let setup = setup_test(&["parameter_type_lookup.dml"]);
         run_annotation_tests(&setup.ctx, &setup.main_file, setup.annotations);
     }
 
     #[test]
-    fn test_pr232_mixed_template_member_references() {
+    fn test_template_member_references() {
         init_logging();
-        let setup = setup_test(&["pr232_mixed_template_member_references.dml"]);
+        let setup = setup_test(&["template_member_references.dml"]);
         run_annotation_tests(&setup.ctx, &setup.main_file, setup.annotations);
     }
 
     #[test]
-    fn test_pr232_recursive_typedef_lookup() {
+    fn test_recursive_typedef_lookup() {
         init_logging();
-        let setup = setup_test(&["pr232_recursive_typedef_lookup.dml"]);
+        let setup = setup_test(&["recursive_typedef_lookup.dml"]);
         run_annotation_tests(&setup.ctx, &setup.main_file, setup.annotations);
     }
 
