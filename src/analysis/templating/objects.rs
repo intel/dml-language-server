@@ -1489,6 +1489,52 @@ fn collect_symbols(parameters: &[DMLParameter],
                    obj_specs: &[Arc<ObjectSpec>],
                    report: &mut Vec<DMLError>) -> CollectedSymbols
 {
+    // Iterate over specs to collect object-decls for each separate kind and collect
+    // them. Allows for stable sorting.
+    let mut errors = vec![];
+    let mut constant_decls = vec![];
+    let mut saved_decls = vec![];
+    let mut session_decls = vec![];
+    let mut method_decls = vec![];
+    let mut hook_decls = vec![];
+    let mut subobj_decls = vec![];
+
+    for spec in obj_specs {
+        if !spec.condition.exists(&EvaluationContext::new(), report) {
+            continue;
+        }
+
+        errors.extend(spec.errors.iter().filter(|error|
+            error.cond.guaranteed_exists(&EvaluationContext::new(), report)));
+        constant_decls.extend(spec.constants.iter().filter(|constant|
+            constant.cond.exists(&EvaluationContext::new(), report))
+            .map(|constant|(&spec.rank, constant)));
+        saved_decls.extend(spec.saveds.iter().filter(|saved|
+            saved.cond.exists(&EvaluationContext::new(), report))
+            .map(|saved|(&spec.rank, saved)));
+        session_decls.extend(spec.sessions.iter().filter(|session|
+            session.cond.exists(&EvaluationContext::new(), report))
+            .map(|session|(&spec.rank, session)));
+        method_decls.extend(spec.methods.iter().filter(|method|
+            method.cond.exists(&EvaluationContext::new(), report))
+            .map(|method|(&spec.rank, method)));
+        hook_decls.extend(spec.hooks.iter().filter(|hook|
+            hook.cond.exists(&EvaluationContext::new(), report))
+            .map(|hook|(&spec.rank, hook)));
+        subobj_decls.extend(spec.subobjs.iter().filter(|(subobj, _)|
+            subobj.cond.exists(&EvaluationContext::new(), report))
+            .map(|(subobj, subobj_spec)|
+                 (&spec.rank, subobj, subobj_spec)));
+    }
+
+    errors.sort_by_key(|error|error.span());
+    constant_decls.sort_by_key(|(_, constant)|constant.span());
+    saved_decls.sort_by_key(|(_, saved)|saved.span());
+    session_decls.sort_by_key(|(_, session)|session.span());
+    method_decls.sort_by_key(|(_, method)|method.span());
+    hook_decls.sort_by_key(|(_, hook)|hook.span());
+    subobj_decls.sort_by_key(|(_, subobj, _)|subobj.span());
+
     // We will report all name collisions _after_ we have sorted and collected
     // this, based on the ambiguousdefs we get.
     // This makes the error locations better in some cases, and reports fewer
@@ -1503,117 +1549,85 @@ fn collect_symbols(parameters: &[DMLParameter],
     let mut hooks = HookMapping::default();
     let mut constants: Vec<ObjectDecl<Constant>> = vec![];
 
-    for spec in obj_specs {
-        // Check if the spec is valid at all
-        // NOTE: we do need to also check the conditions of all sub-statements, as they
-        // may have their own conditionals
-        if !spec.condition.exists(&EvaluationContext::new(), report) {
-            continue;
-        }
-        for error in &spec.errors {
-            // For errors in particular, we will be more lenient and only
-            // report them when they are guaranteed to exist
-            if !error.cond.guaranteed_exists(&EvaluationContext::new(), report) {
-                continue;
-            }
-            report.push(DMLError {
-                span: *error.span(),
-                // TODO: early-evaluate the error message, somehow
-                description: "unguarded error statement".to_string(),
-                related: vec![],
-                severity: Some(DiagnosticSeverity::ERROR),
-            });
-        }
-        // TODO: How to handle extra initializers here?
-        // Its a bit to early to eagerly evaluate them, but discarding
-        // them completely isn't ideal either
-        // (extra vars is not a problem, since they just become un-inited
-        //  declarations)
-        for constant in &spec.constants {
-            if !constant.cond.exists(&EvaluationContext::new(), report) {
-                continue;
-            }
-            constants.push(constant.clone());
-        }
-        for saved_objectdecl in &spec.saveds {
-            if !saved_objectdecl.cond.exists(&EvaluationContext::new(), report) {
-                continue;
-            }
-            // Pad initializers with 'None' values, so that we handle all the
-            // variables
-            let saved = &saved_objectdecl.obj;
-            for (var, init) in saved.vars.iter().zip(
-                saved.values.iter().map(|e|Some(e)).chain(iter::repeat(None))) {
-                // TODO: verify serializability of type
-                let to_insert = (spec.rank.clone(),
-                                 saved_objectdecl.cond.clone(),
-                                 (var.clone(), init.cloned()));
-                let name = var.object.name.val.clone();
-                if let Some((_, e)) = saveds.get_mut(&name) {
-                    e.push(to_insert);
-                } else {
-                    saveds.insert(name, (false, vec![to_insert]));
-                }
-            }
-        }
-        for session_objectdecl in &spec.sessions {
-            if !session_objectdecl.cond.exists(&EvaluationContext::new(), report) {
-                continue;
-            }
-            let session = &session_objectdecl.obj;
-            for (var, init) in session.vars.iter().zip(
-                session.values.iter().map(|e|Some(e))
-                    .chain(iter::repeat(None))) {
-                let to_insert = (spec.rank.clone(),
-                                 session_objectdecl.cond.clone(),
-                                 (var.clone(), init.cloned()));
-                let name = var.object.name.val.clone();
-                if let Some((_, e)) = sessions.get_mut(&name) {
-                    e.push(to_insert);
-                } else {
-                    sessions.insert(name, (false, vec![to_insert]));
-                }
-            }
-        }
-        for method in &spec.methods {
-            if !method.cond.exists(&EvaluationContext::new(), report) {
-                continue;
-            }
-            let to_insert = (spec.rank.clone(),
-                             method.cond.clone(),
-                             MethodDecl::from_content(&method.obj, report));
-            let name = method.obj.object.name.val.clone();
-            if let Some((_, e)) = methods.get_mut(&name) {
+    for error in errors {
+        report.push(DMLError {
+            span: *error.span(),
+            // TODO: early-evaluate the error message, somehow
+            description: "unguarded error statement".to_string(),
+            related: vec![],
+            severity: Some(DiagnosticSeverity::ERROR),
+        });
+    }
+    for (_, constant) in constant_decls {
+        constants.push(constant.clone());
+    }
+    // TODO: How to handle extra initializers here?
+    // Its a bit to early to eagerly evaluate them, but discarding
+    // them completely isn't ideal either
+    // (extra vars is not a problem, since they just become un-inited
+    // declarations)
+    for (rank, saved_objectdecl) in saved_decls {
+        // Pad initializers with 'None' values, so that we handle all the
+        // variables
+        let saved = &saved_objectdecl.obj;
+        for (var, init) in saved.vars.iter().zip(
+            saved.values.iter().map(|e|Some(e)).chain(iter::repeat(None))) {
+            // TODO: verify serializability of type
+            let to_insert = (rank.clone(),
+                             saved_objectdecl.cond.clone(),
+                             (var.clone(), init.cloned()));
+            let name = var.object.name.val.clone();
+            if let Some((_, e)) = saveds.get_mut(&name) {
                 e.push(to_insert);
             } else {
-                methods.insert(name, (false, vec![to_insert]));
+                saveds.insert(name, (false, vec![to_insert]));
             }
         }
-        for hook in &spec.hooks {
-            if !hook.cond.exists(&EvaluationContext::new(), report) {
-                continue;
-            }
-            let to_insert = (spec.rank.clone(), hook.clone());
-            let name = &hook.obj.name().val;
-            if let Some((_, e)) = hooks.get_mut(name) {
+    }
+    for (rank, session_objectdecl) in session_decls {
+        let session = &session_objectdecl.obj;
+        for (var, init) in session.vars.iter().zip(
+            session.values.iter().map(|e|Some(e))
+                .chain(iter::repeat(None))) {
+            let to_insert = (rank.clone(),
+                             session_objectdecl.cond.clone(),
+                             (var.clone(), init.cloned()));
+            let name = var.object.name.val.clone();
+            if let Some((_, e)) = sessions.get_mut(&name) {
                 e.push(to_insert);
             } else {
-                hooks.insert(name.to_string(), (false, vec![to_insert]));
+                sessions.insert(name, (false, vec![to_insert]));
             }
         }
-
-        for (subobj, spec) in &spec.subobjs {
-            if !subobj.cond.exists(&EvaluationContext::new(), report) {
-                continue;
-            }
-            let to_insert = (spec.rank.clone(),
-                             subobj.clone(), Arc::clone(spec));
-            let name = subobj.obj.object.name.val.clone();
-            if let Some((_, e)) = subobjs.get_mut(&name) {
-                e.push(to_insert);
-            } else {
-                subobjs.insert(name, (false, vec![to_insert]));
-            }
+    }
+    for (rank, method) in method_decls {
+        let to_insert = (rank.clone(),
+                         method.cond.clone(),
+                         MethodDecl::from_content(&method.obj, report));
+        let name = method.obj.object.name.val.clone();
+        if let Some((_, e)) = methods.get_mut(&name) {
+            e.push(to_insert);
+        } else {
+            methods.insert(name, (false, vec![to_insert]));
+        }
+    }
+    for (rank, hook) in hook_decls {
+        let to_insert = (rank.clone(), hook.clone());
+        let name = &hook.obj.name().val;
+        if let Some((_, e)) = hooks.get_mut(name) {
+            e.push(to_insert);
+        } else {
+            hooks.insert(name.to_string(), (false, vec![to_insert]));
+        }
+    }
+    for (rank, subobj, subobj_spec) in subobj_decls {
+        let to_insert = (rank.clone(),
+                         subobj.clone(), Arc::clone(subobj_spec));
+        let name = subobj.obj.object.name.val.clone();
+        if let Some((_, e)) = subobjs.get_mut(&name) {
+            e.push(to_insert);
+        } else {
+            subobjs.insert(name, (false, vec![to_insert]));
         }
     }
 
