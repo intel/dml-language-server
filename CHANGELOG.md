@@ -5,7 +5,9 @@
 # Change Log
 
 ## 0.9.21
-
+- The DLS will now properly not report conflicts between statements in a `#if` and its corresponding `#else` branch
+- The DLS will now consider all `#if` branches on conditions directly based on `dml\_1\_2` and `dml\_1\_4` dead or alive appropriately
+- The DLS will now report if you use non-constant parameters in `#if` or `#?`  conditions
 
 ## 0.9.20
 - Made GetKnownContexts custom request not wait for analysis results by default, reducing the chances of overfilling workpool capacity while analysises are running.

@@ -29,6 +29,7 @@ use rayon::prelude::*;
 use crate::actions::{SourcedDMLError, DeviceAnalysisJobOptions};
 use crate::actions::analysis_storage::{TimestampedStorage};
 use crate::actions::semantic_lookup::{DLSLimitation, isolated_template_limitation};
+use crate::analysis::templating::evaluation::{EvaluationContext};
 use crate::analysis::symbols::{DMLSymbolKind, SimpleSymbol, StructureSymbol, SymbolContainer, SymbolMaker, SymbolSource};
 pub use crate::analysis::symbols::SymbolRef;
 use crate::analysis::reference::{GlobalReference, NodeRef, CodeReference, Reference, ReferenceKind, ReferenceVariant, VariableReference};
@@ -1817,12 +1818,18 @@ impl IsolatedAnalysis {
         Ok(res)
     }
 
-    pub fn get_imports(&self) -> &Vec<ObjectDecl<Import>> {
-        &self.toplevel.spec.imports
+    fn get_active_imports(&self) -> impl Iterator<Item = &ObjectDecl<Import>> {
+        self.toplevel.spec.imports.iter()
+        // We intentionally discard errors here, they will have been reported earlier
+        .filter(|imp|imp.cond.exists(&EvaluationContext::new(), &mut vec![]))
+    }
+
+    pub fn get_imports(&self) -> impl Iterator<Item = &ObjectDecl<Import>> {
+        self.get_active_imports()
     }
 
     pub fn get_import_names(&self) -> Vec<PathBuf> {
-        self.get_imports().iter().map(
+        self.get_imports().map(
             |imp|deconstruct_import(imp)).collect()
     }
 
@@ -1833,9 +1840,8 @@ impl IsolatedAnalysis {
     {
         let mut found = HashSet::default();
         let mut missing = HashSet::default();
-        let import_paths = self.get_imports().iter()
-            .map(|i|(deconstruct_import(i),
-                     i.clone()));
+        let import_paths = self.get_imports()
+            .map(|i|(deconstruct_import(i), i.clone()));
         // Patch in implicit dependencies here. These won't affect template
         // or file ordering. But we DO want to make sure they are imported
         let import_paths = import_paths.chain(

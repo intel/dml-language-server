@@ -20,6 +20,7 @@ use crate::analysis::structure::toplevel::{ExistCondition, ObjectDecl,
                                            StatementSpecStatement,
                                            StatementSpec, TopLevel};
 use crate::analysis::DMLError;
+use crate::analysis::templating::evaluation::EvaluationContext;
 use crate::analysis::templating::objects::{create_objectspec};
 use crate::analysis::templating::traits::{TemplateTraitInfo,
                                           DMLTemplate,
@@ -265,18 +266,26 @@ pub fn dependencies<'t>(statements: &'t StatementSpec,
     let mut in_eachs = InEachStructMap::new();
 
     for inst in &statements.instantiations {
-        queue.push(InferiorVariant::Is(inst));
+        if inst.cond.exists_no_report(&EvaluationContext::new()) {
+            queue.push(InferiorVariant::Is(inst));
+        }
     }
     for ineach in &statements.ineachs {
-        queue.push(InferiorVariant::InEach(ineach));
+        if ineach.cond.exists_no_report(&EvaluationContext::new()) {
+            queue.push(InferiorVariant::InEach(ineach));
+        }
     }
     for objstmnt in &statements.objects {
-        queue.push(InferiorVariant::Object(objstmnt));
-        queue.push(InferiorVariant::ImplicitIs(
-            &objstmnt.obj.kind));
+        if objstmnt.cond.exists_no_report(&EvaluationContext::new()) {
+            queue.push(InferiorVariant::Object(objstmnt));
+            queue.push(InferiorVariant::ImplicitIs(
+                &objstmnt.obj.kind));
+        }
     }
     for import in &statements.imports {
+        if import.cond.exists_no_report(&EvaluationContext::new()) {
         queue.push(InferiorVariant::Import(import));
+        }
     }
 
     while let Some(decl) = queue.pop() {
