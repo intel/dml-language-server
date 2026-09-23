@@ -9,7 +9,7 @@ use crate::logging::trace;
 
 use crate::analysis::structure::objects::{Bitorder, CBlock, CompObjectKind, CompositeObject, Constant, DMLObject, DMLStatement, Device, Error, Export, Hook, Import, InEach, Instantiation, Loggroup, Method, MethodModifier, Parameter, Statements, Template, ToStructure, Typedef, Variable, Version, make_statements};
 use crate::analysis::structure::expressions::{Expression};
-use crate::analysis::{DMLError, FileSpec};
+use crate::analysis::{DMLError, FileSpec, LocationRange};
 use crate::analysis::parsing::tree::{ZeroRange, ZeroSpan, TreeElement};
 use crate::analysis::parsing::structure;
 use crate::analysis::{DeclarationSpan, LocationSpan, Named,
@@ -588,9 +588,21 @@ fn flatten_hashif_branch(context: StatementContext,
                     DMLObject::Session(sess) =>
                         sessions.push(ObjectDecl::with_conds(
                             sess, &conds)),
-                    DMLObject::Parameter(param) =>
+                    DMLObject::Parameter(param) => {
+                            if matches!(context, StatementContext::HashIfElse | StatementContext::HashIfTrue) {
+                                report.push(LocalDMLError {
+                                    range: *param.loc_range(),
+                                    description: format!("Param declaration not allowed directly inside a {} block",
+                                        match context {
+                                            StatementContext::HashIfElse => "#else",
+                                            StatementContext::HashIfTrue => "#if",
+                                            _ => unreachable!("Unexpected statement context in param declaration check"),
+                                        }),
+                                });
+                            }
                             params.push(ObjectDecl::with_conds(
-                                param, &conds)),
+                                param, &conds))
+                            },
                 }
             },
             DMLStatement::HashIf(hi) => {
