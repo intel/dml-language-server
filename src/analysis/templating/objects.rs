@@ -1,6 +1,7 @@
 //  © 2024 Intel Corporation
 //  SPDX-License-Identifier: Apache-2.0 and MIT
 use std::collections::{HashMap, HashSet};
+use std::cmp::{Ordering, Reverse};
 use std::iter;
 use std::sync::Arc;
 
@@ -1485,6 +1486,111 @@ type CollectedSymbols = (HashMap<String, (ExistCondition, ZeroSpan, Vec<ZeroSpan
                          Vec<ObjectDecl<Constant>>,
                          SavedMapping, SessionMapping,
                          MethodMapping, HookMapping, ObjectMapping);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum CollisionKind {
+    Constant,
+    Parameter,
+    Subobject,
+    Method,
+    Saved,
+    Session,
+    Hook,
+}
+
+#[derive(Debug, Clone)]
+struct CollisionCandidate {
+    name: String,
+    condition: ExistCondition,
+    span: ZeroSpan,
+    kind: CollisionKind,
+    logical_group: Option<usize>,
+}
+
+impl CollisionCandidate {
+    fn overlaps(&self, other: &Self) -> bool {
+        let same_logical_symbol = self.kind == other.kind && matches!(
+            (self.logical_group, other.logical_group),
+            (Some(first), Some(second)) if first == second);
+        !same_logical_symbol
+        && !self.condition.guaranteed_excluded_from(&other.condition)
+    }
+}
+
+fn compare_collision_candidates(first: &CollisionCandidate,
+                                second: &CollisionCandidate) -> Ordering {
+    first.name.cmp(&second.name)
+        .then_with(||first.span.path().cmp(&second.span.path()))
+        .then_with(||first.span.range.cmp(&second.span.range))
+        .then_with(||first.kind.cmp(&second.kind))
+        .then_with(||first.condition.cmp(&second.condition))
+        .then_with(||first.logical_group.cmp(&second.logical_group))
+}
+
+fn report_collision_candidates(mut candidates: Vec<CollisionCandidate>,
+                               report: &mut Vec<DMLError>) {
+    candidates.sort_by(compare_collision_candidates);
+    candidates.dedup_by(|first, second|
+        first.name == second.name &&
+        first.condition == second.condition &&
+        first.span.path() == second.span.path() &&
+        first.span.range == second.span.range &&
+        first.kind == second.kind &&
+        first.logical_group == second.logical_group);
+
+    let mut start = 0;
+    while start < candidates.len() {
+        let end = candidates[start..].iter().position(
+            |candidate|candidate.name != candidates[start].name)
+            .map_or(candidates.len(), |offset|start + offset);
+        let group = &candidates[start..end];
+        let mut neighbors = vec![vec![]; group.len()];
+        for first in 0..group.len() {
+            for second in first + 1..group.len() {
+                if group[first].overlaps(&group[second]) {
+                    neighbors[first].push(second);
+                    neighbors[second].push(first);
+                }
+            }
+        }
+
+        // Prefer an anchor that covers the most still-unrepresented
+        // declarations, so A-B-C reports at B.
+        let mut represented = vec![false; group.len()];
+        while (0..group.len()).any(|index|
+            neighbors[index].iter().any(|neighbor|!represented[*neighbor])) {
+            // An already represented declaration may need to become an anchor
+            // again. For A-B-C-D, after C reports B and D, B must report A;
+            // anchoring that second diagnostic at A would incorrectly imply
+            // that A overlaps the already reported C or D.
+            let anchor = (0..group.len()).filter(|index|
+                neighbors[*index].iter().any(|neighbor|!represented[*neighbor]))
+                .max_by_key(|index|(
+                    neighbors[*index].iter().filter(
+                        |neighbor|!represented[**neighbor]).count(),
+                    Reverse(*index)));
+            let Some(anchor) = anchor else { break; };
+
+            let related: Vec<usize> = neighbors[anchor].iter().copied().filter(
+                |neighbor|!represented[*neighbor]).collect();
+            represented[anchor] = true;
+            for neighbor in &related {
+                represented[*neighbor] = true;
+            }
+            report.push(DMLError {
+                span: group[anchor].span,
+                description: format!("Name collision in declaration on '{}'",
+                                     group[anchor].name),
+                related: related.into_iter().map(|neighbor|(
+                    group[neighbor].span,
+                    "also declared here".to_string())).collect(),
+                severity: Some(DiagnosticSeverity::ERROR),
+            });
+        }
+        start = end;
+    }
+}
+
 fn collect_symbols(parameters: &[DMLParameter],
                    obj_specs: &[Arc<ObjectSpec>],
                    report: &mut Vec<DMLError>) -> CollectedSymbols
@@ -1649,58 +1755,92 @@ fn collect_symbols(parameters: &[DMLParameter],
         partial_sort_by_key_in_place(decls, |(r, _,  _)|r);
     }
 
-    // Map names to most relevant declaration, its exist condition, and colliding declarations
+    // Fully cross-check all declarations for collisions
+    let mut collision_candidates = vec![];
+    collision_candidates.extend(constants.iter().map(|constant|
+        CollisionCandidate {
+            name: constant.obj.name().val.clone(),
+            condition: constant.cond.clone(),
+            span: constant.obj.name().span,
+            kind: CollisionKind::Constant,
+            logical_group: None,
+        }));
+    collision_candidates.extend(parameters.iter().enumerate().flat_map(
+        |(group, parameter)|
+        parameter.get_all_definitions().into_iter().map(move |(condition, parameter)|
+            CollisionCandidate {
+                name: parameter.object.name.val.clone(),
+                condition: condition.clone(),
+                span: parameter.object.name.span,
+                kind: CollisionKind::Parameter,
+                logical_group: Some(group),
+            })));
+    collision_candidates.extend(subobjs.values().enumerate().flat_map(
+        |(group, (_, declarations))|
+        declarations.iter().map(move |(_, subobj, _)|CollisionCandidate {
+            name: subobj.obj.object.name.val.clone(),
+            condition: subobj.cond.clone(),
+            span: subobj.obj.object.name.span,
+            kind: CollisionKind::Subobject,
+            logical_group: Some(group),
+        })));
+    collision_candidates.extend(methods.values().enumerate().flat_map(
+        |(group, (_, declarations))|
+        declarations.iter().map(move |(_, condition, method)|CollisionCandidate {
+            name: method.name.val.clone(),
+            condition: condition.clone(),
+            span: method.name.span,
+            kind: CollisionKind::Method,
+            logical_group: Some(group),
+        })));
+    collision_candidates.extend(saveds.values().flat_map(|(_, declarations)|
+        declarations.iter().map(|(_, condition, (variable, _))|CollisionCandidate {
+            name: variable.object.name.val.clone(),
+            condition: condition.clone(),
+            span: variable.object.name.span,
+            kind: CollisionKind::Saved,
+            logical_group: None,
+        })));
+    collision_candidates.extend(sessions.values().flat_map(|(_, declarations)|
+        declarations.iter().map(|(_, condition, (variable, _))|CollisionCandidate {
+            name: variable.object.name.val.clone(),
+            condition: condition.clone(),
+            span: variable.object.name.span,
+            kind: CollisionKind::Session,
+            logical_group: None,
+        })));
+    collision_candidates.extend(hooks.values().flat_map(|(_, declarations)|
+        declarations.iter().map(|(_, hook)|CollisionCandidate {
+            name: hook.obj.name().val.clone(),
+            condition: hook.cond.clone(),
+            span: hook.obj.name().span,
+            kind: CollisionKind::Hook,
+            logical_group: None,
+        })));
+
+    // Map names to the most relevant declaration. Collision reporting is
+    // handled separately below so it can check every declaration pair.
     // This creates an order for symbol definition precedence
-    // constant > parameter > subobj > method > saved > session
-    // Grab the most-relevant decl from each ambiguousdecl, if they have
-    // parameter-to-parameter collisions then that has already been reported
+    // constant > parameter > subobj > method > saved > session > hook
     let mut symbols: HashMap<String, (ExistCondition, ZeroSpan, Vec<ZeroSpan>)>
         = HashMap::new();
 
-    // Helper function, stores spans to report for name conflicts if the
-    // conditions are not provably exclusive
-    fn store_if_not_excluded(cond1: &ExistCondition, cond2: &ExistCondition,
-                             span: &ZeroSpan,
-                             store_in: &mut Vec<ZeroSpan>) {
-        if !cond1.guaranteed_excluded_from(cond2) {
-            store_in.push(*span);
-        }
-    }
-
-    // NOTE: constants are top-level only, so ordering doesn't really matter
     for constant in &constants {
-        if let Some((cond, _, rest)) = symbols.get_mut(constant.obj.name().val.as_str()) {
-            store_if_not_excluded(cond, &constant.cond, constant.loc_span(), rest);
-        } else {
-            symbols.insert(constant.obj.name().val.clone(),
-                           (constant.cond.clone(), *constant.loc_span(), vec![]));
-        }
+        symbols.entry(constant.obj.name().val.clone()).or_insert_with(||
+            (constant.cond.clone(), *constant.loc_span(), vec![]));
     }
 
     for parameter in parameters {
         let (cond, likely_def) = parameter.get_likely_definition_info();
         let maybe_auth_decl_span = *likely_def.object.loc_span();
         let name = likely_def.object.name.val.clone();
-        if let Some((auth_cond, _, rest)) = symbols.get_mut(&name) {
-            // For this and other cases where we have multiple possible conflicts, we check
-            // the declaration of each one and report all the ones that are not provably
-            // exclusive with the auth cond
-            for (sub_cond, param) in parameter.get_all_definitions() {
-                store_if_not_excluded(sub_cond, auth_cond, param.span(), rest);
-            }
-        } else {
-            symbols.insert(name, (cond.clone(), maybe_auth_decl_span, vec![]));
-        }
+        symbols.entry(name).or_insert((cond.clone(), maybe_auth_decl_span, vec![]));
     }
 
     for (name, (used, objs)) in &mut subobjs {
         let first_obj = objs.first().unwrap();
         let maybe_auth_decl_span = first_obj.1.obj.object.name.span;
-        if let Some((cond, _, rest)) = symbols.get_mut(name) {
-            for (_, subobj, _) in objs {
-                store_if_not_excluded(cond, &subobj.cond, subobj.span(), rest);
-            }
-        } else {
+        if !symbols.contains_key(name) {
             *used = true;
             symbols.insert(name.to_string(), (first_obj.1.cond.clone(), maybe_auth_decl_span, vec![]));
         }
@@ -1709,72 +1849,42 @@ fn collect_symbols(parameters: &[DMLParameter],
     for (name, (used, methods)) in &mut methods {
         let (_, cond, method) = methods.first().unwrap();
         let maybe_auth_decl_span = method.name.span;
-        if let Some((cond, _, rest)) = symbols.get_mut(name) {
-            for (_, sub_cond, sub_method) in methods {
-                store_if_not_excluded(sub_cond, cond, sub_method.span(), rest);
-            }
-        } else {
+        if !symbols.contains_key(name) {
             *used = true;
             symbols.insert(name.to_string(), (cond.clone(), maybe_auth_decl_span, vec![]));
         }
     }
 
-    // Each entry in saveds here is one particular cond, but contains several names.
-    // So check for name collision first, and then use the cond to mark all such names
-    // conflicting
+    // The first entry has the highest rank and is the symbol used by later
+    // object construction. All variants have already been retained in
+    // collision_candidates for pairwise collision reporting.
     for (name, (used, cond_decls)) in &mut saveds {
-        for (_, cond, (var, _)) in cond_decls {
-            let maybe_auth_decl_span = var.object.name.span;
-            if let Some((auth_cond, _, rest)) = symbols.get_mut(name) {
-                store_if_not_excluded(auth_cond, cond, &maybe_auth_decl_span, rest);
-            } else {
-                *used = true;
-                // We will duplicate the variable cond here for each declaration name,
-                // which is inefficient but in practice should be small
-                symbols.insert(name.to_string(),
-                               (cond.clone(), maybe_auth_decl_span, vec![]));
-            }
+        if !symbols.contains_key(name) {
+            let (_, cond, (var, _)) = cond_decls.first().unwrap();
+            *used = true;
+            symbols.insert(name.to_string(),
+                           (cond.clone(), var.object.name.span, vec![]));
         }
     }
     for (name, (used, cond_decls)) in &mut sessions {
-        for (_, cond, (var, _)) in cond_decls {
-            let maybe_auth_decl_span = var.object.name.span;
-            if let Some((auth_cond, _, rest)) = symbols.get_mut(name) {
-                store_if_not_excluded(auth_cond, cond, &maybe_auth_decl_span, rest);
-            } else {
-                *used = true;
-                symbols.insert(name.to_string(),
-                               (cond.clone(), maybe_auth_decl_span, vec![]));
-            }
+        if !symbols.contains_key(name) {
+            let (_, cond, (var, _)) = cond_decls.first().unwrap();
+            *used = true;
+            symbols.insert(name.to_string(),
+                           (cond.clone(), var.object.name.span, vec![]));
         }
     }
 
     for (name, (used, decls)) in &mut hooks {
-        for (_, hook) in decls {
-            let maybe_auth_decl_span = hook.obj.name().span;
-            if let Some((cond, _, rest)) = symbols.get_mut(name) {
-                store_if_not_excluded(&hook.cond, cond, &maybe_auth_decl_span, rest);
-            } else {
-                *used = true;
-                symbols.insert(name.to_string(),
-                               (hook.cond.clone(), maybe_auth_decl_span, vec![]));
-            }
+        if !symbols.contains_key(name) {
+            let (_, hook) = decls.first().unwrap();
+            *used = true;
+            symbols.insert(name.to_string(),
+                           (hook.cond.clone(), hook.obj.name().span, vec![]));
         }
     }
 
-    for (name, (_, auth, others)) in &symbols {
-        if !others.is_empty() {
-            report.push(DMLError {
-                span: (*auth),
-                description: format!("Name collision in declaration on '{}'",
-                                     name),
-                related: others.iter().map(
-                    |s|(*s,
-                        "also declared here".to_string())).collect(),
-                severity: Some(DiagnosticSeverity::ERROR),
-            });
-        }
-    }
+    report_collision_candidates(collision_candidates, report);
     (symbols, constants, saveds, sessions, methods, hooks, subobjs)
 }
 
@@ -2445,4 +2555,267 @@ pub fn make_object(loc: ZeroSpan,
                           container, report);
     obj_invariants(container.get_mut(new_obj_key).unwrap(), report);
     new_obj_key
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, OnceLock};
+
+    use crate::analysis::parsing::tree::{ZeroPosition, ZeroSpan};
+    use crate::analysis::structure::expressions::ExpressionKind;
+    use crate::analysis::structure::toplevel::ExistCondition;
+
+    use super::{CollisionCandidate, CollisionKind,
+                compare_collision_candidates, report_collision_candidates};
+
+    fn span(line: u32) -> ZeroSpan {
+        static TEST_SPAN: OnceLock<ZeroSpan> = OnceLock::new();
+        let file = TEST_SPAN.get_or_init(||
+            ZeroSpan::invalid("collision-test.dml")).path();
+        let position = ZeroPosition::from_u32(line, 0);
+        ZeroSpan::from_positions(position, position, file)
+    }
+
+    fn conditional(branch: bool) -> ExistCondition {
+        let condition_span = span(100);
+        ExistCondition::Conditional(Arc::new(vec![(
+            branch,
+            Box::new(ExpressionKind::Unknown(condition_span)),
+        )]))
+    }
+
+    fn candidate(line: u32, condition: ExistCondition,
+                 kind: CollisionKind) -> CollisionCandidate {
+        CollisionCandidate {
+            name: "duplicate".to_string(),
+            condition,
+            span: span(line),
+            kind,
+            logical_group: None,
+        }
+    }
+
+    #[test]
+    fn cross_file_order_uses_paths_not_path_interning_order() {
+        // Deliberately intern the lexically later path first. Comparing Span
+        // directly would order these process-local keys by insertion order.
+        let later_path = ZeroSpan::from_u32(
+            0, 0, 0, 1, "z-collision-test.dml");
+        let earlier_path = ZeroSpan::from_u32(
+            0, 0, 0, 1, "a-collision-test.dml");
+        let mut later = candidate(0, ExistCondition::Always,
+                                  CollisionKind::Saved);
+        later.span = later_path;
+        let mut earlier = candidate(0, ExistCondition::Always,
+                                    CollisionKind::Session);
+        earlier.span = earlier_path;
+
+        assert_eq!(compare_collision_candidates(&earlier, &later),
+                   std::cmp::Ordering::Less);
+
+        let mut report = vec![];
+        report_collision_candidates(vec![later, earlier], &mut report);
+        assert_eq!(report.len(), 1);
+        assert_eq!(report[0].span.path(),
+                   std::path::PathBuf::from("a-collision-test.dml"));
+    }
+
+    #[test]
+    fn collision_chain_uses_the_middle_declaration_as_anchor() {
+        // The first and final candidates are mutually exclusive. The
+        // unconditional middle candidate overlaps both, so it is the only
+        // truthful anchor for a single diagnostic.
+        let mut report = vec![];
+        report_collision_candidates(vec![
+            candidate(2, conditional(false), CollisionKind::Method),
+            candidate(0, conditional(true), CollisionKind::Parameter),
+            candidate(1, ExistCondition::Always, CollisionKind::Saved),
+        ], &mut report);
+
+        assert_eq!(report.len(), 1);
+        assert_eq!(report[0].span.range.row_start.0, 1);
+        assert_eq!(report[0].related.len(), 2);
+        assert_eq!(report[0].related[0].0.range.row_start.0, 0);
+        assert_eq!(report[0].related[1].0.range.row_start.0, 2);
+    }
+
+    #[test]
+    fn mutually_exclusive_declarations_do_not_collide() {
+        let true_branch = conditional(true);
+        let false_branch = conditional(false);
+        assert!(true_branch.guaranteed_excluded_from(&false_branch));
+        let mut report = vec![];
+        report_collision_candidates(vec![
+            candidate(0, true_branch, CollisionKind::Parameter),
+            candidate(1, false_branch, CollisionKind::Method),
+        ], &mut report);
+
+        assert!(report.is_empty());
+    }
+
+    #[test]
+    fn same_kind_candidates_are_cross_checked() {
+        let mut report = vec![];
+        report_collision_candidates(vec![
+            candidate(0, ExistCondition::Always, CollisionKind::Method),
+            candidate(1, ExistCondition::Always, CollisionKind::Method),
+        ], &mut report);
+
+        assert_eq!(report.len(), 1);
+        assert_eq!(report[0].span.range.row_start.0, 0);
+        assert_eq!(report[0].related.len(), 1);
+        assert_eq!(report[0].related[0].0.range.row_start.0, 1);
+    }
+
+    #[test]
+    fn duplicate_candidates_are_not_self_collisions() {
+        let declaration = candidate(0, ExistCondition::Always,
+                                    CollisionKind::Parameter);
+        let mut report = vec![];
+        report_collision_candidates(vec![declaration.clone(), declaration],
+                                    &mut report);
+
+        assert!(report.is_empty());
+    }
+
+    #[test]
+    fn variants_of_one_parameter_do_not_collide() {
+        let mut first_variant = candidate(0, ExistCondition::Always,
+                                          CollisionKind::Parameter);
+        first_variant.logical_group = Some(0);
+        let mut second_variant = candidate(1, ExistCondition::Always,
+                                           CollisionKind::Parameter);
+        second_variant.logical_group = Some(0);
+        let mut third_variant = candidate(2, ExistCondition::Always,
+                                          CollisionKind::Parameter);
+        third_variant.logical_group = Some(0);
+        let mut report = vec![];
+        report_collision_candidates(vec![first_variant, second_variant,
+                                         third_variant], &mut report);
+
+        assert!(report.is_empty());
+    }
+
+    #[test]
+    fn separate_parameter_groups_still_collide() {
+        let mut first_parameter = candidate(0, ExistCondition::Always,
+                                            CollisionKind::Parameter);
+        first_parameter.logical_group = Some(0);
+        let mut second_parameter = candidate(1, ExistCondition::Always,
+                                             CollisionKind::Parameter);
+        second_parameter.logical_group = Some(1);
+        let mut report = vec![];
+        report_collision_candidates(vec![first_parameter, second_parameter],
+                                    &mut report);
+
+        assert_eq!(report.len(), 1);
+        assert_eq!(report[0].span.range.row_start.0, 0);
+        assert_eq!(report[0].related.len(), 1);
+        assert_eq!(report[0].related[0].0.range.row_start.0, 1);
+    }
+
+    #[test]
+    fn parameter_variants_still_collide_with_other_symbol_kinds() {
+        let mut parameter = candidate(0, ExistCondition::Always,
+                                      CollisionKind::Parameter);
+        parameter.logical_group = Some(0);
+        let mut report = vec![];
+        report_collision_candidates(vec![
+            parameter,
+            candidate(1, ExistCondition::Always, CollisionKind::Method),
+        ], &mut report);
+
+        assert_eq!(report.len(), 1);
+    }
+
+    #[test]
+    fn variants_of_one_method_do_not_collide() {
+        let mut shared_variant = candidate(0, ExistCondition::Always,
+                                           CollisionKind::Method);
+        shared_variant.logical_group = Some(0);
+        let mut nonshared_variant = candidate(1, ExistCondition::Always,
+                                              CollisionKind::Method);
+        nonshared_variant.logical_group = Some(0);
+        let mut report = vec![];
+        report_collision_candidates(vec![shared_variant, nonshared_variant],
+                                    &mut report);
+
+        assert!(report.is_empty());
+    }
+
+    #[test]
+    fn separate_method_groups_still_collide() {
+        let mut first_method = candidate(0, ExistCondition::Always,
+                                         CollisionKind::Method);
+        first_method.logical_group = Some(0);
+        let mut second_method = candidate(1, ExistCondition::Always,
+                                          CollisionKind::Method);
+        second_method.logical_group = Some(1);
+        let mut report = vec![];
+        report_collision_candidates(vec![first_method, second_method],
+                                    &mut report);
+
+        assert_eq!(report.len(), 1);
+    }
+
+    #[test]
+    fn method_variants_still_collide_with_other_symbol_kinds() {
+        let mut method = candidate(0, ExistCondition::Always,
+                                   CollisionKind::Method);
+        method.logical_group = Some(0);
+        let mut report = vec![];
+        report_collision_candidates(vec![
+            method,
+            candidate(1, ExistCondition::Always, CollisionKind::Saved),
+        ], &mut report);
+
+        assert_eq!(report.len(), 1);
+    }
+
+    #[test]
+    fn declarations_of_one_composite_object_do_not_collide() {
+        let mut first_declaration = candidate(0, ExistCondition::Always,
+                                              CollisionKind::Subobject);
+        first_declaration.logical_group = Some(0);
+        let mut second_declaration = candidate(1, ExistCondition::Always,
+                                               CollisionKind::Subobject);
+        second_declaration.logical_group = Some(0);
+        let mut report = vec![];
+        report_collision_candidates(vec![first_declaration,
+                                         second_declaration], &mut report);
+
+        assert!(report.is_empty());
+    }
+
+    #[test]
+    fn inconsistent_composite_object_kinds_are_not_name_collisions() {
+        // The generic collision pass only knows that these declarations are
+        // one merged object. merge_composite_subobj reports their mismatching
+        // CompObjectKind as "Inconsistent object type" instead.
+        let mut register_declaration = candidate(0, ExistCondition::Always,
+                                                 CollisionKind::Subobject);
+        register_declaration.logical_group = Some(0);
+        let mut field_declaration = candidate(1, ExistCondition::Always,
+                                              CollisionKind::Subobject);
+        field_declaration.logical_group = Some(0);
+        let mut report = vec![];
+        report_collision_candidates(vec![register_declaration,
+                                         field_declaration], &mut report);
+
+        assert!(report.is_empty());
+    }
+
+    #[test]
+    fn composite_objects_still_collide_with_other_symbol_kinds() {
+        let mut subobject = candidate(0, ExistCondition::Always,
+                                      CollisionKind::Subobject);
+        subobject.logical_group = Some(0);
+        let mut report = vec![];
+        report_collision_candidates(vec![
+            subobject,
+            candidate(1, ExistCondition::Always, CollisionKind::Saved),
+        ], &mut report);
+
+        assert_eq!(report.len(), 1);
+    }
 }
