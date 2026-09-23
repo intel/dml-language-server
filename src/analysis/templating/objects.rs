@@ -143,37 +143,43 @@ fn create_spec<'t>(loc: ZeroSpan,
         }
     }
     for inst in &spec.instantiations {
-        instantiations.insert(
-            inst.clone(),
-            // If an instantiation has been marked as invalid, filter it out
-            // from tracked instantiations
-            if let Some(invalid_names) = invalid_isimps.get(
-                &InferiorVariant::Is(inst)) {
-                inst.obj.names.iter().filter_map(
-                    |name| if !invalid_names.contains(&name.val.as_str()) {
-                        // TODO: consider warning for double instantiations here
-                        Some(Arc::clone(
-                            templates.get(name.val.as_str()).unwrap()))
-                    } else {
-                        None
-                    }).collect()
-            } else {
-                inst.obj.names.iter().filter_map(
-                    |name|templates.get(name.val.as_str())).cloned().collect()
-            });
+        if inst.cond.exists_no_report(&EvaluationContext::new()) {
+            instantiations.insert(
+                inst.clone(),
+                // If an instantiation has been marked as invalid, filter it out
+                // from tracked instantiations
+                if let Some(invalid_names) = invalid_isimps.get(
+                    &InferiorVariant::Is(inst)) {
+                    inst.obj.names.iter().filter_map(
+                        |name| if !invalid_names.contains(&name.val.as_str()) {
+                            // TODO: consider warning for double instantiations here
+                            Some(Arc::clone(
+                                templates.get(name.val.as_str()).unwrap()))
+                        } else {
+                            None
+                        }).collect()
+                } else {
+                    inst.obj.names.iter().filter_map(
+                        |name|templates.get(name.val.as_str())).cloned().collect()
+                });
+        }
     }
     let mut imports = HashMap::default();
     for inst in &spec.imports {
-        if let Some(invalid_names) = invalid_isimps.get(&InferiorVariant::Import(inst)) {
-            assert!(invalid_names.len() == 1);
-        } else {
-            imports.insert(
-                inst.clone(),
-                templates.get(
-                    imp_map.get(&inst.obj).map_or_else(||inst.obj.imported_name(),
-                                                       |s|s.as_str())
-                ).cloned().unwrap());
-        };
+        if inst.cond.exists_no_report(&EvaluationContext::new()) {
+            if let Some(invalid_names) = invalid_isimps.get(
+                &InferiorVariant::Import(inst)) {
+                assert!(invalid_names.len() == 1);
+            } else {
+                imports.insert(
+                    inst.clone(),
+                    templates.get(
+                        imp_map.get(&inst.obj)
+                            .map_or_else(||inst.obj.imported_name(),
+                                         |s|s.as_str())
+                    ).cloned().unwrap());
+            };
+        }
     }
 
     let mut in_eachs = InEachSpec::default();
@@ -984,12 +990,14 @@ fn add_template_specs(obj_specs: &mut Vec<Arc<ObjectSpec>>,
     let mut queue: Vec<(ExistCondition, Arc<DMLTemplate>)> =
         obj_specs.iter().flat_map(
             |s|s.instantiations.iter()
+                .filter(|(d, _)|d.cond.exists_no_report(&EvaluationContext::new()))
                 .flat_map(|(d, v)|v.iter()
                           .map(move |i|(d.cond.clone(),
                                         Arc::clone(i)))))
         .collect();
     queue.extend(
         obj_specs.iter().flat_map(|s|s.imports.iter()
+                             .filter(|(i, _)|i.cond.exists_no_report(&EvaluationContext::new()))
                              .map(|(d, v)|(d.cond.clone(),
                                            Arc::clone(v)))));
 
