@@ -10,6 +10,7 @@
 - The DLS will now report if you use non-constant parameters in `#if` or `#?`  conditions
 - Made error reporting for name collisions more stable
 - Name collisions will now report all combinations of conflicts
+- The DLS will now correctly report `param` declarations directly below a `#if` or `#else` block
 
 ## 0.9.20
 - Made GetKnownContexts custom request not wait for analysis results by default, reducing the chances of overfilling workpool capacity while analysises are running.
