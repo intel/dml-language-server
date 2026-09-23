@@ -284,27 +284,30 @@ pub fn dependencies<'t>(statements: &'t StatementSpec,
     }
     for import in &statements.imports {
         if import.cond.exists_no_report(&EvaluationContext::new()) {
-        queue.push(InferiorVariant::Import(import));
+            queue.push(InferiorVariant::Import(import));
         }
     }
 
     while let Some(decl) = queue.pop() {
         match decl {
             InferiorVariant::Object(obj) => {
-                queue.extend(obj.spec.objects.iter().map(
-                    |o|InferiorVariant::Object(o)));
-                queue.push(InferiorVariant::ImplicitIs(
-                    &obj.obj.kind));
-                queue.extend(obj.spec.ineachs.iter().map(
-                    |o|InferiorVariant::InEach(o)));
-                queue.extend(obj.spec.instantiations.iter().map(
-                    |o|InferiorVariant::Is(o)));
+                queue.extend(obj.spec.objects.iter()
+                    .filter(|o|o.cond.exists_no_report(&EvaluationContext::new()))
+                    .map(|o|InferiorVariant::Object(o)));
+                queue.push(InferiorVariant::ImplicitIs(&obj.obj.kind));
+                queue.extend(obj.spec.ineachs.iter()
+                    .filter(|o|o.cond.exists_no_report(&EvaluationContext::new()))
+                    .map(|o|InferiorVariant::InEach(o)));
+                queue.extend(obj.spec.instantiations.iter()
+                    .filter(|o|o.cond.exists_no_report(&EvaluationContext::new()))                
+                    .map(|o|InferiorVariant::Is(o)));
                 // There should not be any imports to add here
                 if !obj.spec.imports.is_empty() {
                     error!("Unexpectedly allowed imports in object declaration \
                             {:?}", obj);
-                    queue.extend(obj.spec.imports.iter().map(
-                        |o|InferiorVariant::Import(o)));
+                    queue.extend(obj.spec.imports.iter()
+                        .filter(|o|o.cond.exists_no_report(&EvaluationContext::new()))
+                        .map(|o|InferiorVariant::Import(o)));
                 }
             },
             InferiorVariant::Is(is) => {
