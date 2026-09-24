@@ -171,16 +171,16 @@ fn create_spec<'t>(loc: ZeroSpan,
             if let Some(invalid_names) = invalid_isimps.get(
                 &InferiorVariant::Import(inst)) {
                 assert!(invalid_names.len() == 1);
-            } else {
+            } else if let Some(templ) = templates.get(imp_map
+                                                      .get(&inst.obj)
+                                                      .map_or_else(
+                                                          ||inst.obj.imported_name(),
+                                                          |s|s.as_str())
+            ).cloned() {
                 imports.insert(
-                    inst.clone(),
-                    templates.get(
-                        imp_map.get(&inst.obj)
-                            .map_or_else(||inst.obj.imported_name(),
-                                         |s|s.as_str())
-                    ).cloned().unwrap());
-            };
-        }
+                    inst.clone(), templ);
+            }
+        };
     }
 
     let mut in_eachs = InEachSpec::default();

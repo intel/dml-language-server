@@ -804,8 +804,9 @@ pub fn rank_templates_aux<'t>(mut templates: HashMap<&'t str,
                     StatementSpecStatement::Import(imp) => {
                         debug!("considering {:?}", stmnt);
 
-                        // TODO: Look over if this is actually always safe
-                        if &imp_map[&imp.obj].as_str() == second {
+                        // The get here can fail if an import was discarded from imp_map due to being
+                        // behind an hashif whose condition was considered false
+                        if imp_map.get(&imp.obj).is_some_and(|v|&v.as_str() == second) {
                             trace!("Set to disregard invalid 'import' {:?}",
                                    imp);
                             removed_one = true;
