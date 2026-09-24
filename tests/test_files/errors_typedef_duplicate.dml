@@ -1,0 +1,20 @@
+//  © 2024 Intel Corporation
+//  SPDX-License-Identifier: Apache-2.0 and MIT
+
+// Exercises the duplicate-typedef-name diagnostic added alongside the type
+// lookup system: declaring two typedefs with the same name in the same
+// device must be reported as an error rather than silently overwriting the
+// first declaration (which would otherwise make the first typedef's
+// declaration site unreachable for goto-def/ref purposes).
+
+dml 1.4;
+
+device typedef_duplicate_test;
+
+typedef uint32 dup_t; // @related[16]of[18]="Previously defined here"
+
+// Second declaration of the same name; this should raise a
+// "Duplicate typedef name" error pointing back at the first declaration.
+typedef uint8 dup_t; // @error[15]="Duplicate typedef name; 'dup_t'"
+
+saved dup_t v;

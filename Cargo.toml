@@ -38,6 +38,11 @@ name = "fuzzing"
 path = "tests/fuzzing.rs"
 required-features = ["fuzzing"]
 
+[[test]]
+name = "parser_recovery_tests"
+path = "tests/parser_recovery_tests.rs"
+required-features = ["fuzzing"]
+
 [dependencies]
 anyhow = "1.0"
 clap = { version = "4.2", features = ["cargo", "derive"] }

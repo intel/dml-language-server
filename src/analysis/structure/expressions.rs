@@ -12,7 +12,7 @@ use crate::analysis::parsing::tree::{LeafToken, ZeroRange,
                                      ZeroSpan, TreeElement};
 use crate::analysis::FileSpec;
 use crate::analysis::structure::types;
-use crate::analysis::structure::types::DMLType;
+use crate::analysis::structure::types::UnresolvedType;
 
 use crate::analysis::{DeclarationSpan, LocalDMLError};
 use crate::analysis::templating::objects::StructureKey;
@@ -73,7 +73,7 @@ pub enum BinOp {
     Logic(LogicOp),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd)]
 pub struct BinaryExpression {
     pub span: ZeroSpan,
     pub left: Expression,
@@ -129,7 +129,7 @@ impl DeclarationSpan for BinaryExpression {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd)]
 pub struct MemberLiteral {
     pub span: ZeroSpan,
     pub left: Expression,
@@ -168,7 +168,7 @@ impl DeclarationSpan for MemberLiteral {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd)]
 pub struct TertiaryExpression {
     pub span: ZeroSpan,
     pub left: Expression,
@@ -216,7 +216,7 @@ impl TertiaryExpression {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd)]
 pub struct UnaryExpression {
     pub span: ZeroSpan,
     pub operand: Expression,
@@ -261,7 +261,7 @@ pub fn to_unary_expression<'a>(operation: &LeafToken,
     }).into()
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd)]
 pub struct SliceExpression {
     pub span: ZeroSpan,
     pub target: Expression,
@@ -293,7 +293,7 @@ impl DeclarationSpan for SliceExpression {
 }
 
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd)]
 pub struct Identifier {
     pub name: DMLString,
 }
@@ -317,7 +317,7 @@ impl DeclarationSpan for Identifier {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd)]
 pub struct FunctionCall {
     pub span: ZeroSpan,
     pub function: Expression,
@@ -346,11 +346,11 @@ impl DeclarationSpan for FunctionCall {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd)]
 pub struct CastExpression {
     pub span: ZeroSpan,
     pub from: Expression,
-    pub to: DMLType,
+    pub to: UnresolvedType,
 }
 
 impl CastExpression {
@@ -374,7 +374,7 @@ impl DeclarationSpan for CastExpression {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd)]
 pub struct IndexExpression {
     pub span: ZeroSpan,
     pub array: Expression,
@@ -402,10 +402,10 @@ impl DeclarationSpan for IndexExpression {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd)]
 pub struct NewExpression {
     pub span: ZeroSpan,
-    pub valuetype: DMLType,
+    pub valuetype: UnresolvedType,
     pub amount: Option<Expression>,
 }
 
@@ -429,7 +429,7 @@ impl DeclarationSpan for NewExpression {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd)]
 pub struct SizeOf {
     pub span: ZeroSpan,
     pub sizeof: Expression,
@@ -453,10 +453,10 @@ impl DeclarationSpan for SizeOf {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd)]
 pub struct SizeOfType {
     pub span: ZeroSpan,
-    pub typed: DMLType,
+    pub typed: UnresolvedType,
 }
 
 impl SizeOfType {
@@ -481,7 +481,7 @@ impl DeclarationSpan for SizeOfType {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd)]
 pub struct ConstantList {
     pub span: ZeroSpan,
     pub list: Vec<Expression>
@@ -507,7 +507,7 @@ impl DeclarationSpan for ConstantList {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd)]
 pub struct EachIn {
     pub span: ZeroSpan,
     pub templ: DMLString,
@@ -537,7 +537,7 @@ impl DeclarationSpan for EachIn {
 // since this is implicit from the tree structure
 pub type Expression = Box<ExpressionKind>;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd)]
 pub enum IntegerLiteral {
     Signed(Value<i64>),
     Unsigned(Value<u64>),
@@ -552,7 +552,7 @@ impl DeclarationSpan for IntegerLiteral {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd)]
 pub enum ExpressionKind {
     TertiaryExpression(TertiaryExpression),
     BinaryExpression(BinaryExpression),
@@ -677,6 +677,8 @@ fn ast_to_literal<'a>(ast: &LeafToken,
                     }))
             },
             _ => {
+                // TODO/RE-EXAMINE: Are unqualified integer literals
+                // actually always unsigned?
                 let raw_val = tok_str.replace(['_'],"");
                 ExpressionKind::IntegerLiteral(
                     IntegerLiteral::Unsigned(
@@ -810,7 +812,7 @@ impl DMLString {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub struct InitializerStruct {
     initializer_fields: Vec<(DMLString,
                              Box<SingleInitializer>)>,
@@ -850,7 +852,7 @@ impl DeclarationSpan for InitializerStruct {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub struct InitializerList {
     list: Vec<SingleInitializer>,
     span: ZeroSpan,
@@ -881,7 +883,7 @@ impl DeclarationSpan for InitializerList {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub enum SingleInitializer {
     Expression(Expression),
     List(InitializerList),
@@ -925,7 +927,7 @@ impl DeclarationSpan for SingleInitializer {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub struct InitializerTuple {
     pub list: Vec<SingleInitializer>,
     pub span: ZeroSpan,
@@ -956,7 +958,7 @@ impl DeclarationSpan for InitializerTuple {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub enum Initializer {
     Single(SingleInitializer),
     Tuple(InitializerTuple),

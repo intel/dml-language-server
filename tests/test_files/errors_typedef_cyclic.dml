@@ -1,0 +1,41 @@
+//  © 2024 Intel Corporation
+//  SPDX-License-Identifier: Apache-2.0 and MIT
+
+dml 1.4;
+
+device typedef_cycle_test;
+
+// @related[9]of[11]="Cyclic reference occurs here"
+// @related[13]of[11]="through 'foo' here"
+typedef bar foo;
+typedef foo bar; // @error[13]="Typedef 'bar' is cyclically defined"
+
+saved foo v;
+
+// --- Self-reference through a pointer breaks the cycle (no error) ---
+typedef ptr_self_t *ptr_self_t;
+
+saved ptr_self_t p;
+
+// --- Self-reference through an array does NOT break the cycle (still an error) ---
+// @related[9]of[22]="Cyclic reference occurs here"
+typedef arr_self_t arr_self_t[4]; // @error[20]="Typedef 'arr_self_t' is cyclically defined"
+
+saved arr_self_t q;
+
+// --- Three-name cycle: diagnostic path and ordering must be deterministic ---
+typedef three_b_t three_a_t; // @error[19]="Typedef 'three_a_t' is cyclically defined"
+typedef three_c_t three_b_t; // @related[19]of[27]="through 'three_b_t' here"
+typedef three_a_t three_c_t; // @related[9]of[27]="Cyclic reference occurs here" @related[19]of[27]="through 'three_c_t' here"
+
+// Vector currently has indirection semantics, like pointer.
+typedef vector_self_t vect vector_self_t;
+
+// Extern declarations suppress direct cycle diagnostics but must terminate.
+extern typedef extern_b_t extern_a_t;
+extern typedef extern_a_t extern_b_t;
+
+// An indirection before an independent direct cycle must not hide that cycle.
+typedef z_cycle_a_t *aaa_cycle_use_t;
+typedef z_cycle_b_t z_cycle_a_t; // @error[21]="Typedef 'z_cycle_a_t' is cyclically defined"
+typedef z_cycle_a_t z_cycle_b_t; // @related[9]of[40]="Cyclic reference occurs here" @related[21]of[40]="through 'z_cycle_b_t' here"
