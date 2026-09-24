@@ -4,6 +4,9 @@
 -->
 # Change Log
 
+## 0.9.21
+
+
 ## 0.9.20
 - Made GetKnownContexts custom request not wait for analysis results by default, reducing the chances of overfilling workpool capacity while analysises are running.
 - Fix issue where the server would internally format URIs incorrectly in some cases
