@@ -5,18 +5,29 @@
 
 use lsp_types::DiagnosticSeverity;
 
-use crate::analysis::{DMLError, DeclarationSpan, templating::types::DMLResolvedType};
+use crate::analysis::{DMLError, DeclarationSpan};
+use crate::analysis::templating::types::DMLResolvedType;
+
+use std::collections::HashSet;
 
 /// Structure that will contain the information available at the point of
 /// evaluation, can be extended with additional optional fields in the future
 #[derive(Debug, Clone)]
 pub struct EvaluationContext {
+    reported_errors: HashSet<DMLError>,
 }
 
 #[allow(clippy::new_without_default)]
 impl EvaluationContext {
     pub fn new() -> Self {
         EvaluationContext {
+            reported_errors: HashSet::default(),
+        }
+    }
+
+    pub fn report_if_new(&mut self, to_report: DMLError, report: &mut Vec<DMLError>) {
+        if self.reported_errors.insert(to_report.clone()) {
+            report.push(to_report);
         }
     }
 }
@@ -74,7 +85,7 @@ impl EvaluationResult {
 }
 
 pub trait Evaluatable {
-    fn evaluate(&self, context: &EvaluationContext, report: &mut Vec<DMLError>) -> EvaluationResult;
+    fn evaluate(&self, context: &mut EvaluationContext, report: &mut Vec<DMLError>) -> EvaluationResult;
 }
 
 // TODO: As we make improvements, we can add Evaluatable trait impls
@@ -83,7 +94,7 @@ pub trait Evaluatable {
 // Note: we fully qualify the types here, as we may want to implement this trait for similarly-named
 // types from different stages in the analysis
 impl Evaluatable for crate::analysis::structure::expressions::Expression {
-    fn evaluate(&self, context: &EvaluationContext, report: &mut Vec<DMLError>) -> EvaluationResult {
+    fn evaluate(&self, context: &mut EvaluationContext, report: &mut Vec<DMLError>) -> EvaluationResult {
         match self.as_ref() {
             crate::analysis::structure::expressions::ExpressionKind::TertiaryExpression(texpr) => texpr.evaluate(context, report),
             crate::analysis::structure::expressions::ExpressionKind::BinaryExpression(binexpr) => binexpr.evaluate(context, report),
@@ -125,7 +136,7 @@ fn not_operation(inner: EvaluationResult) -> EvaluationResult {
 }
 
 impl Evaluatable for crate::analysis::structure::expressions::UnaryExpression {
-    fn evaluate(&self, context: &EvaluationContext, report: &mut Vec<DMLError>) -> EvaluationResult {
+    fn evaluate(&self, context: &mut EvaluationContext, report: &mut Vec<DMLError>) -> EvaluationResult {
         let inner_evaluated = self.operand.evaluate(context, report);
         // Break out operations to subfunctions so as to not clutter this function too much
         match self.operator {
@@ -142,7 +153,7 @@ impl Evaluatable for crate::analysis::structure::expressions::UnaryExpression {
 }
 
 impl Evaluatable for crate::analysis::structure::expressions::Identifier {
-    fn evaluate(&self, _context: &EvaluationContext, _report: &mut Vec<DMLError>) -> EvaluationResult {
+    fn evaluate(&self, _context: &mut EvaluationContext, _report: &mut Vec<DMLError>) -> EvaluationResult {
         // TODO: eventually we will do symbol lookups based on the evaluation context,
         // for now we hard-code some constants which are treated especially by DMLC
         match self.name.val.as_str() {
@@ -172,7 +183,7 @@ impl Evaluatable for crate::analysis::structure::expressions::Identifier {
 }
 
 impl Evaluatable for crate::analysis::structure::expressions::BinaryExpression {
-    fn evaluate(&self, context: &EvaluationContext, report: &mut Vec<DMLError>) -> EvaluationResult {
+    fn evaluate(&self, context: &mut EvaluationContext, report: &mut Vec<DMLError>) -> EvaluationResult {
         let left_evaluated = self.left.evaluate(context, report);
         let right_evaluated = self.right.evaluate(context, report);
         match &self.operator {
@@ -234,7 +245,7 @@ fn logic_expression(left: EvaluationResult,
 }
 
 impl Evaluatable for crate::analysis::structure::expressions::TertiaryExpression {
-    fn evaluate(&self, context: &EvaluationContext, report: &mut Vec<DMLError>) -> EvaluationResult {
+    fn evaluate(&self, context: &mut EvaluationContext, report: &mut Vec<DMLError>) -> EvaluationResult {
         let left_evaluated = self.left.evaluate(context, report);
         // Patch in the constant-ness of the condition, as that will modify the constant-ness of the result
         let mut middle_evaluated = self.middle.evaluate(context, report);
@@ -256,12 +267,13 @@ impl Evaluatable for crate::analysis::structure::expressions::TertiaryExpression
                 },
             crate::analysis::structure::expressions::TertiaryOp::HashCond => {
                 if left_evaluated.constant == Some(false) {
-                    report.push(DMLError {
-                        span: *self.left.span(),
-                        severity: Some(DiagnosticSeverity::ERROR),
-                        description: "Condition in #if must be constant".to_string(),
-                        related: vec![],
-                    });
+                    context.report_if_new(
+                        DMLError {
+                            span: *self.left.span(),
+                            severity: Some(DiagnosticSeverity::ERROR),
+                            description: "Condition in #if must be constant".to_string(),
+                            related: vec![],
+                        }, report);
                 }
                 if left_evaluated.as_bool() == Some(true) {
                     middle_evaluated

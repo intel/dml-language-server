@@ -116,7 +116,8 @@ fn create_spec<'t>(loc: ZeroSpan,
                    imp_map: &HashMap<Import, CanonPath>,
                    templates: &HashMap<String, Arc<DMLTemplate>>,
                    rank: &Rank,
-                   _report: &mut Vec<DMLError>)
+                   eval_context: &mut EvaluationContext,
+                   report: &mut Vec<DMLError>)
                    -> Arc<ObjectSpec> {
     trace!("Making a spec for something at {:?}", loc);
     trace!("Guarded by existcond {:?}", cond);
@@ -143,7 +144,7 @@ fn create_spec<'t>(loc: ZeroSpan,
         }
     }
     for inst in &spec.instantiations {
-        if inst.cond.exists_no_report(&EvaluationContext::new()) {
+        if inst.cond.exists(eval_context, report) {
             instantiations.insert(
                 inst.clone(),
                 // If an instantiation has been marked as invalid, filter it out
@@ -166,7 +167,7 @@ fn create_spec<'t>(loc: ZeroSpan,
     }
     let mut imports = HashMap::default();
     for inst in &spec.imports {
-        if inst.cond.exists_no_report(&EvaluationContext::new()) {
+        if inst.cond.exists(eval_context, report) {
             if let Some(invalid_names) = invalid_isimps.get(
                 &InferiorVariant::Import(inst)) {
                 assert!(invalid_names.len() == 1);
@@ -208,7 +209,7 @@ fn create_spec<'t>(loc: ZeroSpan,
                                    Some(&obj.obj.kind),
                                    &obj.spec, &obj.cond, in_each_specs,
                                    invalid_isimps, imp_map, templates,
-                                   rank, _report));
+                                   rank, eval_context, report));
     }
     ObjectSpec {
         loc,
@@ -241,6 +242,7 @@ pub fn create_objectspec<'t>(loc: ZeroSpan,
                              imp_map: &HashMap<Import, CanonPath>,
                              templates: &HashMap<String, Arc<DMLTemplate>>,
                              rankmaker: &mut RankMaker,
+                             eval_context: &mut EvaluationContext,
                              report: &mut Vec<DMLError>) -> Arc<ObjectSpec> {
     let mut in_each_specs = HashMap::default();
     for (decl, structinfo) in &in_each_struct.in_eachs {
@@ -255,7 +257,8 @@ pub fn create_objectspec<'t>(loc: ZeroSpan,
                     decl.obj.spec.iter().map(|name|name.val.as_str())
                         .collect()),
                 structinfo,
-                invalid_isimps, imp_map, templates, rankmaker, report));
+                invalid_isimps, imp_map, templates, rankmaker,
+                eval_context, report));
     }
 
     let inferior_ranks = in_each_struct.inferior.iter().filter(
@@ -270,7 +273,7 @@ pub fn create_objectspec<'t>(loc: ZeroSpan,
     let rank = rankmaker.new_rank(rankdesc, inferior_ranks.collect());
 
     create_spec(loc, range, kind, spec, cond, &in_each_specs, invalid_isimps,
-                imp_map, templates, &rank, report)
+                imp_map, templates, &rank, eval_context, report)
 }
 
 pub fn make_device<'t>(path: &CanonPath,
@@ -279,6 +282,7 @@ pub fn make_device<'t>(path: &CanonPath,
                        mut imp_map: HashMap<Import, CanonPath>,
                        container: &'t mut StructureContainer,
                        rankmaker: &mut RankMaker,
+                       eval_context: &mut EvaluationContext,
                        report: &mut Vec<DMLError>) -> &'t DMLCompositeObject {
     debug!("Creating a device for {:?}", path);
     // create the faux spec for the device toplevel, importing the device file
@@ -321,6 +325,7 @@ pub fn make_device<'t>(path: &CanonPath,
                                       &imp_map,
                                       &tt_info.templates,
                                       rankmaker,
+                                      eval_context,
                                       report);
 
     let obj_key = make_object(
@@ -332,6 +337,7 @@ pub fn make_device<'t>(path: &CanonPath,
         &InEachSpec::default(),
         None,
         container,
+        eval_context,
         report);
     let device_obj = container.get(obj_key).unwrap();
     trace!("Device components are: {:?}", device_obj.components);
@@ -978,6 +984,7 @@ impl DMLCompositeObject {
 // implementations tracking for composite objects
 fn add_template_specs(obj_specs: &mut Vec<Arc<ObjectSpec>>,
                       source_each_stmts: &InEachSpec,
+                      eval_context: &mut EvaluationContext,
                       report: &mut Vec<DMLError>) -> Vec<ZeroSpan>{
     let mut each_stmts = source_each_stmts.clone();
     // TODO: We need to handle conditional imports and is-es here, as these are
@@ -987,19 +994,20 @@ fn add_template_specs(obj_specs: &mut Vec<Arc<ObjectSpec>>,
 
     // Queue is a pair of flattened (condition, templ) based on templates
     // instantiated by spec
-    let mut queue: Vec<(ExistCondition, Arc<DMLTemplate>)> =
-        obj_specs.iter().flat_map(
-            |s|s.instantiations.iter()
-                .filter(|(d, _)|d.cond.exists_no_report(&EvaluationContext::new()))
-                .flat_map(|(d, v)|v.iter()
-                          .map(move |i|(d.cond.clone(),
-                                        Arc::clone(i)))))
-        .collect();
-    queue.extend(
-        obj_specs.iter().flat_map(|s|s.imports.iter()
-                             .filter(|(i, _)|i.cond.exists_no_report(&EvaluationContext::new()))
-                             .map(|(d, v)|(d.cond.clone(),
-                                           Arc::clone(v)))));
+    let mut queue: Vec<(ExistCondition, Arc<DMLTemplate>)> = vec![];
+    for spec in obj_specs.iter() {
+        for (decl, templates) in &spec.instantiations {
+            if decl.cond.exists(eval_context, report) {
+                queue.extend(templates.iter().map(|template|(
+                    decl.cond.clone(), Arc::clone(template))));
+            }
+        }
+        for (decl, template) in &spec.imports {
+            if decl.cond.exists(eval_context, report) {
+                queue.push((decl.cond.clone(), Arc::clone(template)));
+            }
+        }
+    }
 
     // TODO: When conditional instantiation is available, we will need to
     // handle existence conditions here somehow. Perhaps
@@ -1010,7 +1018,7 @@ fn add_template_specs(obj_specs: &mut Vec<Arc<ObjectSpec>>,
     let mut used_ineach_spans = vec![];
 
     while let Some((cond, tpl)) = queue.pop() {
-        if !cond.exists(&EvaluationContext::new(), report) {
+        if !cond.exists(eval_context, report) {
             continue;
         }
 
@@ -1024,7 +1032,7 @@ fn add_template_specs(obj_specs: &mut Vec<Arc<ObjectSpec>>,
         {
             if let Some(templ_specs) = each_stmts.get(&tpl.name) {
                 for (needed_templates, (loc, spec)) in templ_specs {
-                    if !spec.condition.exists_no_report(&EvaluationContext::new()) {
+                    if !spec.condition.exists(eval_context, report) {
                         continue;
                     }
                     let mut can_add = true;
@@ -1177,6 +1185,7 @@ fn gather_parameters<'t>(obj_loc: &ZeroSpan,
                          index_info: &[ArrayDim],
                          auto_parameters: HashMap<String,
                                                   ObjectDecl<Parameter>>,
+                         eval_context: &mut EvaluationContext,
                          report: &mut Vec<DMLError>) -> Vec<DMLParameter> {
     let mut parameters: HashMap<&str, Vec<(ObjectDecl<Parameter>, Rank)>> =
         HashMap::default();
@@ -1207,11 +1216,11 @@ fn gather_parameters<'t>(obj_loc: &ZeroSpan,
 
     // Add code-decl parameters
     for spec in specs {
-        if !spec.condition.exists(&EvaluationContext::new(), report) {
+        if !spec.condition.exists(eval_context, report) {
             continue;
         }
         for param in &spec.params {
-            if !param.cond.exists(&EvaluationContext::new(), report) {
+            if !param.cond.exists(eval_context, report) {
                 continue;
             }
             let new_decl = (param.clone(), spec.rank.clone());
@@ -1601,6 +1610,7 @@ fn report_collision_candidates(mut candidates: Vec<CollisionCandidate>,
 
 fn collect_symbols(parameters: &[DMLParameter],
                    obj_specs: &[Arc<ObjectSpec>],
+                   eval_context: &mut EvaluationContext,
                    report: &mut Vec<DMLError>) -> CollectedSymbols
 {
     // Iterate over specs to collect object-decls for each separate kind and collect
@@ -1614,29 +1624,29 @@ fn collect_symbols(parameters: &[DMLParameter],
     let mut subobj_decls = vec![];
 
     for spec in obj_specs {
-        if !spec.condition.exists(&EvaluationContext::new(), report) {
+        if !spec.condition.exists(eval_context, report) {
             continue;
         }
 
         errors.extend(spec.errors.iter().filter(|error|
-            error.cond.guaranteed_exists(&EvaluationContext::new(), report)));
+            error.cond.guaranteed_exists(eval_context, report)));
         constant_decls.extend(spec.constants.iter().filter(|constant|
-            constant.cond.exists(&EvaluationContext::new(), report))
+            constant.cond.exists(eval_context, report))
             .map(|constant|(&spec.rank, constant)));
         saved_decls.extend(spec.saveds.iter().filter(|saved|
-            saved.cond.exists(&EvaluationContext::new(), report))
+            saved.cond.exists(eval_context, report))
             .map(|saved|(&spec.rank, saved)));
         session_decls.extend(spec.sessions.iter().filter(|session|
-            session.cond.exists(&EvaluationContext::new(), report))
+            session.cond.exists(eval_context, report))
             .map(|session|(&spec.rank, session)));
         method_decls.extend(spec.methods.iter().filter(|method|
-            method.cond.exists(&EvaluationContext::new(), report))
+            method.cond.exists(eval_context, report))
             .map(|method|(&spec.rank, method)));
         hook_decls.extend(spec.hooks.iter().filter(|hook|
-            hook.cond.exists(&EvaluationContext::new(), report))
+            hook.cond.exists(eval_context, report))
             .map(|hook|(&spec.rank, hook)));
         subobj_decls.extend(spec.subobjs.iter().filter(|(subobj, _)|
-            subobj.cond.exists(&EvaluationContext::new(), report))
+            subobj.cond.exists(eval_context, report))
             .map(|(subobj, subobj_spec)|
                  (&spec.rank, subobj, subobj_spec)));
     }
@@ -1902,6 +1912,7 @@ fn merge_composite_subobj<'c>(name: String,
                                           Arc<ObjectSpec>)>,
                               parent_key: Option<StructureKey>,
                               container: &'c mut StructureContainer,
+                              eval_context: &mut EvaluationContext,
                               report: &mut Vec<DMLError>) -> StructureKey {
     debug!("Merging a composite subobj for {}", name);
     let (auth_obj, auth_spec) = &specs.first().unwrap();
@@ -1937,7 +1948,7 @@ fn merge_composite_subobj<'c>(name: String,
     // a way that we convert constant expressions once first, and then
     // convert remaining expressions later
     for (decl, _) in &specs {
-        if !decl.cond.exists(&EvaluationContext::new(), report) {
+        if !decl.cond.exists(eval_context, report) {
             continue;
         }
         if decl.obj.dims.len() != array_info.len() {
@@ -2009,6 +2020,7 @@ fn merge_composite_subobj<'c>(name: String,
                 parent_each_stmts,
                 parent_key,
                 container,
+                eval_context,
                 report)
 }
 
@@ -2016,6 +2028,7 @@ fn merge_composite_subobjs<'c>(parent_each_stmts: &InEachSpec,
                                subobjs: ObjectMapping,
                                parent_key: Option<StructureKey>,
                                container: &'c mut StructureContainer,
+                               eval_context: &mut EvaluationContext,
                                report: &mut Vec<DMLError>)
                                -> Vec<StructureKey> {
     debug!("Merging composite subobjects");
@@ -2030,6 +2043,7 @@ fn merge_composite_subobjs<'c>(parent_each_stmts: &InEachSpec,
                                         .collect(),
                                         parent_key,
                                         container,
+                                        eval_context,
                                         report))
         } else {
             None
@@ -2494,6 +2508,7 @@ pub fn make_object(loc: ZeroSpan,
                    parent_each_stmts: &InEachSpec,
                    parent_key: Option<StructureKey>,
                    container: &mut StructureContainer,
+                   eval_context: &mut EvaluationContext,
                    report: &mut Vec<DMLError>) -> StructureKey {
     debug!("Making object {}", identity.val);
 
@@ -2503,7 +2518,8 @@ pub fn make_object(loc: ZeroSpan,
     let direct_decls: Vec<Arc<ObjectSpec>> = obj_specs.clone();
 
     let mut each_stmts = parent_each_stmts.clone();
-    let used_ineach_locs = add_template_specs(&mut obj_specs, &each_stmts, report);
+    let used_ineach_locs = add_template_specs(
+        &mut obj_specs, &each_stmts, eval_context, report);
     add_template_ineachs(&obj_specs, &mut each_stmts);
 
     trace!("Has specs at {:?}", obj_specs.iter().map(|rc|rc.loc)
@@ -2516,14 +2532,15 @@ pub fn make_object(loc: ZeroSpan,
     let auto_params = make_auto_params(identity, &loc, kind, &array_info,
                                        parent_key);
     let parameters = gather_parameters(&loc, &obj_specs, &array_info,
-                                       auto_params, report);
+                                       auto_params, eval_context, report);
 
     trace!("Parameters are: {:?}", parameters);
 
     let (symbols, constants,
          saveds, sessions,
          methods, hooks,
-         subobjs) = collect_symbols(&parameters, &obj_specs, report);
+         subobjs) = collect_symbols(&parameters, &obj_specs,
+                                    eval_context, report);
     trace!("All local symbols are: {:?}",
            symbols.keys().map(|k|k.as_str()).collect::<Vec<&str>>());
 
@@ -2534,7 +2551,8 @@ pub fn make_object(loc: ZeroSpan,
 
     let subobj_keys =
         merge_composite_subobjs(&each_stmts, subobjs,
-                                Some(new_obj_key), container, report);
+                                Some(new_obj_key), container,
+                                eval_context, report);
 
     {
         let new_obj = container.get_mut(new_obj_key).unwrap();
