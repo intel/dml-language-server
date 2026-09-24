@@ -40,26 +40,30 @@ pub enum ExistCondition {
 }
 
 impl ExistCondition {
-    pub fn exists_no_report(&self, context: &EvaluationContext) -> bool {
+    pub fn exists_no_report(&self, context: &mut EvaluationContext) -> bool {
         self.exists(context, &mut vec![])
     }
 
-    pub fn exists(&self, context: &EvaluationContext, report: &mut Vec<DMLError>) -> bool {
+    pub fn exists(&self, context: &mut EvaluationContext, report: &mut Vec<DMLError>) -> bool {
         match self {
             ExistCondition::Always => true,
             ExistCondition::Conditional(conds) => {
                 for (tbranch, cond) in conds.as_ref() {
                     let evaluated = cond.evaluate(context, report);
+                    // TODO/NOTE: For now this will only report for provably non-constant
+                    // expressions, which there are none. As evaluation improves we can
+                    // eventually flip this to report for non-provably constant expressions
                     if evaluated.constant == Some(false) {
                         // TODO: This can be improved to find the range of the nearest
                         // sub-expression that is non-constant without blaming the whole expression
                         // (probably as a related span)
-                        report.push(DMLError {
-                            span: *cond.span(),
-                            description: "Expression in #if construct must be constant".to_string(),
-                            related: vec![],
-                            severity: Some(crate::lsp_data::DiagnosticSeverity::ERROR),
-                        });
+                        context.report_if_new(
+                            DMLError {
+                                span: *cond.span(),
+                                description: "Expression in #if construct must be constant".to_string(),
+                                related: vec![],
+                                severity: Some(crate::lsp_data::DiagnosticSeverity::ERROR),
+                            }, report);
                     }
                     // TODO: check type and value validness
                     // NOTE: this concludes that non-evaluatable conditions are treated
@@ -73,7 +77,7 @@ impl ExistCondition {
             }
         }
     }
-    pub fn guaranteed_exists(&self, context: &EvaluationContext, report: &mut Vec<DMLError>) -> bool {
+    pub fn guaranteed_exists(&self, context: &mut EvaluationContext, report: &mut Vec<DMLError>) -> bool {
         match self {
             ExistCondition::Always => true,
             ExistCondition::Conditional(conds) => {

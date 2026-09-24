@@ -1818,14 +1818,16 @@ impl IsolatedAnalysis {
         Ok(res)
     }
 
-    fn get_active_imports(&self) -> impl Iterator<Item = &ObjectDecl<Import>> {
+    fn get_active_imports(&self) -> Vec<&ObjectDecl<Import>> {
+        let mut eval_context = EvaluationContext::new();
         self.toplevel.spec.imports.iter()
         // We intentionally discard errors here, they will have been reported earlier
-        .filter(|imp|imp.cond.exists(&EvaluationContext::new(), &mut vec![]))
+        .filter(|imp|imp.cond.exists_no_report(&mut eval_context))
+        .collect()
     }
 
     pub fn get_imports(&self) -> impl Iterator<Item = &ObjectDecl<Import>> {
-        self.get_active_imports()
+        self.get_active_imports().into_iter()
     }
 
     pub fn get_import_names(&self) -> Vec<PathBuf> {
@@ -2362,16 +2364,18 @@ impl DeviceAnalysis {
                                      &str, &ObjectDecl<Template>>,
                              files: &HashMap<&str, &TopLevel>,
                              imp_map: &HashMap<Import, CanonPath>,
+                             eval_context: &mut EvaluationContext,
                              errors: &mut Vec<DMLError>)
                              -> TemplateTraitInfo {
         info!("Rank templates");
         let (templates, order, invalid_isimps, rank_struct)
-            = rank_templates(unique_templates, files, imp_map, errors);
+            = rank_templates(unique_templates, files, imp_map,
+                             eval_context, errors);
         info!("Templates+traits");
         create_templates_traits(
             start_of_file,
             rank_maker, templates, order,
-            invalid_isimps, imp_map, rank_struct, errors)
+            invalid_isimps, imp_map, rank_struct, eval_context, errors)
     }
 
     fn match_references(&mut self,
@@ -2504,11 +2508,13 @@ impl DeviceAnalysis {
         }
         status.check_alive()?;
         let mut rank_maker = RankMaker::new();
+        let mut eval_context = EvaluationContext::new();
         let tt_info = Self::make_templates_traits(&root.toplevel.start_of_file,
                                                   &mut rank_maker,
                                                   &unique_templates,
                                                   &files,
                                                   &imp_map,
+                              &mut eval_context,
                                                   &mut errors);
         status.check_alive()?;
         // TODO: catch typedef/traitname overlaps
@@ -2518,7 +2524,8 @@ impl DeviceAnalysis {
         info!("Make device");
         let device_key = make_device(&root.path, &root.toplevel,
                                      &tt_info, imp_map, &mut container,
-                                     &mut rank_maker, &mut errors).key;
+                                     &mut rank_maker, &mut eval_context,
+                                     &mut errors).key;
         status.check_alive()?;
         // maps template declaration loc to objects
         let template_object_implementation_map =
