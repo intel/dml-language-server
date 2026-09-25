@@ -996,16 +996,15 @@ fn add_template_specs(obj_specs: &mut Vec<Arc<ObjectSpec>>,
     // instantiated by spec
     let mut queue: Vec<(ExistCondition, Arc<DMLTemplate>)> = vec![];
     for spec in obj_specs.iter() {
-        for (decl, templates) in &spec.instantiations {
-            if decl.cond.exists(eval_context, report) {
-                queue.extend(templates.iter().map(|template|(
-                    decl.cond.clone(), Arc::clone(template))));
-            }
+        if !spec.condition.exists(eval_context, report) {
+            continue;
         }
-        for (decl, template) in &spec.imports {
-            if decl.cond.exists(eval_context, report) {
-                queue.push((decl.cond.clone(), Arc::clone(template)));
-            }
+        for (decl, templates) in &spec.instantiations {
+            queue.extend(templates.iter().map(|template|(
+                        decl.cond.clone(), Arc::clone(template)))); 
+        }
+        for (decl, template) in &spec.imports { 
+            queue.push((decl.cond.clone(), Arc::clone(template)));    
         }
     }
 
