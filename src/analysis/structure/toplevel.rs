@@ -40,6 +40,23 @@ pub enum ExistCondition {
 }
 
 impl ExistCondition {
+    pub fn and(&self, other: &ExistCondition) -> ExistCondition {
+        match (self, other) {
+            (ExistCondition::Always, condition) |
+            (condition, ExistCondition::Always) => condition.clone(),
+            (ExistCondition::Conditional(left),
+             ExistCondition::Conditional(right)) => {
+                let mut conditions = left.as_ref().clone();
+                for condition in right.iter() {
+                    if !conditions.contains(condition) {
+                        conditions.push(condition.clone());
+                    }
+                }
+                ExistCondition::Conditional(Arc::new(conditions))
+            },
+        }
+    }
+
     pub fn exists_no_report(&self, context: &mut EvaluationContext) -> bool {
         self.exists(context, &mut vec![])
     }
@@ -127,16 +144,9 @@ impl ExistCondition {
              ExistCondition::Conditional(othervec)) => {
                 // Currently we cannot check if a condition is equivalent with another,
                 // so we will only check if they are literally the same condition expression
-                for ((inverted1, cond1),
-                     (inverted2, cond2)) in selfvec.iter().zip(othervec.iter()) {
-                    if cond1 != cond2 {
-                        return false;
-                    }
-                    if inverted1 != inverted2 {
-                        return true;
-                    }
-                }
-                false
+                selfvec.iter().any(|(branch1, cond1)|
+                    othervec.iter().any(|(branch2, cond2)|
+                        cond1 == cond2 && branch1 != branch2))
             },
             _ => false,
         }
