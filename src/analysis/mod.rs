@@ -29,6 +29,7 @@ use rayon::prelude::*;
 use crate::actions::{SourcedDMLError, DeviceAnalysisJobOptions};
 use crate::actions::analysis_storage::{TimestampedStorage};
 use crate::actions::semantic_lookup::{DLSLimitation, isolated_template_limitation};
+use crate::analysis::templating::evaluation::{EvaluationContext};
 use crate::analysis::symbols::{DMLSymbolKind, SimpleSymbol, StructureSymbol, SymbolContainer, SymbolMaker, SymbolSource};
 pub use crate::analysis::symbols::SymbolRef;
 use crate::analysis::reference::{GlobalReference, NodeRef, CodeReference, Reference, ReferenceKind, ReferenceVariant, VariableReference};
@@ -1817,12 +1818,20 @@ impl IsolatedAnalysis {
         Ok(res)
     }
 
-    pub fn get_imports(&self) -> &Vec<ObjectDecl<Import>> {
-        &self.toplevel.spec.imports
+    fn get_active_imports(&self) -> Vec<&ObjectDecl<Import>> {
+        let mut eval_context = EvaluationContext::new();
+        self.toplevel.spec.imports.iter()
+        // We intentionally discard errors here, they will have been reported earlier
+        .filter(|imp|imp.cond.exists_no_report(&mut eval_context))
+        .collect()
+    }
+
+    pub fn get_imports(&self) -> impl Iterator<Item = &ObjectDecl<Import>> {
+        self.get_active_imports().into_iter()
     }
 
     pub fn get_import_names(&self) -> Vec<PathBuf> {
-        self.get_imports().iter().map(
+        self.get_imports().map(
             |imp|deconstruct_import(imp)).collect()
     }
 
@@ -1833,9 +1842,8 @@ impl IsolatedAnalysis {
     {
         let mut found = HashSet::default();
         let mut missing = HashSet::default();
-        let import_paths = self.get_imports().iter()
-            .map(|i|(deconstruct_import(i),
-                     i.clone()));
+        let import_paths = self.get_imports()
+            .map(|i|(deconstruct_import(i), i.clone()));
         // Patch in implicit dependencies here. These won't affect template
         // or file ordering. But we DO want to make sure they are imported
         let import_paths = import_paths.chain(
@@ -2356,16 +2364,18 @@ impl DeviceAnalysis {
                                      &str, &ObjectDecl<Template>>,
                              files: &HashMap<&str, &TopLevel>,
                              imp_map: &HashMap<Import, CanonPath>,
+                             eval_context: &mut EvaluationContext,
                              errors: &mut Vec<DMLError>)
                              -> TemplateTraitInfo {
         info!("Rank templates");
         let (templates, order, invalid_isimps, rank_struct)
-            = rank_templates(unique_templates, files, imp_map, errors);
+            = rank_templates(unique_templates, files, imp_map,
+                             eval_context, errors);
         info!("Templates+traits");
         create_templates_traits(
             start_of_file,
             rank_maker, templates, order,
-            invalid_isimps, imp_map, rank_struct, errors)
+            invalid_isimps, imp_map, rank_struct, eval_context, errors)
     }
 
     fn match_references(&mut self,
@@ -2498,11 +2508,13 @@ impl DeviceAnalysis {
         }
         status.check_alive()?;
         let mut rank_maker = RankMaker::new();
+        let mut eval_context = EvaluationContext::new();
         let tt_info = Self::make_templates_traits(&root.toplevel.start_of_file,
                                                   &mut rank_maker,
                                                   &unique_templates,
                                                   &files,
                                                   &imp_map,
+                              &mut eval_context,
                                                   &mut errors);
         status.check_alive()?;
         // TODO: catch typedef/traitname overlaps
@@ -2512,7 +2524,8 @@ impl DeviceAnalysis {
         info!("Make device");
         let device_key = make_device(&root.path, &root.toplevel,
                                      &tt_info, imp_map, &mut container,
-                                     &mut rank_maker, &mut errors).key;
+                                     &mut rank_maker, &mut eval_context,
+                                     &mut errors).key;
         status.check_alive()?;
         // maps template declaration loc to objects
         let template_object_implementation_map =

@@ -5,7 +5,11 @@
 # Change Log
 
 ## 0.9.21
-
+- The DLS will now properly not report conflicts between statements in a `#if` and its corresponding `#else` branch
+- The DLS will now consider all `#if` branches on conditions directly based on `dml_1_2` and `dml_1_4` dead or alive appropriately
+- Made error reporting for name collisions more stable
+- Name collisions will now report all combinations of conflicts
+- The DLS will now correctly report `param` declarations directly below a `#if` or `#else` block
 
 ## 0.9.20
 - Made GetKnownContexts custom request not wait for analysis results by default, reducing the chances of overfilling workpool capacity while analysises are running.
@@ -20,7 +24,7 @@
 - Fixed a bug that caused intermittent failures around instantiated templates
 - Added the ability to goto-definition on imports to find the file that was imported
 - Allowed empty `-> ()` type specifier for method returns
-- Replace provisional `explicit\_object\_decls` with `explicit\_object\_extensions`
+- Replace provisional `explicit_object_decls` with `explicit_object_extensions`
 
 ## 0.9.18
 - Fixed a rare case where the DLS would crash when reporting device contexts
@@ -31,12 +35,12 @@
 - The DLS will now report when an ambiguous default call is made
 - Improvements and clarifications to connections between symbols and references,
   for details, see [USAGE.md](USAGE.md).
--- Method declared in unrelated templates in an allowed way will now have their
+  - Method declared in unrelated templates in an allowed way will now have their
    references correctly resolved.
--- Goto-reference on default calls will now go to the methods that may be called.
--- Goto-implementations on templates will now go to all places where they are
+  - Goto-reference on default calls will now go to the methods that may be called.
+  - Goto-implementations on templates will now go to all places where they are
    instantiated.
--- Goto-implementations on objects will now go to all the 'in each' declarations
+  - Goto-implementations on objects will now go to all the 'in each' declarations
    which apply to that object.
 - Added parser support for provisional 'explicit\_method\_decls', note that it has no semantic effect.
 - The DLS will now correctly report missing template names in 'in each' constructs

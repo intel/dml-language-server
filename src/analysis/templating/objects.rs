@@ -1,9 +1,11 @@
 //  © 2024 Intel Corporation
 //  SPDX-License-Identifier: Apache-2.0 and MIT
 use std::collections::{HashMap, HashSet};
+use std::cmp::{Ordering, Reverse};
 use std::iter;
 use std::sync::Arc;
 
+use crate::analysis::templating::evaluation::EvaluationContext;
 use crate::logging::{debug, trace, error};
 use lsp_types::DiagnosticSeverity;
 use slotmap::{DefaultKey, Key, SlotMap};
@@ -114,7 +116,8 @@ fn create_spec<'t>(loc: ZeroSpan,
                    imp_map: &HashMap<Import, CanonPath>,
                    templates: &HashMap<String, Arc<DMLTemplate>>,
                    rank: &Rank,
-                   _report: &mut Vec<DMLError>)
+                   eval_context: &mut EvaluationContext,
+                   report: &mut Vec<DMLError>)
                    -> Arc<ObjectSpec> {
     trace!("Making a spec for something at {:?}", loc);
     trace!("Guarded by existcond {:?}", cond);
@@ -141,36 +144,42 @@ fn create_spec<'t>(loc: ZeroSpan,
         }
     }
     for inst in &spec.instantiations {
-        instantiations.insert(
-            inst.clone(),
-            // If an instantiation has been marked as invalid, filter it out
-            // from tracked instantiations
-            if let Some(invalid_names) = invalid_isimps.get(
-                &InferiorVariant::Is(inst)) {
-                inst.obj.names.iter().filter_map(
-                    |name| if !invalid_names.contains(&name.val.as_str()) {
-                        // TODO: consider warning for double instantiations here
-                        Some(Arc::clone(
-                            templates.get(name.val.as_str()).unwrap()))
-                    } else {
-                        None
-                    }).collect()
-            } else {
-                inst.obj.names.iter().filter_map(
-                    |name|templates.get(name.val.as_str())).cloned().collect()
-            });
+        if inst.cond.exists(eval_context, report) {
+            instantiations.insert(
+                inst.clone(),
+                // If an instantiation has been marked as invalid, filter it out
+                // from tracked instantiations
+                if let Some(invalid_names) = invalid_isimps.get(
+                    &InferiorVariant::Is(inst)) {
+                    inst.obj.names.iter().filter_map(
+                        |name| if !invalid_names.contains(&name.val.as_str()) {
+                            // TODO: consider warning for double instantiations here
+                            Some(Arc::clone(
+                                templates.get(name.val.as_str()).unwrap()))
+                        } else {
+                            None
+                        }).collect()
+                } else {
+                    inst.obj.names.iter().filter_map(
+                        |name|templates.get(name.val.as_str())).cloned().collect()
+                });
+        }
     }
     let mut imports = HashMap::default();
     for inst in &spec.imports {
-        if let Some(invalid_names) = invalid_isimps.get(&InferiorVariant::Import(inst)) {
-            assert!(invalid_names.len() == 1);
-        } else {
-            imports.insert(
-                inst.clone(),
-                templates.get(
-                    imp_map.get(&inst.obj).map_or_else(||inst.obj.imported_name(),
-                                                       |s|s.as_str())
-                ).cloned().unwrap());
+        if inst.cond.exists(eval_context, report) {
+            if let Some(invalid_names) = invalid_isimps.get(
+                &InferiorVariant::Import(inst)) {
+                assert!(invalid_names.len() == 1);
+            } else if let Some(templ) = templates.get(imp_map
+                                                      .get(&inst.obj)
+                                                      .map_or_else(
+                                                          ||inst.obj.imported_name(),
+                                                          |s|s.as_str())
+            ).cloned() {
+                imports.insert(
+                    inst.clone(), templ);
+            }
         };
     }
 
@@ -200,7 +209,7 @@ fn create_spec<'t>(loc: ZeroSpan,
                                    Some(&obj.obj.kind),
                                    &obj.spec, &obj.cond, in_each_specs,
                                    invalid_isimps, imp_map, templates,
-                                   rank, _report));
+                                   rank, eval_context, report));
     }
     ObjectSpec {
         loc,
@@ -233,6 +242,7 @@ pub fn create_objectspec<'t>(loc: ZeroSpan,
                              imp_map: &HashMap<Import, CanonPath>,
                              templates: &HashMap<String, Arc<DMLTemplate>>,
                              rankmaker: &mut RankMaker,
+                             eval_context: &mut EvaluationContext,
                              report: &mut Vec<DMLError>) -> Arc<ObjectSpec> {
     let mut in_each_specs = HashMap::default();
     for (decl, structinfo) in &in_each_struct.in_eachs {
@@ -247,7 +257,8 @@ pub fn create_objectspec<'t>(loc: ZeroSpan,
                     decl.obj.spec.iter().map(|name|name.val.as_str())
                         .collect()),
                 structinfo,
-                invalid_isimps, imp_map, templates, rankmaker, report));
+                invalid_isimps, imp_map, templates, rankmaker,
+                eval_context, report));
     }
 
     let inferior_ranks = in_each_struct.inferior.iter().filter(
@@ -262,7 +273,7 @@ pub fn create_objectspec<'t>(loc: ZeroSpan,
     let rank = rankmaker.new_rank(rankdesc, inferior_ranks.collect());
 
     create_spec(loc, range, kind, spec, cond, &in_each_specs, invalid_isimps,
-                imp_map, templates, &rank, report)
+                imp_map, templates, &rank, eval_context, report)
 }
 
 pub fn make_device<'t>(path: &CanonPath,
@@ -271,6 +282,7 @@ pub fn make_device<'t>(path: &CanonPath,
                        mut imp_map: HashMap<Import, CanonPath>,
                        container: &'t mut StructureContainer,
                        rankmaker: &mut RankMaker,
+                       eval_context: &mut EvaluationContext,
                        report: &mut Vec<DMLError>) -> &'t DMLCompositeObject {
     debug!("Creating a device for {:?}", path);
     // create the faux spec for the device toplevel, importing the device file
@@ -313,6 +325,7 @@ pub fn make_device<'t>(path: &CanonPath,
                                       &imp_map,
                                       &tt_info.templates,
                                       rankmaker,
+                                      eval_context,
                                       report);
 
     let obj_key = make_object(
@@ -324,6 +337,7 @@ pub fn make_device<'t>(path: &CanonPath,
         &InEachSpec::default(),
         None,
         container,
+        eval_context,
         report);
     let device_obj = container.get(obj_key).unwrap();
     trace!("Device components are: {:?}", device_obj.components);
@@ -770,14 +784,18 @@ impl <T: std::fmt::Debug + Clone + PartialEq> DMLAmbiguousDef<T> {
         }
     }
 
-    pub fn get_likely_definition(&self) -> &T {
+    pub fn get_likely_definition_info(&self) -> &(ExistCondition, T) {
         if let Some(def) = self.used_definitions.first() {
-            &def.1
+            def
         } else if let Some(def) = self.definitions.first() {
-            &def.1
+            def
         } else {
-            &self.declarations.first().unwrap().1
+            self.declarations.first().unwrap()
         }
+    }
+
+    pub fn get_likely_definition(&self) -> &T {
+        &self.get_likely_definition_info().1
     }
 
     pub fn get_last_declaration(&self) -> &T {
@@ -806,6 +824,13 @@ impl <T: std::fmt::Debug + Clone + PartialEq> DMLAmbiguousDef<T> {
     }
     pub fn is_unambiguous(&self) -> bool {
         self.declarations.len() == 1 && self.used_definitions.len() == 1
+    }
+    pub fn get_all_definitions(&self) -> Vec<(&ExistCondition, &T)> {
+        self.used_definitions.iter()
+            .chain(self.definitions.iter())
+            .chain(self.declarations.iter())
+            .map(|(cond, def)| (cond, def))
+            .collect()
     }
 }
 
@@ -958,7 +983,9 @@ impl DMLCompositeObject {
 // Returns all spans of final actually used ineachspecs, needed for
 // implementations tracking for composite objects
 fn add_template_specs(obj_specs: &mut Vec<Arc<ObjectSpec>>,
-                      source_each_stmts: &InEachSpec) -> Vec<ZeroSpan>{
+                      source_each_stmts: &InEachSpec,
+                      eval_context: &mut EvaluationContext,
+                      report: &mut Vec<DMLError>) -> Vec<ZeroSpan>{
     let mut each_stmts = source_each_stmts.clone();
     // TODO: We need to handle conditional imports and is-es here, as these are
     // allowed in _some_ cases. For now, we merely pretend the conditions do not
@@ -967,17 +994,19 @@ fn add_template_specs(obj_specs: &mut Vec<Arc<ObjectSpec>>,
 
     // Queue is a pair of flattened (condition, templ) based on templates
     // instantiated by spec
-    let mut queue: Vec<(ExistCondition, Arc<DMLTemplate>)> =
-        obj_specs.iter().flat_map(
-            |s|s.instantiations.iter()
-                .flat_map(|(d, v)|v.iter()
-                          .map(move |i|(d.cond.clone(),
-                                        Arc::clone(i)))))
-        .collect();
-    queue.extend(
-        obj_specs.iter().flat_map(|s|s.imports.iter()
-                             .map(|(d, v)|(d.cond.clone(),
-                                           Arc::clone(v)))));
+    let mut queue: Vec<(ExistCondition, Arc<DMLTemplate>)> = vec![];
+    for spec in obj_specs.iter() {
+        if !spec.condition.exists(eval_context, report) {
+            continue;
+        }
+        for (decl, templates) in &spec.instantiations {
+            queue.extend(templates.iter().map(|template|(
+                        decl.cond.clone(), Arc::clone(template)))); 
+        }
+        for (decl, template) in &spec.imports { 
+            queue.push((decl.cond.clone(), Arc::clone(template)));    
+        }
+    }
 
     // TODO: When conditional instantiation is available, we will need to
     // handle existence conditions here somehow. Perhaps
@@ -987,9 +1016,11 @@ fn add_template_specs(obj_specs: &mut Vec<Arc<ObjectSpec>>,
 
     let mut used_ineach_spans = vec![];
 
-    while let Some((_, tpl)) = queue.pop() {
-        // TODO: here we would have to consider cond when conditional
-        // is/imports exist
+    while let Some((cond, tpl)) = queue.pop() {
+        if !cond.exists(eval_context, report) {
+            continue;
+        }
+
         if used_templates.contains(&tpl.name) {
             continue;
         }
@@ -1000,6 +1031,9 @@ fn add_template_specs(obj_specs: &mut Vec<Arc<ObjectSpec>>,
         {
             if let Some(templ_specs) = each_stmts.get(&tpl.name) {
                 for (needed_templates, (loc, spec)) in templ_specs {
+                    if !spec.condition.exists(eval_context, report) {
+                        continue;
+                    }
                     let mut can_add = true;
                     for templ in needed_templates {
                         if !used_templates.contains(templ.as_str()) {
@@ -1059,6 +1093,7 @@ fn add_template_ineachs(obj_specs: &[Arc<ObjectSpec>],
 
 fn add_templates(obj: &mut DMLCompositeObject,
                  obj_specs: &[Arc<ObjectSpec>]) {
+    // TODO/NOTE: Consider how to handle conditional-is
     for spec in obj_specs {
         for templs in spec.instantiations.values() {
             obj.templates.extend(templs.clone().into_iter()
@@ -1086,9 +1121,9 @@ fn add_hooks(obj: &mut DMLCompositeObject,
 }
 
 fn add_constants(obj: &mut DMLCompositeObject,
-                 constants: Vec<Constant>) {
+                 constants: Vec<ObjectDecl<Constant>>) {
     for constant in constants {
-        obj.add_shallow_component(DMLShallowObjectVariant::Constant(constant));
+        obj.add_shallow_component(DMLShallowObjectVariant::Constant(constant.obj));
     }
 }
 
@@ -1099,9 +1134,9 @@ enum VariableKind {
 
 fn add_sessions(obj: &mut DMLCompositeObject,
                 sessions: SessionMapping) {
-    for (_, (used, mut decls)) in sessions {
+    for (_, (used, mut cond_decls)) in sessions {
         if used {
-            let (_, (s, i)) = decls.swap_remove(0);
+           let (_, _, (s, i)) = cond_decls.swap_remove(0);
             handle_variable(obj, s, i, VariableKind::Session)
         }
     }
@@ -1109,9 +1144,9 @@ fn add_sessions(obj: &mut DMLCompositeObject,
 
 fn add_saveds(obj: &mut DMLCompositeObject,
               saveds: SavedMapping) {
-    for (_, (used, mut decls)) in saveds {
+    for (_, (used, mut cond_decls)) in saveds {
         if used {
-            let (_, (s, i)) = decls.swap_remove(0);
+            let (_, _, (s, i)) = cond_decls.swap_remove(0);
             handle_variable(obj, s, i, VariableKind::Saved)
         }
     }
@@ -1149,6 +1184,7 @@ fn gather_parameters<'t>(obj_loc: &ZeroSpan,
                          index_info: &[ArrayDim],
                          auto_parameters: HashMap<String,
                                                   ObjectDecl<Parameter>>,
+                         eval_context: &mut EvaluationContext,
                          report: &mut Vec<DMLError>) -> Vec<DMLParameter> {
     let mut parameters: HashMap<&str, Vec<(ObjectDecl<Parameter>, Rank)>> =
         HashMap::default();
@@ -1179,7 +1215,13 @@ fn gather_parameters<'t>(obj_loc: &ZeroSpan,
 
     // Add code-decl parameters
     for spec in specs {
+        if !spec.condition.exists(eval_context, report) {
+            continue;
+        }
         for param in &spec.params {
+            if !param.cond.exists(eval_context, report) {
+                continue;
+            }
             let new_decl = (param.clone(), spec.rank.clone());
             if let Some(e) = parameters.get_mut(
                 param.obj.object.name.val.as_str()) {
@@ -1312,24 +1354,33 @@ fn resolve_parameter(obj_loc: &ZeroSpan,
         .collect();
     trace!("Top defs for {} are {:?}", name, overriding_defs);
     if overriding_defs.len() > 1 {
-        debug!("Conflicting assignment for {:?}, {:?}",
-               name, overriding_defs);
         // in dmlc, there is a preference for blaming default declarations.
         // we will merely blame all of them, starting at the preferred def
         // TODO: This can be improved for specific cases where a name
         // collision error is more appropriate
-        let mut rest = overriding_defs.iter();
-        let (first, _) = rest.next().unwrap();
-        report.push(DMLError {
-            span: *first.obj.span(),
-            description: format!(
-                "Conflicting assignments to parameter '{}'", name),
-            related: rest.map(
-                |(def2, _)| (*def2.obj.span(),
+        let mut rest: Vec<_> = overriding_defs.clone();
+
+        // Sort declarations by span for consistent reporting
+        rest.sort_by_key(|o|o.0.loc_span());
+
+        // TODO: This could be improved to report conflicts between rest
+        let (first, rest) = rest.split_first().unwrap();
+        let conflicts: Vec<_> = rest.iter().filter(
+            |(o, _)|!first.0.cond.guaranteed_excluded_from(&o.cond)
+        ).collect();
+
+        if !conflicts.is_empty() {
+           report.push(DMLError {
+                span: *first.0.obj.span(),
+                description: format!(
+                    "Conflicting assignments to parameter '{}'", name),
+                related: conflicts.into_iter().map(
+                    |(def2, _)| (*def2.obj.span(),
                              "Conflicting assignment here"
                              .to_string())).collect(),
-            severity: Some(DiagnosticSeverity::ERROR),
-        });
+                severity: Some(DiagnosticSeverity::ERROR),
+            });
+        }
     }
 
     let bad_overrides: Vec<&(ObjectDecl<Parameter>, Rank)>
@@ -1419,9 +1470,13 @@ fn handle_variable(obj: &mut DMLCompositeObject,
         });
 }
 
+
+// NOTE: 'used' here marks if this type of declaration is the one used for the name
+// of this symbol. Which declaration is used is inferred by the ranking and existconditions
+// of the declarations
 // Maps name to (used, definitions), where definitions is a vector of
-//    (Rank, Method) tuples
-type MethodMapping = HashMap<String, (bool, Vec<(Rank, MethodDecl)>)>;
+//    (Rank, Condition, Method) tuples
+type MethodMapping = HashMap<String, (bool, Vec<(Rank, ExistCondition, MethodDecl)>)>;
 // Maps name to (used, definitions), where definitions is a vector of
 //    (Rank, Decl, Spec) tuples
 type ObjectMapping = HashMap<String, (bool, Vec<(Rank,
@@ -1431,24 +1486,178 @@ type ObjectMapping = HashMap<String, (bool, Vec<(Rank,
 type SavedMapping = HashMap<String,
                             (bool,
                              Vec<(Rank,
+                                  ExistCondition,
                                   (VariableDecl, Option<Initializer>))>)>;
 type SessionMapping = HashMap<String,
                               (bool,
                                Vec<(Rank,
+                                    ExistCondition,
                                     (VariableDecl, Option<Initializer>))>)>;
 type HookMapping = HashMap<String, (bool, Vec<(Rank, ObjectDecl<Hook>)>)>;
 
 // Figure out symbol mappings for these specs
 // reports unguarded error
 // the hashmap is the symbol mapping
-type CollectedSymbols = (HashMap<String, (ZeroSpan, Vec<ZeroSpan>)>,
-                         Vec<Constant>,
+type CollectedSymbols = (HashMap<String, (ExistCondition, ZeroSpan, Vec<ZeroSpan>)>,
+                         Vec<ObjectDecl<Constant>>,
                          SavedMapping, SessionMapping,
                          MethodMapping, HookMapping, ObjectMapping);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum CollisionKind {
+    Constant,
+    Parameter,
+    Subobject,
+    Method,
+    Saved,
+    Session,
+    Hook,
+}
+
+#[derive(Debug, Clone)]
+struct CollisionCandidate {
+    name: String,
+    condition: ExistCondition,
+    span: ZeroSpan,
+    kind: CollisionKind,
+    logical_group: Option<usize>,
+}
+
+impl CollisionCandidate {
+    fn overlaps(&self, other: &Self) -> bool {
+        let same_logical_symbol = self.kind == other.kind && matches!(
+            (self.logical_group, other.logical_group),
+            (Some(first), Some(second)) if first == second);
+        !same_logical_symbol
+        && !self.condition.guaranteed_excluded_from(&other.condition)
+    }
+}
+
+fn compare_collision_candidates(first: &CollisionCandidate,
+                                second: &CollisionCandidate) -> Ordering {
+    first.name.cmp(&second.name)
+        .then_with(||first.span.path().cmp(&second.span.path()))
+        .then_with(||first.span.range.cmp(&second.span.range))
+        .then_with(||first.kind.cmp(&second.kind))
+        .then_with(||first.condition.cmp(&second.condition))
+        .then_with(||first.logical_group.cmp(&second.logical_group))
+}
+
+fn report_collision_candidates(mut candidates: Vec<CollisionCandidate>,
+                               report: &mut Vec<DMLError>) {
+    candidates.sort_by(compare_collision_candidates);
+    candidates.dedup_by(|first, second|
+        first.name == second.name &&
+        first.condition == second.condition &&
+        first.span.path() == second.span.path() &&
+        first.span.range == second.span.range &&
+        first.kind == second.kind &&
+        first.logical_group == second.logical_group);
+
+    let mut start = 0;
+    while start < candidates.len() {
+        let end = candidates[start..].iter().position(
+            |candidate|candidate.name != candidates[start].name)
+            .map_or(candidates.len(), |offset|start + offset);
+        let group = &candidates[start..end];
+        let mut neighbors = vec![vec![]; group.len()];
+        for first in 0..group.len() {
+            for second in first + 1..group.len() {
+                if group[first].overlaps(&group[second]) {
+                    neighbors[first].push(second);
+                    neighbors[second].push(first);
+                }
+            }
+        }
+
+        // Prefer an anchor that covers the most still-unrepresented
+        // declarations, so A-B-C reports at B.
+        let mut represented = vec![false; group.len()];
+        while (0..group.len()).any(|index|
+            neighbors[index].iter().any(|neighbor|!represented[*neighbor])) {
+            // An already represented declaration may need to become an anchor
+            // again. For A-B-C-D, after C reports B and D, B must report A;
+            // anchoring that second diagnostic at A would incorrectly imply
+            // that A overlaps the already reported C or D.
+            let anchor = (0..group.len()).filter(|index|
+                neighbors[*index].iter().any(|neighbor|!represented[*neighbor]))
+                .max_by_key(|index|(
+                    neighbors[*index].iter().filter(
+                        |neighbor|!represented[**neighbor]).count(),
+                    Reverse(*index)));
+            let Some(anchor) = anchor else { break; };
+
+            let related: Vec<usize> = neighbors[anchor].iter().copied().filter(
+                |neighbor|!represented[*neighbor]).collect();
+            represented[anchor] = true;
+            for neighbor in &related {
+                represented[*neighbor] = true;
+            }
+            report.push(DMLError {
+                span: group[anchor].span,
+                description: format!("Name collision in declaration on '{}'",
+                                     group[anchor].name),
+                related: related.into_iter().map(|neighbor|(
+                    group[neighbor].span,
+                    "also declared here".to_string())).collect(),
+                severity: Some(DiagnosticSeverity::ERROR),
+            });
+        }
+        start = end;
+    }
+}
+
 fn collect_symbols(parameters: &[DMLParameter],
                    obj_specs: &[Arc<ObjectSpec>],
+                   eval_context: &mut EvaluationContext,
                    report: &mut Vec<DMLError>) -> CollectedSymbols
 {
+    // Iterate over specs to collect object-decls for each separate kind and collect
+    // them. Allows for stable sorting.
+    let mut errors = vec![];
+    let mut constant_decls = vec![];
+    let mut saved_decls = vec![];
+    let mut session_decls = vec![];
+    let mut method_decls = vec![];
+    let mut hook_decls = vec![];
+    let mut subobj_decls = vec![];
+
+    for spec in obj_specs {
+        if !spec.condition.exists(eval_context, report) {
+            continue;
+        }
+
+        errors.extend(spec.errors.iter().filter(|error|
+            error.cond.guaranteed_exists(eval_context, report)));
+        constant_decls.extend(spec.constants.iter().filter(|constant|
+            constant.cond.exists(eval_context, report))
+            .map(|constant|(&spec.rank, constant)));
+        saved_decls.extend(spec.saveds.iter().filter(|saved|
+            saved.cond.exists(eval_context, report))
+            .map(|saved|(&spec.rank, saved)));
+        session_decls.extend(spec.sessions.iter().filter(|session|
+            session.cond.exists(eval_context, report))
+            .map(|session|(&spec.rank, session)));
+        method_decls.extend(spec.methods.iter().filter(|method|
+            method.cond.exists(eval_context, report))
+            .map(|method|(&spec.rank, method)));
+        hook_decls.extend(spec.hooks.iter().filter(|hook|
+            hook.cond.exists(eval_context, report))
+            .map(|hook|(&spec.rank, hook)));
+        subobj_decls.extend(spec.subobjs.iter().filter(|(subobj, _)|
+            subobj.cond.exists(eval_context, report))
+            .map(|(subobj, subobj_spec)|
+                 (&spec.rank, subobj, subobj_spec)));
+    }
+
+    errors.sort_by_key(|error|error.span());
+    constant_decls.sort_by_key(|(_, constant)|constant.span());
+    saved_decls.sort_by_key(|(_, saved)|saved.span());
+    session_decls.sort_by_key(|(_, session)|session.span());
+    method_decls.sort_by_key(|(_, method)|method.span());
+    hook_decls.sort_by_key(|(_, hook)|hook.span());
+    subobj_decls.sort_by_key(|(_, subobj, _)|subobj.span());
+
     // We will report all name collisions _after_ we have sorted and collected
     // this, based on the ambiguousdefs we get.
     // This makes the error locations better in some cases, and reports fewer
@@ -1461,105 +1670,100 @@ fn collect_symbols(parameters: &[DMLParameter],
     let mut methods = MethodMapping::default();
     let mut subobjs = ObjectMapping::default();
     let mut hooks = HookMapping::default();
-    let mut constants: Vec<Constant> = vec![];
+    let mut constants: Vec<ObjectDecl<Constant>> = vec![];
 
-    for spec in obj_specs {
-        for error in &spec.errors {
-            // TODO: evaluate conditions
-            // for now, conservatively only report the errors for
-            // things not behind hashifs
-            if error.cond == ExistCondition::Always {
-                report.push(DMLError {
-                    span: *error.span(),
-                    // TODO: early-evaluate the error message, somehow
-                    description: "unguarded error statement".to_string(),
-                    related: vec![],
-                    severity: Some(DiagnosticSeverity::ERROR),
-                });
-            }
-        }
-        // TODO: How to handle extra initializers here?
-        // Its a bit to early to eagerly evaluate them, but discarding
-        // them completely isn't ideal either
-        // (extra vars is not a problem, since they just become un-inited
-        //  declarations)
-        for constant in &spec.constants {
-            constants.push(constant.obj.clone());
-        }
-        for saved_objectdecl in &spec.saveds {
-            // Pad initializers with 'None' values, so that we handle all the
-            // variables
-            let saved = &saved_objectdecl.obj;
-            for (var, init) in saved.vars.iter().zip(
-                saved.values.iter().map(|e|Some(e)).chain(iter::repeat(None))) {
-                // TODO: verify serializability of type
-                let to_insert = (spec.rank.clone(),
-                                 (var.clone(), init.cloned()));
-                let name = var.object.name.val.clone();
-                if let Some((_, e)) = saveds.get_mut(&name) {
-                    e.push(to_insert);
-                } else {
-                    saveds.insert(name, (false, vec![to_insert]));
-                }
-            }
-        }
-        for session_objectdecl in &spec.sessions {
-            let session = &session_objectdecl.obj;
-            for (var, init) in session.vars.iter().zip(
-                session.values.iter().map(|e|Some(e))
-                    .chain(iter::repeat(None))) {
-                let to_insert = (spec.rank.clone(),
-                                 (var.clone(), init.cloned()));
-                let name = var.object.name.val.clone();
-                if let Some((_,e)) = sessions.get_mut(&name) {
-                    e.push(to_insert);
-                } else {
-                    sessions.insert(name, (false, vec![to_insert]));
-                }
-            }
-        }
-        for method in &spec.methods {
-            let to_insert = (spec.rank.clone(),
-                             MethodDecl::from_content(&method.obj, report));
-            let name = method.obj.object.name.val.clone();
-            if let Some((_, e)) = methods.get_mut(&name) {
+    for error in errors {
+        report.push(DMLError {
+            span: *error.span(),
+            // TODO: early-evaluate the error message, somehow
+            description: "unguarded error statement".to_string(),
+            related: vec![],
+            severity: Some(DiagnosticSeverity::ERROR),
+        });
+    }
+    for (_, constant) in constant_decls {
+        constants.push(constant.clone());
+    }
+    // TODO: How to handle extra initializers here?
+    // Its a bit to early to eagerly evaluate them, but discarding
+    // them completely isn't ideal either
+    // (extra vars is not a problem, since they just become un-inited
+    // declarations)
+    for (rank, saved_objectdecl) in saved_decls {
+        // Pad initializers with 'None' values, so that we handle all the
+        // variables
+        let saved = &saved_objectdecl.obj;
+        for (var, init) in saved.vars.iter().zip(
+            saved.values.iter().map(|e|Some(e)).chain(iter::repeat(None))) {
+            // TODO: verify serializability of type
+            let to_insert = (rank.clone(),
+                             saved_objectdecl.cond.clone(),
+                             (var.clone(), init.cloned()));
+            let name = var.object.name.val.clone();
+            if let Some((_, e)) = saveds.get_mut(&name) {
                 e.push(to_insert);
             } else {
-                methods.insert(name, (false, vec![to_insert]));
+                saveds.insert(name, (false, vec![to_insert]));
             }
         }
-        for hook in &spec.hooks {
-            let to_insert = (spec.rank.clone(), hook.clone());
-            let name = &hook.obj.name().val;
-            if let Some((_, e)) = hooks.get_mut(name) {
+    }
+    for (rank, session_objectdecl) in session_decls {
+        let session = &session_objectdecl.obj;
+        for (var, init) in session.vars.iter().zip(
+            session.values.iter().map(|e|Some(e))
+                .chain(iter::repeat(None))) {
+            let to_insert = (rank.clone(),
+                             session_objectdecl.cond.clone(),
+                             (var.clone(), init.cloned()));
+            let name = var.object.name.val.clone();
+            if let Some((_, e)) = sessions.get_mut(&name) {
                 e.push(to_insert);
             } else {
-                hooks.insert(name.to_string(), (false, vec![to_insert]));
+                sessions.insert(name, (false, vec![to_insert]));
             }
         }
-
-        for (subobj, spec) in &spec.subobjs {
-            let to_insert = (spec.rank.clone(),
-                             subobj.clone(), Arc::clone(spec));
-            let name = subobj.obj.object.name.val.clone();
-            if let Some((_, e)) = subobjs.get_mut(&name) {
-                e.push(to_insert);
-            } else {
-                subobjs.insert(name, (false, vec![to_insert]));
-            }
+    }
+    for (rank, method) in method_decls {
+        let to_insert = (rank.clone(),
+                         method.cond.clone(),
+                         MethodDecl::from_content(&method.obj, report));
+        let name = method.obj.object.name.val.clone();
+        if let Some((_, e)) = methods.get_mut(&name) {
+            e.push(to_insert);
+        } else {
+            methods.insert(name, (false, vec![to_insert]));
+        }
+    }
+    for (rank, hook) in hook_decls {
+        let to_insert = (rank.clone(), hook.clone());
+        let name = &hook.obj.name().val;
+        if let Some((_, e)) = hooks.get_mut(name) {
+            e.push(to_insert);
+        } else {
+            hooks.insert(name.to_string(), (false, vec![to_insert]));
+        }
+    }
+    for (rank, subobj, subobj_spec) in subobj_decls {
+        let to_insert = (rank.clone(),
+                         subobj.clone(), Arc::clone(subobj_spec));
+        let name = subobj.obj.object.name.val.clone();
+        if let Some((_, e)) = subobjs.get_mut(&name) {
+            e.push(to_insert);
+        } else {
+            subobjs.insert(name, (false, vec![to_insert]));
         }
     }
 
     // TODO: the sorting is insertion sort anyway, we could
     // be sorting this while inserting
-    for (_, decls) in saveds.values_mut() {
-        partial_sort_by_key_in_place(decls, |(r, _)|r);
+    for (_, cond_decls) in saveds.values_mut() {
+        partial_sort_by_key_in_place(cond_decls, |(r, _, _)|r);
     }
-    for (_, decls) in sessions.values_mut() {
-        partial_sort_by_key_in_place(decls, |(r, _)|r);
+    for (_, cond_decls) in sessions.values_mut() {
+        partial_sort_by_key_in_place(cond_decls, |(r, _, _)|r);
     }
     for (_, decls) in methods.values_mut() {
-        partial_sort_by_key_in_place(decls, |(r, _)|r);
+        partial_sort_by_key_in_place(decls, |(r, _, _)|r);
     }
     for (_, decls) in hooks.values_mut() {
         partial_sort_by_key_in_place(decls, |(r, _)|r);
@@ -1568,108 +1772,136 @@ fn collect_symbols(parameters: &[DMLParameter],
         partial_sort_by_key_in_place(decls, |(r, _,  _)|r);
     }
 
-    // Map names to most relevant declaration and colliding declarations
+    // Fully cross-check all declarations for collisions
+    let mut collision_candidates = vec![];
+    collision_candidates.extend(constants.iter().map(|constant|
+        CollisionCandidate {
+            name: constant.obj.name().val.clone(),
+            condition: constant.cond.clone(),
+            span: constant.obj.name().span,
+            kind: CollisionKind::Constant,
+            logical_group: None,
+        }));
+    collision_candidates.extend(parameters.iter().enumerate().flat_map(
+        |(group, parameter)|
+        parameter.get_all_definitions().into_iter().map(move |(condition, parameter)|
+            CollisionCandidate {
+                name: parameter.object.name.val.clone(),
+                condition: condition.clone(),
+                span: parameter.object.name.span,
+                kind: CollisionKind::Parameter,
+                logical_group: Some(group),
+            })));
+    collision_candidates.extend(subobjs.values().enumerate().flat_map(
+        |(group, (_, declarations))|
+        declarations.iter().map(move |(_, subobj, _)|CollisionCandidate {
+            name: subobj.obj.object.name.val.clone(),
+            condition: subobj.cond.clone(),
+            span: subobj.obj.object.name.span,
+            kind: CollisionKind::Subobject,
+            logical_group: Some(group),
+        })));
+    collision_candidates.extend(methods.values().enumerate().flat_map(
+        |(group, (_, declarations))|
+        declarations.iter().map(move |(_, condition, method)|CollisionCandidate {
+            name: method.name.val.clone(),
+            condition: condition.clone(),
+            span: method.name.span,
+            kind: CollisionKind::Method,
+            logical_group: Some(group),
+        })));
+    collision_candidates.extend(saveds.values().flat_map(|(_, declarations)|
+        declarations.iter().map(|(_, condition, (variable, _))|CollisionCandidate {
+            name: variable.object.name.val.clone(),
+            condition: condition.clone(),
+            span: variable.object.name.span,
+            kind: CollisionKind::Saved,
+            logical_group: None,
+        })));
+    collision_candidates.extend(sessions.values().flat_map(|(_, declarations)|
+        declarations.iter().map(|(_, condition, (variable, _))|CollisionCandidate {
+            name: variable.object.name.val.clone(),
+            condition: condition.clone(),
+            span: variable.object.name.span,
+            kind: CollisionKind::Session,
+            logical_group: None,
+        })));
+    collision_candidates.extend(hooks.values().flat_map(|(_, declarations)|
+        declarations.iter().map(|(_, hook)|CollisionCandidate {
+            name: hook.obj.name().val.clone(),
+            condition: hook.cond.clone(),
+            span: hook.obj.name().span,
+            kind: CollisionKind::Hook,
+            logical_group: None,
+        })));
+
+    // Map names to the most relevant declaration. Collision reporting is
+    // handled separately below so it can check every declaration pair.
     // This creates an order for symbol definition precedence
-    // constant > parameter > subobj > method > saved > session
-    // Grab the most-relevant decl from each ambiguousdecl, if they have
-    // parameter-to-parameter collisions then that has already been reported
-    let mut symbols: HashMap<String, (ZeroSpan, Vec<ZeroSpan>)>
+    // constant > parameter > subobj > method > saved > session > hook
+    let mut symbols: HashMap<String, (ExistCondition, ZeroSpan, Vec<ZeroSpan>)>
         = HashMap::new();
 
-    // NOTE: constants are top-level only, so ordering doesn't really matter
     for constant in &constants {
-        if let Some((_, rest)) = symbols.get_mut(constant.name().val.as_str()) {
-            rest.push(*constant.loc_span());
-        } else {
-            symbols.insert(constant.name().val.clone(),
-                           (*constant.loc_span(), vec![]));
-        }
+        symbols.entry(constant.obj.name().val.clone()).or_insert_with(||
+            (constant.cond.clone(), *constant.loc_span(), vec![]));
     }
 
     for parameter in parameters {
-        let maybe_auth_decl_span = *parameter.get_likely_definition()
-            .object.loc_span();
-        let name = parameter.get_likely_definition().object.name.val.clone();
-        if let Some((_, rest)) = symbols.get_mut(&name) {
-            rest.push(maybe_auth_decl_span);
-        } else {
-            symbols.insert(name, (maybe_auth_decl_span, vec![]));
-        }
+        let (cond, likely_def) = parameter.get_likely_definition_info();
+        let maybe_auth_decl_span = *likely_def.object.loc_span();
+        let name = likely_def.object.name.val.clone();
+        symbols.entry(name).or_insert((cond.clone(), maybe_auth_decl_span, vec![]));
     }
 
     for (name, (used, objs)) in &mut subobjs {
-        let maybe_auth_decl_span = objs.first().unwrap()
-            .1.obj.object.name.span;
-        if let Some((_, rest)) = symbols.get_mut(name) {
-            rest.push(maybe_auth_decl_span);
-        } else {
+        let first_obj = objs.first().unwrap();
+        let maybe_auth_decl_span = first_obj.1.obj.object.name.span;
+        if !symbols.contains_key(name) {
             *used = true;
-            symbols.insert(name.to_string(), (maybe_auth_decl_span, vec![]));
+            symbols.insert(name.to_string(), (first_obj.1.cond.clone(), maybe_auth_decl_span, vec![]));
         }
     }
 
     for (name, (used, methods)) in &mut methods {
-        let maybe_auth_decl_span = methods.first().unwrap()
-            .1.name.span;
-        if let Some((_, rest)) = symbols.get_mut(name) {
-            rest.push(maybe_auth_decl_span);
-        } else {
+        let (_, cond, method) = methods.first().unwrap();
+        let maybe_auth_decl_span = method.name.span;
+        if !symbols.contains_key(name) {
             *used = true;
-            symbols.insert(name.to_string(), (maybe_auth_decl_span, vec![]));
+            symbols.insert(name.to_string(), (cond.clone(), maybe_auth_decl_span, vec![]));
         }
     }
 
-    for (name, (used, decls)) in &mut saveds {
-        for (_, (var, _)) in decls {
-            let maybe_auth_decl_span = var.object.name.span;
-            if let Some((_, rest)) = symbols.get_mut(name) {
-                rest.push(maybe_auth_decl_span);
-            } else {
-                *used = true;
-                symbols.insert(name.to_string(),
-                               (maybe_auth_decl_span, vec![]));
-            }
+    // The first entry has the highest rank and is the symbol used by later
+    // object construction. All variants have already been retained in
+    // collision_candidates for pairwise collision reporting.
+    for (name, (used, cond_decls)) in &mut saveds {
+        if !symbols.contains_key(name) {
+            let (_, cond, (var, _)) = cond_decls.first().unwrap();
+            *used = true;
+            symbols.insert(name.to_string(),
+                           (cond.clone(), var.object.name.span, vec![]));
         }
     }
-    for (name, (used, decls)) in &mut sessions {
-        for (_, (var, _)) in decls {
-            let maybe_auth_decl_span = var.object.name.span;
-            if let Some((_, rest)) = symbols.get_mut(name) {
-                rest.push(maybe_auth_decl_span);
-            } else {
-                *used = true;
-                symbols.insert(name.to_string(),
-                               (maybe_auth_decl_span, vec![]));
-            }
+    for (name, (used, cond_decls)) in &mut sessions {
+        if !symbols.contains_key(name) {
+            let (_, cond, (var, _)) = cond_decls.first().unwrap();
+            *used = true;
+            symbols.insert(name.to_string(),
+                           (cond.clone(), var.object.name.span, vec![]));
         }
     }
 
     for (name, (used, decls)) in &mut hooks {
-        for (_, hook) in decls {
-            let maybe_auth_decl_span = hook.obj.name().span;
-            if let Some((_, rest)) = symbols.get_mut(name) {
-                rest.push(maybe_auth_decl_span);
-            } else {
-                *used = true;
-                symbols.insert(name.to_string(),
-                               (maybe_auth_decl_span, vec![]));
-            }
+        if !symbols.contains_key(name) {
+            let (_, hook) = decls.first().unwrap();
+            *used = true;
+            symbols.insert(name.to_string(),
+                           (hook.cond.clone(), hook.obj.name().span, vec![]));
         }
     }
 
-    for (name, (auth, others)) in &symbols {
-        if !others.is_empty() {
-            report.push(DMLError {
-                span: (*auth),
-                description: format!("Name collision in declaration on '{}'",
-                                     name),
-                related: others.iter().map(
-                    |s|(*s,
-                        "also declared here".to_string())).collect(),
-                severity: Some(DiagnosticSeverity::ERROR),
-            });
-        }
-    }
+    report_collision_candidates(collision_candidates, report);
     (symbols, constants, saveds, sessions, methods, hooks, subobjs)
 }
 
@@ -1679,6 +1911,7 @@ fn merge_composite_subobj<'c>(name: String,
                                           Arc<ObjectSpec>)>,
                               parent_key: Option<StructureKey>,
                               container: &'c mut StructureContainer,
+                              eval_context: &mut EvaluationContext,
                               report: &mut Vec<DMLError>) -> StructureKey {
     debug!("Merging a composite subobj for {}", name);
     let (auth_obj, auth_spec) = &specs.first().unwrap();
@@ -1709,7 +1942,14 @@ fn merge_composite_subobj<'c>(name: String,
     let mut array_info: Vec<(ArrayDim, Vec<&ZeroSpan>)> =
         auth_obj.obj.dims.iter()
         .map(|d|(d.clone(), vec![])).collect();
+    // TODO: Starting to seem likely that we might double-report from
+    // bad/invalid conds. Might want to formalize expression resolution in such
+    // a way that we convert constant expressions once first, and then
+    // convert remaining expressions later
     for (decl, _) in &specs {
+        if !decl.cond.exists(eval_context, report) {
+            continue;
+        }
         if decl.obj.dims.len() != array_info.len() {
             // When an object with no array decl conflicts with an object
             // with one, blame the object decl
@@ -1779,6 +2019,7 @@ fn merge_composite_subobj<'c>(name: String,
                 parent_each_stmts,
                 parent_key,
                 container,
+                eval_context,
                 report)
 }
 
@@ -1786,6 +2027,7 @@ fn merge_composite_subobjs<'c>(parent_each_stmts: &InEachSpec,
                                subobjs: ObjectMapping,
                                parent_key: Option<StructureKey>,
                                container: &'c mut StructureContainer,
+                               eval_context: &mut EvaluationContext,
                                report: &mut Vec<DMLError>)
                                -> Vec<StructureKey> {
     debug!("Merging composite subobjects");
@@ -1800,6 +2042,7 @@ fn merge_composite_subobjs<'c>(parent_each_stmts: &InEachSpec,
                                         .collect(),
                                         parent_key,
                                         container,
+                                        eval_context,
                                         report))
         } else {
             None
@@ -1902,7 +2145,7 @@ fn sort_method_decls<'t>(decls: &[(&Rank, &'t MethodDecl)]) ->
                 }
             }
         }
-            
+
         trace!("Default map is {:?}", method_map_defs);
         trace!("Abstract override map is {:?}", method_map_decls);
         let method_order = topsort(&method_map_defs).unwrap_sorted();
@@ -1924,7 +2167,7 @@ fn add_methods(obj: &mut DMLCompositeObject,
         trace!("Handling method {}, which is declared by {:?}",
                name, regular_decls);
         let all_decls: Vec<(&Rank, &MethodDecl)>
-            = regular_decls.iter().map(|(a, b)|(a, b)).collect();
+            = regular_decls.iter().map(|(a, _, b)|(a, b)).collect();
 
         let (default_map, method_order, decl_map) = sort_method_decls(&all_decls);
         let mut decl_to_method: HashMap<MethodDecl, Arc<DMLMethodRef>>
@@ -2264,6 +2507,7 @@ pub fn make_object(loc: ZeroSpan,
                    parent_each_stmts: &InEachSpec,
                    parent_key: Option<StructureKey>,
                    container: &mut StructureContainer,
+                   eval_context: &mut EvaluationContext,
                    report: &mut Vec<DMLError>) -> StructureKey {
     debug!("Making object {}", identity.val);
 
@@ -2273,7 +2517,8 @@ pub fn make_object(loc: ZeroSpan,
     let direct_decls: Vec<Arc<ObjectSpec>> = obj_specs.clone();
 
     let mut each_stmts = parent_each_stmts.clone();
-    let used_ineach_locs = add_template_specs(&mut obj_specs, &each_stmts);
+    let used_ineach_locs = add_template_specs(
+        &mut obj_specs, &each_stmts, eval_context, report);
     add_template_ineachs(&obj_specs, &mut each_stmts);
 
     trace!("Has specs at {:?}", obj_specs.iter().map(|rc|rc.loc)
@@ -2286,14 +2531,15 @@ pub fn make_object(loc: ZeroSpan,
     let auto_params = make_auto_params(identity, &loc, kind, &array_info,
                                        parent_key);
     let parameters = gather_parameters(&loc, &obj_specs, &array_info,
-                                       auto_params, report);
+                                       auto_params, eval_context, report);
 
     trace!("Parameters are: {:?}", parameters);
 
     let (symbols, constants,
          saveds, sessions,
          methods, hooks,
-         subobjs) = collect_symbols(&parameters, &obj_specs, report);
+         subobjs) = collect_symbols(&parameters, &obj_specs,
+                                    eval_context, report);
     trace!("All local symbols are: {:?}",
            symbols.keys().map(|k|k.as_str()).collect::<Vec<&str>>());
 
@@ -2304,7 +2550,8 @@ pub fn make_object(loc: ZeroSpan,
 
     let subobj_keys =
         merge_composite_subobjs(&each_stmts, subobjs,
-                                Some(new_obj_key), container, report);
+                                Some(new_obj_key), container,
+                                eval_context, report);
 
     {
         let new_obj = container.get_mut(new_obj_key).unwrap();
@@ -2333,4 +2580,267 @@ pub fn make_object(loc: ZeroSpan,
                           container, report);
     obj_invariants(container.get_mut(new_obj_key).unwrap(), report);
     new_obj_key
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, OnceLock};
+
+    use crate::analysis::parsing::tree::{ZeroPosition, ZeroSpan};
+    use crate::analysis::structure::expressions::ExpressionKind;
+    use crate::analysis::structure::toplevel::ExistCondition;
+
+    use super::{CollisionCandidate, CollisionKind,
+                compare_collision_candidates, report_collision_candidates};
+
+    fn span(line: u32) -> ZeroSpan {
+        static TEST_SPAN: OnceLock<ZeroSpan> = OnceLock::new();
+        let file = TEST_SPAN.get_or_init(||
+            ZeroSpan::invalid("collision-test.dml")).path();
+        let position = ZeroPosition::from_u32(line, 0);
+        ZeroSpan::from_positions(position, position, file)
+    }
+
+    fn conditional(branch: bool) -> ExistCondition {
+        let condition_span = span(100);
+        ExistCondition::Conditional(Arc::new(vec![(
+            branch,
+            Box::new(ExpressionKind::Unknown(condition_span)),
+        )]))
+    }
+
+    fn candidate(line: u32, condition: ExistCondition,
+                 kind: CollisionKind) -> CollisionCandidate {
+        CollisionCandidate {
+            name: "duplicate".to_string(),
+            condition,
+            span: span(line),
+            kind,
+            logical_group: None,
+        }
+    }
+
+    #[test]
+    fn cross_file_order_uses_paths_not_path_interning_order() {
+        // Deliberately intern the lexically later path first. Comparing Span
+        // directly would order these process-local keys by insertion order.
+        let later_path = ZeroSpan::from_u32(
+            0, 0, 0, 1, "z-collision-test.dml");
+        let earlier_path = ZeroSpan::from_u32(
+            0, 0, 0, 1, "a-collision-test.dml");
+        let mut later = candidate(0, ExistCondition::Always,
+                                  CollisionKind::Saved);
+        later.span = later_path;
+        let mut earlier = candidate(0, ExistCondition::Always,
+                                    CollisionKind::Session);
+        earlier.span = earlier_path;
+
+        assert_eq!(compare_collision_candidates(&earlier, &later),
+                   std::cmp::Ordering::Less);
+
+        let mut report = vec![];
+        report_collision_candidates(vec![later, earlier], &mut report);
+        assert_eq!(report.len(), 1);
+        assert_eq!(report[0].span.path(),
+                   std::path::PathBuf::from("a-collision-test.dml"));
+    }
+
+    #[test]
+    fn collision_chain_uses_the_middle_declaration_as_anchor() {
+        // The first and final candidates are mutually exclusive. The
+        // unconditional middle candidate overlaps both, so it is the only
+        // truthful anchor for a single diagnostic.
+        let mut report = vec![];
+        report_collision_candidates(vec![
+            candidate(2, conditional(false), CollisionKind::Method),
+            candidate(0, conditional(true), CollisionKind::Parameter),
+            candidate(1, ExistCondition::Always, CollisionKind::Saved),
+        ], &mut report);
+
+        assert_eq!(report.len(), 1);
+        assert_eq!(report[0].span.range.row_start.0, 1);
+        assert_eq!(report[0].related.len(), 2);
+        assert_eq!(report[0].related[0].0.range.row_start.0, 0);
+        assert_eq!(report[0].related[1].0.range.row_start.0, 2);
+    }
+
+    #[test]
+    fn mutually_exclusive_declarations_do_not_collide() {
+        let true_branch = conditional(true);
+        let false_branch = conditional(false);
+        assert!(true_branch.guaranteed_excluded_from(&false_branch));
+        let mut report = vec![];
+        report_collision_candidates(vec![
+            candidate(0, true_branch, CollisionKind::Parameter),
+            candidate(1, false_branch, CollisionKind::Method),
+        ], &mut report);
+
+        assert!(report.is_empty());
+    }
+
+    #[test]
+    fn same_kind_candidates_are_cross_checked() {
+        let mut report = vec![];
+        report_collision_candidates(vec![
+            candidate(0, ExistCondition::Always, CollisionKind::Method),
+            candidate(1, ExistCondition::Always, CollisionKind::Method),
+        ], &mut report);
+
+        assert_eq!(report.len(), 1);
+        assert_eq!(report[0].span.range.row_start.0, 0);
+        assert_eq!(report[0].related.len(), 1);
+        assert_eq!(report[0].related[0].0.range.row_start.0, 1);
+    }
+
+    #[test]
+    fn duplicate_candidates_are_not_self_collisions() {
+        let declaration = candidate(0, ExistCondition::Always,
+                                    CollisionKind::Parameter);
+        let mut report = vec![];
+        report_collision_candidates(vec![declaration.clone(), declaration],
+                                    &mut report);
+
+        assert!(report.is_empty());
+    }
+
+    #[test]
+    fn variants_of_one_parameter_do_not_collide() {
+        let mut first_variant = candidate(0, ExistCondition::Always,
+                                          CollisionKind::Parameter);
+        first_variant.logical_group = Some(0);
+        let mut second_variant = candidate(1, ExistCondition::Always,
+                                           CollisionKind::Parameter);
+        second_variant.logical_group = Some(0);
+        let mut third_variant = candidate(2, ExistCondition::Always,
+                                          CollisionKind::Parameter);
+        third_variant.logical_group = Some(0);
+        let mut report = vec![];
+        report_collision_candidates(vec![first_variant, second_variant,
+                                         third_variant], &mut report);
+
+        assert!(report.is_empty());
+    }
+
+    #[test]
+    fn separate_parameter_groups_still_collide() {
+        let mut first_parameter = candidate(0, ExistCondition::Always,
+                                            CollisionKind::Parameter);
+        first_parameter.logical_group = Some(0);
+        let mut second_parameter = candidate(1, ExistCondition::Always,
+                                             CollisionKind::Parameter);
+        second_parameter.logical_group = Some(1);
+        let mut report = vec![];
+        report_collision_candidates(vec![first_parameter, second_parameter],
+                                    &mut report);
+
+        assert_eq!(report.len(), 1);
+        assert_eq!(report[0].span.range.row_start.0, 0);
+        assert_eq!(report[0].related.len(), 1);
+        assert_eq!(report[0].related[0].0.range.row_start.0, 1);
+    }
+
+    #[test]
+    fn parameter_variants_still_collide_with_other_symbol_kinds() {
+        let mut parameter = candidate(0, ExistCondition::Always,
+                                      CollisionKind::Parameter);
+        parameter.logical_group = Some(0);
+        let mut report = vec![];
+        report_collision_candidates(vec![
+            parameter,
+            candidate(1, ExistCondition::Always, CollisionKind::Method),
+        ], &mut report);
+
+        assert_eq!(report.len(), 1);
+    }
+
+    #[test]
+    fn variants_of_one_method_do_not_collide() {
+        let mut shared_variant = candidate(0, ExistCondition::Always,
+                                           CollisionKind::Method);
+        shared_variant.logical_group = Some(0);
+        let mut nonshared_variant = candidate(1, ExistCondition::Always,
+                                              CollisionKind::Method);
+        nonshared_variant.logical_group = Some(0);
+        let mut report = vec![];
+        report_collision_candidates(vec![shared_variant, nonshared_variant],
+                                    &mut report);
+
+        assert!(report.is_empty());
+    }
+
+    #[test]
+    fn separate_method_groups_still_collide() {
+        let mut first_method = candidate(0, ExistCondition::Always,
+                                         CollisionKind::Method);
+        first_method.logical_group = Some(0);
+        let mut second_method = candidate(1, ExistCondition::Always,
+                                          CollisionKind::Method);
+        second_method.logical_group = Some(1);
+        let mut report = vec![];
+        report_collision_candidates(vec![first_method, second_method],
+                                    &mut report);
+
+        assert_eq!(report.len(), 1);
+    }
+
+    #[test]
+    fn method_variants_still_collide_with_other_symbol_kinds() {
+        let mut method = candidate(0, ExistCondition::Always,
+                                   CollisionKind::Method);
+        method.logical_group = Some(0);
+        let mut report = vec![];
+        report_collision_candidates(vec![
+            method,
+            candidate(1, ExistCondition::Always, CollisionKind::Saved),
+        ], &mut report);
+
+        assert_eq!(report.len(), 1);
+    }
+
+    #[test]
+    fn declarations_of_one_composite_object_do_not_collide() {
+        let mut first_declaration = candidate(0, ExistCondition::Always,
+                                              CollisionKind::Subobject);
+        first_declaration.logical_group = Some(0);
+        let mut second_declaration = candidate(1, ExistCondition::Always,
+                                               CollisionKind::Subobject);
+        second_declaration.logical_group = Some(0);
+        let mut report = vec![];
+        report_collision_candidates(vec![first_declaration,
+                                         second_declaration], &mut report);
+
+        assert!(report.is_empty());
+    }
+
+    #[test]
+    fn inconsistent_composite_object_kinds_are_not_name_collisions() {
+        // The generic collision pass only knows that these declarations are
+        // one merged object. merge_composite_subobj reports their mismatching
+        // CompObjectKind as "Inconsistent object type" instead.
+        let mut register_declaration = candidate(0, ExistCondition::Always,
+                                                 CollisionKind::Subobject);
+        register_declaration.logical_group = Some(0);
+        let mut field_declaration = candidate(1, ExistCondition::Always,
+                                              CollisionKind::Subobject);
+        field_declaration.logical_group = Some(0);
+        let mut report = vec![];
+        report_collision_candidates(vec![register_declaration,
+                                         field_declaration], &mut report);
+
+        assert!(report.is_empty());
+    }
+
+    #[test]
+    fn composite_objects_still_collide_with_other_symbol_kinds() {
+        let mut subobject = candidate(0, ExistCondition::Always,
+                                      CollisionKind::Subobject);
+        subobject.logical_group = Some(0);
+        let mut report = vec![];
+        report_collision_candidates(vec![
+            subobject,
+            candidate(1, ExistCondition::Always, CollisionKind::Saved),
+        ], &mut report);
+
+        assert_eq!(report.len(), 1);
+    }
 }
