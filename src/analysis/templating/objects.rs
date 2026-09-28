@@ -1683,6 +1683,64 @@ fn report_collision_candidates(mut candidates: Vec<CollisionCandidate>,
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct ObjectKindCandidate {
+    span: ZeroSpan,
+    kind: CompObjectKind,
+    condition: ExistCondition,
+}
+
+impl ObjectKindCandidate {
+    fn conflicts_with(&self, other: &Self) -> bool {
+        self.kind != other.kind &&
+        !self.condition.guaranteed_excluded_from(&other.condition)
+    }
+}
+
+fn report_object_kind_conflicts(name: &str,
+                                mut candidates: Vec<ObjectKindCandidate>,
+                                report: &mut Vec<DMLError>) {
+    candidates.sort();
+    candidates.dedup();
+
+    let mut neighbors = vec![vec![]; candidates.len()];
+    for first in 0..candidates.len() {
+        for second in first + 1..candidates.len() {
+            if candidates[first].conflicts_with(&candidates[second]) {
+                neighbors[first].push(second);
+                neighbors[second].push(first);
+            }
+        }
+    }
+
+    let mut represented = vec![false; candidates.len()];
+    while (0..candidates.len()).any(|index|
+        neighbors[index].iter().any(|neighbor|!represented[*neighbor])) {
+        let anchor = (0..candidates.len()).filter(|index|
+            neighbors[*index].iter().any(|neighbor|!represented[*neighbor]))
+            .max_by_key(|index|(
+                neighbors[*index].iter().filter(
+                    |neighbor|!represented[**neighbor]).count(),
+                Reverse(*index)));
+        let Some(anchor) = anchor else { break; };
+
+        let related: Vec<usize> = neighbors[anchor].iter().copied().filter(
+            |neighbor|!represented[*neighbor]).collect();
+        represented[anchor] = true;
+        for neighbor in &related {
+            represented[*neighbor] = true;
+        }
+        report.push(DMLError {
+            span: candidates[anchor].span,
+            description: format!("Inconsistent object type for {}", name),
+            related: related.into_iter().map(|neighbor|(
+                candidates[neighbor].span,
+                "mismatching type here".to_string())).collect(),
+            severity: Some(DiagnosticSeverity::ERROR),
+        });
+    }
+}
+
 fn collect_symbols(parameters: &[DMLParameter],
                    obj_specs: &[AppliedObjectSpec],
                    eval_context: &mut EvaluationContext,
@@ -2032,28 +2090,15 @@ fn merge_composite_subobj<'c>(name: String,
                               eval_context: &mut EvaluationContext,
                               report: &mut Vec<DMLError>) -> StructureKey {
     debug!("Merging a composite subobj for {}", name);
-    let (auth_obj, auth_spec) = &specs.first().unwrap();
+    let (auth_obj, _) = &specs.first().unwrap();
     // Grab the first spec objectdecl for the auth kind
     let auth_kind = &auth_obj.obj.kind.kind;
-    // similar, first spec gives auth loc
-    let auth_loc = &auth_spec.spec.loc;
-    let kind_collisions: Vec<&ZeroSpan> = specs.iter()
-        .filter_map(|(o, _)|if &o.obj.kind.kind != auth_kind &&
-            !auth_obj.cond.guaranteed_excluded_from(&o.cond) {
-            Some(&o.obj.object.name.span)
-        } else {
-            None
-        }).collect();
-    if !kind_collisions.is_empty() {
-        report.push(DMLError {
-            span: *auth_loc,
-            description: format!("Inconsistent object type for {}", name),
-            severity: Some(DiagnosticSeverity::ERROR),
-            related: kind_collisions.iter().map(
-                |l|(*(*l),
-                    "mismatching type here".to_string())).collect(),
-        });
-    }
+    report_object_kind_conflicts(&name, specs.iter().map(|(decl, _)|
+        ObjectKindCandidate {
+            condition: decl.cond.clone(),
+            span: decl.obj.object.name.span,
+            kind: decl.obj.kind.kind,
+        }).collect(), report);
 
     // Vec of (auth, mismatching name) array declarations
     let mut array_info: Vec<(ArrayDim, Vec<&ZeroSpan>)> =
@@ -2760,10 +2805,12 @@ mod tests {
 
     use crate::analysis::parsing::tree::{ZeroPosition, ZeroSpan};
     use crate::analysis::structure::expressions::ExpressionKind;
+    use crate::analysis::structure::objects::CompObjectKind;
     use crate::analysis::structure::toplevel::ExistCondition;
 
     use super::{CollisionCandidate, CollisionGroup, CollisionKind,
-                compare_collision_candidates, report_collision_candidates};
+                ObjectKindCandidate, compare_collision_candidates,
+                report_collision_candidates, report_object_kind_conflicts};
 
     fn span(line: u32) -> ZeroSpan {
         static TEST_SPAN: OnceLock<ZeroSpan> = OnceLock::new();
@@ -2793,6 +2840,15 @@ mod tests {
             span: span(line),
             kind,
             logical_group: None,
+        }
+    }
+
+    fn object_kind_candidate(line: u32, condition: ExistCondition,
+                             kind: CompObjectKind) -> ObjectKindCandidate {
+        ObjectKindCandidate {
+            condition,
+            span: span(line),
+            kind,
         }
     }
 
@@ -3054,6 +3110,75 @@ mod tests {
                                          field_declaration], &mut report);
 
         assert!(report.is_empty());
+    }
+
+    #[test]
+    fn object_kinds_are_fully_cross_checked() {
+        // The first two declarations cannot coexist, but the unconditional
+        // declaration conflicts with both. Comparing only against the first
+        // declaration would miss the second edge.
+        let mut report = vec![];
+        report_object_kind_conflicts("obj", vec![
+            object_kind_candidate(
+                0, conditional(true), CompObjectKind::Register),
+            object_kind_candidate(
+                2, conditional(false), CompObjectKind::Field),
+            object_kind_candidate(
+                1, ExistCondition::Always, CompObjectKind::Bank),
+        ], &mut report);
+
+        assert_eq!(report.len(), 1);
+        assert_eq!(report[0].span.range.row_start.0, 1);
+        assert_eq!(report[0].related.len(), 2);
+        assert_eq!(report[0].related[0].0.range.row_start.0, 0);
+        assert_eq!(report[0].related[1].0.range.row_start.0, 2);
+    }
+
+    #[test]
+    fn mutually_exclusive_object_kinds_do_not_conflict() {
+        let mut report = vec![];
+        report_object_kind_conflicts("obj", vec![
+            object_kind_candidate(
+                0, conditional(true), CompObjectKind::Register),
+            object_kind_candidate(
+                1, conditional(false), CompObjectKind::Field),
+        ], &mut report);
+
+        assert!(report.is_empty());
+    }
+
+    #[test]
+    fn matching_object_kinds_do_not_conflict() {
+        let mut report = vec![];
+        report_object_kind_conflicts("obj", vec![
+            object_kind_candidate(
+                0, ExistCondition::Always, CompObjectKind::Register),
+            object_kind_candidate(
+                1, ExistCondition::Always, CompObjectKind::Register),
+        ], &mut report);
+
+        assert!(report.is_empty());
+    }
+
+    #[test]
+    fn object_kind_diagnostics_are_independent_of_input_order() {
+        let candidates = vec![
+            object_kind_candidate(
+                2, ExistCondition::Always, CompObjectKind::Field),
+            object_kind_candidate(
+                0, ExistCondition::Always, CompObjectKind::Register),
+            object_kind_candidate(
+                1, ExistCondition::Always, CompObjectKind::Bank),
+        ];
+        let mut forward_report = vec![];
+        report_object_kind_conflicts(
+            "obj", candidates.clone(), &mut forward_report);
+        let mut reverse_report = vec![];
+        report_object_kind_conflicts(
+            "obj", candidates.into_iter().rev().collect(),
+            &mut reverse_report);
+
+        assert_eq!(forward_report, reverse_report);
     }
 
     #[test]
