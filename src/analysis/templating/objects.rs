@@ -252,19 +252,21 @@ fn create_spec<'t>(loc: ZeroSpan,
 
     let mut in_eachs = InEachSpec::default();
     for ineach in &spec.ineachs {
-        // TODO: I feel like we could filter out nonexistant templates here
-        if let Some((first, rest)) = ineach.obj.spec.split_first() {
-            if let Some(in_each_spec) = in_each_specs.get(ineach) {
-                let to_add = (rest.iter().map(|t|t.val.clone()).collect(),
-                              (ineach.obj.loc, Arc::clone(in_each_spec)));
-                if let Some(e) = in_eachs.get_mut(&first.val) {
-                    e.push(to_add);
+        if ineach.cond.exists(eval_context, report) {
+            // TODO: I feel like we could filter out nonexistant templates here
+            if let Some((first, rest)) = ineach.obj.spec.split_first() {
+                if let Some(in_each_spec) = in_each_specs.get(ineach) {
+                    let to_add = (rest.iter().map(|t|t.val.clone()).collect(),
+                                  (ineach.obj.loc, Arc::clone(in_each_spec)));
+                    if let Some(e) = in_eachs.get_mut(&first.val) {
+                        e.push(to_add);
+                    } else {
+                        in_eachs.insert(first.val.clone(), vec![to_add]);
+                    }
                 } else {
-                    in_eachs.insert(first.val.clone(), vec![to_add]);
+                    error!("Expected {:?} to exist in {:?}, but it didnt",
+                           ineach, in_each_specs);
                 }
-            } else {
-                error!("Expected {:?} to exist in {:?}, but it didnt",
-                       ineach, in_each_specs);
             }
         }
     }
