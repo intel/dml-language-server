@@ -796,6 +796,32 @@ mod tests {
     }
 
     #[test]
+    fn conditional_diamond_deduplicates_object_specs() {
+        init_logging();
+        let setup = setup_test(&["conditional_auto_parameter.dml"]);
+        let analysis = setup.analysis.lock().unwrap();
+        let device = analysis.get_device_analysis(&setup.main_canon_path)
+            .expect("device analysis should exist");
+        let errors: Vec<_> = device.errors.values().flatten().filter(|error|
+            error.description.contains("auto-parameter")).collect();
+        assert!(errors.is_empty(), "unexpected auto-parameter errors: {:#?}",
+            errors);
+    }
+
+    #[test]
+    fn distinct_auto_parameter_assignments_still_conflict() {
+        init_logging();
+        let setup = setup_test(&["conflicting_auto_parameter.dml"]);
+        let analysis = setup.analysis.lock().unwrap();
+        let device = analysis.get_device_analysis(&setup.main_canon_path)
+            .expect("device analysis should exist");
+        let errors: Vec<_> = device.errors.values().flatten().filter(|error|
+            error.description.contains("auto-parameter")).collect();
+        assert_eq!(errors.len(), 1,
+                   "expected one auto-parameter error, got: {:#?}", errors);
+    }
+
+    #[test]
     fn test_toplevel_structure_parsed() {
         init_logging();
         let setup = setup_test(&["basic_lookup.dml"]);

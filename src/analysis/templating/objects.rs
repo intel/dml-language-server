@@ -90,6 +90,53 @@ impl AppliedObjectSpec {
     }
 }
 
+// Add specs to application, merging conditions that
+// are combinable ('true, cond' and 'false, cond')
+// to eliminate duplicates and simplify further analysis
+fn insert_applied_spec(specs: &mut Vec<AppliedObjectSpec>,
+                       mut application: AppliedObjectSpec)
+                       -> Option<AppliedObjectSpec> {
+    let mut index = 0;
+    while index < specs.len() {
+        if !Arc::ptr_eq(&specs[index].spec, &application.spec) {
+            index += 1;
+            continue;
+        }
+        let Some(condition) = specs[index].condition.try_or(
+            &application.condition) else {
+            index += 1;
+            continue;
+        };
+        if condition == specs[index].condition {
+            return None;
+        }
+        application.condition = condition;
+        specs.remove(index);
+        index = 0;
+    }
+    specs.push(application.clone());
+    Some(application)
+}
+
+fn insert_condition(conditions: &mut Vec<ExistCondition>,
+                    mut condition: ExistCondition) -> bool {
+    let mut index = 0;
+    while index < conditions.len() {
+        let Some(combined) = conditions[index].try_or(&condition) else {
+            index += 1;
+            continue;
+        };
+        if combined == conditions[index] {
+            return false;
+        }
+        condition = combined;
+        conditions.remove(index);
+        index = 0;
+    }
+    conditions.push(condition);
+    true
+}
+
 impl DeclarationSpan for ObjectSpec {
     fn span(&self) -> &ZeroSpan {
         &self.span
@@ -1022,24 +1069,24 @@ fn add_template_specs(obj_specs: &mut Vec<AppliedObjectSpec>,
         }
     }
 
-    let mut used_templates = HashSet::<(String, ExistCondition)>::default();
     let mut template_conditions = HashMap::<String,
                                             Vec<ExistCondition>>::default();
-    let mut used_ineachs = HashSet::<(ZeroSpan, ExistCondition)>::default();
     let mut used_ineach_spans = vec![];
 
     while let Some((condition, template)) = queue.pop() {
         let application = AppliedObjectSpec::under(
             Arc::clone(&template.spec), &condition);
-        if !application.condition.exists(eval_context, report) ||
-           !used_templates.insert((template.name.clone(),
-                                   application.condition.clone())) {
+        if !application.condition.exists(eval_context, report) {
             continue;
         }
 
         debug!("Handling instantiation/import of {:?}", template.name);
-        template_conditions.entry(template.name.clone()).or_default()
-            .push(application.condition.clone());
+        insert_condition(
+            template_conditions.entry(template.name.clone()).or_default(),
+            application.condition.clone());
+
+        let Some(application) = insert_applied_spec(obj_specs, application)
+            else { continue; };
 
         for (decl, templates) in &application.spec.instantiations {
             let condition = application.declaration_condition(decl);
@@ -1050,7 +1097,6 @@ fn add_template_specs(obj_specs: &mut Vec<AppliedObjectSpec>,
             queue.push((application.declaration_condition(decl),
                         Arc::clone(template)));
         }
-        obj_specs.push(application);
 
         for (first_template, entries) in source_each_stmts {
             for (other_templates, (loc, in_each)) in entries {
@@ -1067,14 +1113,15 @@ fn add_template_specs(obj_specs: &mut Vec<AppliedObjectSpec>,
                 }
                 for path in paths {
                     let condition = in_each.condition.and(&path);
-                    if !condition.exists(eval_context, report) ||
-                       !used_ineachs.insert((*loc, condition.clone())) {
+                    if !condition.exists(eval_context, report) {
                         continue;
                     }
                     let application = AppliedObjectSpec {
                         spec: Arc::clone(&in_each.spec),
                         condition,
                     };
+                    let Some(application) = insert_applied_spec(
+                        obj_specs, application) else { continue; };
                     for (decl, templates) in &application.spec.instantiations {
                         let condition = application.declaration_condition(decl);
                         queue.extend(templates.iter().map(|template|
@@ -1084,7 +1131,6 @@ fn add_template_specs(obj_specs: &mut Vec<AppliedObjectSpec>,
                         queue.push((application.declaration_condition(decl),
                                     Arc::clone(template)));
                     }
-                    obj_specs.push(application);
                     used_ineach_spans.push(*loc);
                 }
             }
@@ -1335,9 +1381,7 @@ fn resolve_parameter(obj_loc: &ZeroSpan,
         if def.obj.value.as_ref().is_some_and(
             |v|matches!(v, ParamValue::Auto(_))) {
             let conflicts: Vec<_> = sorted_definitions.iter().filter(
-                |(other, _)|other.obj != def.obj &&
-                    !def.cond.guaranteed_excluded_from(&other.cond))
-                .collect();
+                |(other, _)|other != def).collect();
             if !conflicts.is_empty() {
                 report.push(DMLError {
                     span: *def.obj.span(),
@@ -2820,6 +2864,17 @@ mod tests {
         assert_eq!(conditions.len(), 2);
         assert!(conditions[0].0);
         assert!(!conditions[1].0);
+    }
+
+    #[test]
+    fn composing_opposite_branches_of_one_expression_is_never() {
+        let true_branch = conditional_at(100, true);
+        let false_branch = conditional_at(100, false);
+
+        assert_eq!(true_branch.and(&false_branch), ExistCondition::Never);
+        assert_eq!(false_branch.and(&true_branch), ExistCondition::Never);
+        assert_eq!(ExistCondition::Never.and(&ExistCondition::Always),
+                   ExistCondition::Never);
     }
 
     #[test]

@@ -24,6 +24,7 @@ use crate::analysis::scope::{Scope, ScopeContainer, MakeScopeContainer,
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ExistCondition {
+    Never,
     Always,
     // The bool here is whether the expression should be reversed, as the
     // thing existing is in an else branch
@@ -42,17 +43,69 @@ pub enum ExistCondition {
 impl ExistCondition {
     pub fn and(&self, other: &ExistCondition) -> ExistCondition {
         match (self, other) {
+            (ExistCondition::Never, _) |
+            (_, ExistCondition::Never) => ExistCondition::Never,
             (ExistCondition::Always, condition) |
             (condition, ExistCondition::Always) => condition.clone(),
             (ExistCondition::Conditional(left),
              ExistCondition::Conditional(right)) => {
                 let mut conditions = left.as_ref().clone();
-                for condition in right.iter() {
-                    if !conditions.contains(condition) {
-                        conditions.push(condition.clone());
+                for (branch, expression) in right.iter() {
+                    if conditions.iter().any(|(existing_branch,
+                                               existing_expression)|
+                        existing_expression == expression &&
+                        existing_branch != branch) {
+                        return ExistCondition::Never;
+                    }
+                    let condition = (*branch, expression.clone());
+                    if !conditions.contains(&condition) {
+                        conditions.push(condition);
                     }
                 }
                 ExistCondition::Conditional(Arc::new(conditions))
+            },
+        }
+    }
+
+    // Attempts to simplify a condition into the least restrictive of
+    // two conditions.
+    pub fn try_or(&self, other: &ExistCondition) -> Option<ExistCondition> {
+        match (self, other) {
+            (ExistCondition::Never, condition) |
+            (condition, ExistCondition::Never) => Some(condition.clone()),
+            (ExistCondition::Always, _) |
+            (_, ExistCondition::Always) => Some(ExistCondition::Always),
+            (ExistCondition::Conditional(left),
+             ExistCondition::Conditional(right)) => {
+                if left.iter().all(|condition|right.contains(condition)) {
+                    return Some(self.clone());
+                }
+                if right.iter().all(|condition|left.contains(condition)) {
+                    return Some(other.clone());
+                }
+
+                let left_only: Vec<_> = left.iter().filter(
+                    |condition|!right.contains(condition)).collect();
+                let right_only: Vec<_> = right.iter().filter(
+                    |condition|!left.contains(condition)).collect();
+                // When there is exactly one unique condition, we can remove
+                // it if its inverse appears in the other set,
+                // reducing A & B & C with A & B & !C to A & B
+                if let ([left_condition], [right_condition]) =
+                    (left_only.as_slice(), right_only.as_slice()) {
+                    if left_condition.0 != right_condition.0 &&
+                       left_condition.1 == right_condition.1 {
+                        let common: Vec<_> = left.iter().filter(
+                            |condition|right.contains(condition)).cloned()
+                            .collect();
+                        return Some(if common.is_empty() {
+                            ExistCondition::Always
+                        } else {
+                            ExistCondition::Conditional(Arc::new(common))
+                        });
+                    }
+                }
+                None
             },
         }
     }
@@ -63,6 +116,7 @@ impl ExistCondition {
 
     pub fn exists(&self, context: &mut EvaluationContext, report: &mut Vec<DMLError>) -> bool {
         match self {
+            ExistCondition::Never => false,
             ExistCondition::Always => true,
             ExistCondition::Conditional(conds) => {
                 for (tbranch, cond) in conds.as_ref() {
@@ -96,6 +150,7 @@ impl ExistCondition {
     }
     pub fn guaranteed_exists(&self, context: &mut EvaluationContext, report: &mut Vec<DMLError>) -> bool {
         match self {
+            ExistCondition::Never => false,
             ExistCondition::Always => true,
             ExistCondition::Conditional(conds) => {
                 for (tbranch, cond) in conds.as_ref() {
@@ -118,6 +173,8 @@ impl ExistCondition {
 impl ExistCondition {
     pub fn guaranteed_overlaps(&self, other: &ExistCondition) -> bool {
         match (self, other) {
+            (ExistCondition::Never, _) |
+            (_, ExistCondition::Never) => false,
             (ExistCondition::Always, ExistCondition::Always) => true,
             (ExistCondition::Conditional(selfvec),
              ExistCondition::Conditional(othervec)) => {
@@ -140,6 +197,8 @@ impl ExistCondition {
 
     pub fn guaranteed_excluded_from(&self, other: &ExistCondition) -> bool {
         match (self, other) {
+            (ExistCondition::Never, _) |
+            (_, ExistCondition::Never) => true,
             (ExistCondition::Conditional(selfvec),
              ExistCondition::Conditional(othervec)) => {
                 // Currently we cannot check if a condition is equivalent with another,
@@ -251,13 +310,12 @@ where T: DeclarationSpan {
 
 impl <T: Clone> ObjectDecl<T>
 where T: DeclarationSpan {
-    pub fn with_conds(obj: &T,
-                      conds: &Arc<Vec<(bool, Expression)>>)
-    -> ObjectDecl<T> {
-        if conds.is_empty() {
-            ObjectDecl::always(obj)
-        } else {
-            ObjectDecl::conditional(obj, conds)
+    pub fn with_condition(obj: &T,
+                          condition: &ExistCondition) -> ObjectDecl<T> {
+        ObjectDecl {
+            cond: condition.clone(),
+            obj: obj.clone(),
+            spec: StatementSpec::empty(),
         }
     }
 
@@ -427,7 +485,7 @@ impl StatementSpec {
 // Flattens hashifs
 fn flatten_hashif_branch(context: StatementContext,
                          stmnts: &Statements,
-                         conds: Arc<Vec<(bool, Expression)>>,
+                         condition: ExistCondition,
                          report: &mut Vec<LocalDMLError>)
                          -> StatementSpec {
     let mut objects = vec![];
@@ -444,24 +502,20 @@ fn flatten_hashif_branch(context: StatementContext,
     let mut errors = vec![];
     let mut templates = vec![];
     for inst in &stmnts.instantiations {
-        instantiations.push(ObjectDecl::with_conds(
-            inst, &conds));
+        instantiations.push(ObjectDecl::with_condition(
+            inst, &condition));
     }
     for err in &stmnts.errors {
-        errors.push(ObjectDecl::with_conds(
-            err, &conds));
+        errors.push(ObjectDecl::with_condition(
+            err, &condition));
     }
     for ineach in stmnts.ineachs.iter() {
         let spec = flatten_hashif_branch(StatementContext::InEach,
                                          &ineach.statements,
-                                         Arc::clone(&conds), report);
+                                         condition.clone(), report);
         ineachs.push(
             ObjectDecl {
-                cond: if conds.is_empty() {
-                    ExistCondition::Always
-                } else {
-                    ExistCondition::Conditional(Arc::clone(&conds))
-                },
+                cond: condition.clone(),
                 obj: ineach.clone(),
                 spec,
             });
@@ -507,7 +561,7 @@ fn flatten_hashif_branch(context: StatementContext,
                         let subspec = flatten_hashif_branch(
                             StatementContext::Template,
                             &tmpl.statements,
-                            Arc::default(),
+                            ExistCondition::Always,
                             report);
                         templates.push(
                             ObjectDecl {
@@ -539,8 +593,8 @@ fn flatten_hashif_branch(context: StatementContext,
                     // TODO: Verify that conditions are constants
                     // or builtin parameters
                     DMLObject::Import(import) =>
-                        imports.push(ObjectDecl::with_conds(
-                            import, &conds)),
+                        imports.push(ObjectDecl::with_condition(
+                            import, &condition)),
                     DMLObject::Loggroup(loggroup) =>
                         report.push(LocalDMLError {
                             range: loggroup.span.range,
@@ -559,24 +613,20 @@ fn flatten_hashif_branch(context: StatementContext,
                         let subspec = flatten_hashif_branch(
                             StatementContext::Object,
                             &compobj.statements,
-                            Arc::clone(&conds), report);
+                            condition.clone(), report);
                         objects.push(
                             ObjectDecl {
-                                cond: if conds.is_empty() {
-                                    ExistCondition::Always
-                                } else {
-                                    ExistCondition::Conditional(Arc::clone(&conds))
-                                },
+                                cond: condition.clone(),
                                 obj: compobj.clone(),
                                 spec: subspec,
                             });
                     },
                     DMLObject::Export(exp) =>
-                        exports.push(ObjectDecl::with_conds(
-                            exp, &conds)),
+                        exports.push(ObjectDecl::with_condition(
+                            exp, &condition)),
                     DMLObject::Hook(hook)=>
-                        hooks.push(ObjectDecl::with_conds(
-                            hook, &conds)),
+                        hooks.push(ObjectDecl::with_condition(
+                            hook, &condition)),
                     DMLObject::Method(meth) =>
                     // This error has already been reported, but
                     // we also need to clear our and pretend
@@ -589,19 +639,19 @@ fn flatten_hashif_branch(context: StatementContext,
                             modified_method.modifier
                                 = MethodModifier::None;
                             methods.push(
-                                ObjectDecl::with_conds(
-                                    &modified_method, &conds))
+                                ObjectDecl::with_condition(
+                                    &modified_method, &condition))
                         } else {
                             methods.push(
-                                ObjectDecl::with_conds(
-                                    meth, &conds))
+                                ObjectDecl::with_condition(
+                                    meth, &condition))
                         },
                     DMLObject::Saved(saved) =>
-                        saveds.push(ObjectDecl::with_conds(
-                            saved, &conds)),
+                        saveds.push(ObjectDecl::with_condition(
+                            saved, &condition)),
                     DMLObject::Session(sess) =>
-                        sessions.push(ObjectDecl::with_conds(
-                            sess, &conds)),
+                        sessions.push(ObjectDecl::with_condition(
+                            sess, &condition)),
                     DMLObject::Parameter(param) => {
                             if matches!(context, StatementContext::HashIfElse | StatementContext::HashIfTrue) {
                                 report.push(LocalDMLError {
@@ -614,27 +664,27 @@ fn flatten_hashif_branch(context: StatementContext,
                                         }),
                                 });
                             }
-                            params.push(ObjectDecl::with_conds(
-                                param, &conds))
+                            params.push(ObjectDecl::with_condition(
+                                param, &condition))
                             },
                 }
             },
             DMLStatement::HashIf(hi) => {
-                let mut true_conds = (*conds).clone();
-                true_conds.push(
-                    (true, hi.condition.clone()));
-                let mut false_conds = (*conds).clone();
-                false_conds.push(
-                    (false, hi.condition.clone()));
+                let true_condition = condition.and(
+                    &ExistCondition::Conditional(Arc::new(vec![
+                        (true, hi.condition.clone())])));
+                let false_condition = condition.and(
+                    &ExistCondition::Conditional(Arc::new(vec![
+                        (false, hi.condition.clone())])));
                 let truebranchspec = flatten_hashif_branch(
                     StatementContext::HashIfTrue,
                     &hi.truebranch,
-                    Arc::new(true_conds),
+                    true_condition,
                     report);
                 let falsebranchspec = flatten_hashif_branch(
                     StatementContext::HashIfElse,
                     &hi.falsebranch,
-                    Arc::new(false_conds),
+                    false_condition,
                     report);
                 truebranchspec.consume(&mut objects,
                                        &mut sessions,
@@ -802,7 +852,7 @@ impl TopLevel {
         for ineach in &statements.ineachs {
             let spec = flatten_hashif_branch(StatementContext::Object,
                                              &ineach.statements,
-                                             Arc::default(), report);
+                                             ExistCondition::Always, report);
             ineachs.push(
                 ObjectDecl {
                     cond: ExistCondition::Always,
@@ -855,7 +905,7 @@ impl TopLevel {
                             let subspec = flatten_hashif_branch(
                                 StatementContext::Template,
                                 &tmpl.statements,
-                                Arc::default(),
+                                ExistCondition::Always,
                                 report);
                             templates.push(
                                 ObjectDecl {
@@ -875,7 +925,7 @@ impl TopLevel {
                             let subspec = flatten_hashif_branch(
                                 StatementContext::Object,
                                 &compobj.statements,
-                                Arc::default(), report);
+                                ExistCondition::Always, report);
                             objects.push(
                                 ObjectDecl {
                                     cond: ExistCondition::Always,
@@ -910,17 +960,19 @@ impl TopLevel {
                 DMLStatement::HashIf(hi) => {
                     // First element of the cond tuple is whether the
                     // condition is NOT in an elsebranch
-                    let true_conds = Arc::new(vec![(true, hi.condition.clone())]);
-                    let false_conds = Arc::new(vec![(false, hi.condition.clone())]);
+                    let true_condition = ExistCondition::Conditional(
+                        Arc::new(vec![(true, hi.condition.clone())]));
+                    let false_condition = ExistCondition::Conditional(
+                        Arc::new(vec![(false, hi.condition.clone())]));
                     let truebranchspec = flatten_hashif_branch(
                         StatementContext::HashIfTrue,
                         &hi.truebranch,
-                        true_conds,
+                        true_condition,
                         report);
                     let falsebranchspec = flatten_hashif_branch(
                         StatementContext::HashIfElse,
                         &hi.falsebranch,
-                        false_conds,
+                        false_condition,
                         report);
                     truebranchspec.consume(&mut objects,
                                            &mut sessions,
