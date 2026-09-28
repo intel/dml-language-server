@@ -205,8 +205,20 @@ impl Position<ZeroIndexed> {
 // We end up storing _a lot_ of file-aware position info, resulting in a lot
 // of duplicating PathBufs. Here we attempt to store each pathbuf at most twice
 // (once for index->path, once for path->index)
-#[derive(Copy, Clone, Hash, PartialEq, Eq, Ord, PartialOrd)]
+#[derive(Copy, Clone, Hash, PartialEq, Eq)]
 pub struct PathBufKey(DefaultKey);
+
+impl PartialOrd for PathBufKey {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for PathBufKey {
+    fn cmp(&self, other: &Self) -> Ordering {
+        get_path(*self).cmp(&get_path(*other))
+    }
+}
 
 impl std::fmt::Debug for PathBufKey {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
