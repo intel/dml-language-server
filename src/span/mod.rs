@@ -235,13 +235,12 @@ lazy_static! {
 }
 
 fn track_path(path: &PathBuf) -> PathBufKey {
-    {
-        if let Some(index) = PATHBUF_INDEXES.lock().unwrap().get(path) {
-            return PathBufKey(*index);
-        }
+    let mut indices_lock = PATHBUF_INDEXES.lock().unwrap();
+    if let Some(index) = indices_lock.get(path) {
+        return PathBufKey(*index);
     }
     let index = PATHBUF_STORAGE.lock().unwrap().insert(path.clone());
-    PATHBUF_INDEXES.lock().unwrap().insert(path.clone(), index);
+    indices_lock.insert(path.clone(), index);
     PathBufKey(index)
 }
 
