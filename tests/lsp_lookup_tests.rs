@@ -796,19 +796,6 @@ mod tests {
     }
 
     #[test]
-    fn conditional_diamond_deduplicates_object_specs() {
-        init_logging();
-        let setup = setup_test(&["conditional_auto_parameter.dml"]);
-        let analysis = setup.analysis.lock().unwrap();
-        let device = analysis.get_device_analysis(&setup.main_canon_path)
-            .expect("device analysis should exist");
-        let errors: Vec<_> = device.errors.values().flatten().filter(|error|
-            error.description.contains("auto-parameter")).collect();
-        assert!(errors.is_empty(), "unexpected auto-parameter errors: {:#?}",
-            errors);
-    }
-
-    #[test]
     fn distinct_auto_parameter_assignments_still_conflict() {
         init_logging();
         let setup = setup_test(&["conflicting_auto_parameter.dml"]);
@@ -819,6 +806,33 @@ mod tests {
             error.description.contains("auto-parameter")).collect();
         assert_eq!(errors.len(), 1,
                    "expected one auto-parameter error, got: {:#?}", errors);
+    }
+
+    #[test]
+    fn hashif_conflicts_respect_branch_reachability() {
+        init_logging();
+        let setup = setup_test(&["conditional_conflicts.dml"]);
+        let analysis = setup.analysis.lock().unwrap();
+        let device = analysis.get_device_analysis(&setup.main_canon_path)
+            .expect("device analysis should exist");
+        let errors: Vec<_> = device.errors.values().flatten().collect();
+        let mut conflicts: Vec<_> = errors.iter().filter_map(|error|
+            if error.description.starts_with("Name collision in declaration") ||
+               error.description.starts_with("Inconsistent object type") {
+                Some(error.description.as_str())
+            } else {
+                None
+            }).collect();
+        conflicts.sort();
+
+        assert_eq!(conflicts, vec![
+            "Inconsistent object type for indeterminate_object",
+            "Name collision in declaration on 'indeterminate_name'",
+        ], "unexpected conditional conflicts; all errors: {:#?}", errors);
+        assert!(!errors.iter().any(|error|
+            error.description.contains("auto-parameter")),
+            "unexpected conditional diamond conflict; all errors: {:#?}",
+            errors);
     }
 
     #[test]
