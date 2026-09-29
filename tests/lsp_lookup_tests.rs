@@ -829,6 +829,12 @@ mod tests {
             "Inconsistent object type for indeterminate_object",
             "Name collision in declaration on 'indeterminate_name'",
         ], "unexpected conditional conflicts; all errors: {:#?}", errors);
+        let dimensionality_conflicts: Vec<_> = errors.iter().filter(|error|
+            error.description == "Mismatching number of dimensions in object \
+                                  declaration").collect();
+        assert_eq!(dimensionality_conflicts.len(), 1,
+                   "expected only the indeterminate dimensionality conflict; \
+                    all errors: {:#?}", errors);
         assert!(!errors.iter().any(|error|
             error.description.contains("auto-parameter")),
             "unexpected conditional diamond conflict; all errors: {:#?}",

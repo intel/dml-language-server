@@ -15,9 +15,11 @@ template exclusive_parameter {
 #if (simics_api_version == 1) {
     is exclusive_method;
     bank exclusive_object {}
+    group exclusive_dimensions {}
 } #else {
     is exclusive_parameter;
     register exclusive_object {}
+    group exclusive_dimensions[i < 2] {}
 }
 
 template indeterminate_method {
@@ -33,6 +35,8 @@ template indeterminate_parameter {
     is indeterminate_parameter;
     bank indeterminate_object {}
     register indeterminate_object {}
+    group indeterminate_dimensions {}
+    group indeterminate_dimensions[i < 2] {}
 }
 
 template false_live_method {
@@ -45,9 +49,11 @@ template false_dead_parameter {
 
 is false_live_method;
 bank false_dead_object {}
+group false_dead_dimensions {}
 #if (false) {
     is false_dead_parameter;
     register false_dead_object {}
+    group false_dead_dimensions[i < 2] {}
 }
 
 template dml_1_2_live_method {
@@ -60,9 +66,11 @@ template dml_1_2_dead_parameter {
 
 is dml_1_2_live_method;
 bank dml_1_2_dead_object {}
+group dml_1_2_dead_dimensions {}
 #if (dml_1_2) {
     is dml_1_2_dead_parameter;
     register dml_1_2_dead_object {}
+    group dml_1_2_dead_dimensions[i < 2] {}
 }
 
 template diamond_base {

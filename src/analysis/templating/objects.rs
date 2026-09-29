@@ -1741,6 +1741,66 @@ fn report_object_kind_conflicts(name: &str,
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct DimensionalityCandidate {
+    span: ZeroSpan,
+    dimensions: usize,
+    condition: ExistCondition,
+}
+
+impl DimensionalityCandidate {
+    fn conflicts_with(&self, other: &Self) -> bool {
+        self.dimensions != other.dimensions &&
+        !self.condition.guaranteed_excluded_from(&other.condition)
+    }
+}
+
+fn report_dimensionality_conflicts(
+    mut candidates: Vec<DimensionalityCandidate>,
+    report: &mut Vec<DMLError>,
+) {
+    candidates.sort();
+    candidates.dedup();
+
+    let mut neighbors = vec![vec![]; candidates.len()];
+    for first in 0..candidates.len() {
+        for second in first + 1..candidates.len() {
+            if candidates[first].conflicts_with(&candidates[second]) {
+                neighbors[first].push(second);
+                neighbors[second].push(first);
+            }
+        }
+    }
+
+    let mut represented = vec![false; candidates.len()];
+    while (0..candidates.len()).any(|index|
+        neighbors[index].iter().any(|neighbor|!represented[*neighbor])) {
+        let anchor = (0..candidates.len()).filter(|index|
+            neighbors[*index].iter().any(|neighbor|!represented[*neighbor]))
+            .max_by_key(|index|(
+                neighbors[*index].iter().filter(
+                    |neighbor|!represented[**neighbor]).count(),
+                Reverse(*index)));
+        let Some(anchor) = anchor else { break; };
+
+        let related: Vec<usize> = neighbors[anchor].iter().copied().filter(
+            |neighbor|!represented[*neighbor]).collect();
+        represented[anchor] = true;
+        for neighbor in &related {
+            represented[*neighbor] = true;
+        }
+        report.push(DMLError {
+            span: candidates[anchor].span,
+            description: "Mismatching number of dimensions in object \
+                          declaration".to_string(),
+            related: related.into_iter().map(|neighbor|(
+                candidates[neighbor].span,
+                "mismatching dimensionality here".to_string())).collect(),
+            severity: Some(DiagnosticSeverity::ERROR),
+        });
+    }
+}
+
 fn collect_symbols(parameters: &[DMLParameter],
                    obj_specs: &[AppliedObjectSpec],
                    eval_context: &mut EvaluationContext,
@@ -2099,6 +2159,16 @@ fn merge_composite_subobj<'c>(name: String,
             span: decl.obj.object.name.span,
             kind: decl.obj.kind.kind,
         }).collect(), report);
+    report_dimensionality_conflicts(specs.iter().map(|(decl, _)|
+        DimensionalityCandidate {
+            condition: decl.cond.clone(),
+            span: if decl.obj.dims.is_empty() {
+                *decl.obj.span()
+            } else {
+                combine_vec_of_decls(&decl.obj.dims)
+            },
+            dimensions: decl.obj.dims.len(),
+        }).collect(), report);
 
     // Vec of (auth, mismatching name) array declarations
     let mut array_info: Vec<(ArrayDim, Vec<&ZeroSpan>)> =
@@ -2111,30 +2181,6 @@ fn merge_composite_subobj<'c>(name: String,
         }
         if auth_obj.cond.guaranteed_excluded_from(&decl.cond) {
             continue;
-        }
-        if decl.obj.dims.len() != array_info.len() {
-            // When an object with no array decl conflicts with an object
-            // with one, blame the object decl
-            let error_span = if !decl.obj.dims.is_empty() {
-                combine_vec_of_decls(&decl.obj.dims)
-            } else {
-                *decl.obj.span()
-            };
-            let related = if !auth_obj.obj.dims.is_empty() {
-                vec![(combine_vec_of_decls(&auth_obj.obj.dims),
-                      "expected this dimensionality".to_string())]
-            } else {
-                vec![(*auth_obj.obj.span(),
-                      "no dimensions declared here".to_string())]
-            };
-
-            report.push(DMLError {
-                span: error_span,
-                description: "Mismatching number of dimensions \
-                              in object declaration".to_string(),
-                related,
-                severity: Some(DiagnosticSeverity::ERROR),
-            });
         }
         for ((auth_decl, mismatches), other_decl) in
             array_info.iter_mut().zip(decl.obj.dims.iter()) {
@@ -2809,8 +2855,10 @@ mod tests {
     use crate::analysis::structure::toplevel::ExistCondition;
 
     use super::{CollisionCandidate, CollisionGroup, CollisionKind,
-                ObjectKindCandidate, compare_collision_candidates,
-                report_collision_candidates, report_object_kind_conflicts};
+                DimensionalityCandidate, ObjectKindCandidate,
+                compare_collision_candidates, report_collision_candidates,
+                report_dimensionality_conflicts,
+                report_object_kind_conflicts};
 
     fn span(line: u32) -> ZeroSpan {
         static TEST_SPAN: OnceLock<ZeroSpan> = OnceLock::new();
@@ -2849,6 +2897,16 @@ mod tests {
             condition,
             span: span(line),
             kind,
+        }
+    }
+
+    fn dimensionality_candidate(line: u32, condition: ExistCondition,
+                                dimensions: usize)
+                                -> DimensionalityCandidate {
+        DimensionalityCandidate {
+            condition,
+            span: span(line),
+            dimensions,
         }
     }
 
@@ -3177,6 +3235,64 @@ mod tests {
         report_object_kind_conflicts(
             "obj", candidates.into_iter().rev().collect(),
             &mut reverse_report);
+
+        assert_eq!(forward_report, reverse_report);
+    }
+
+    #[test]
+    fn dimensionalities_are_fully_cross_checked() {
+        // The first two declarations cannot coexist, but the unconditional
+        // declaration conflicts with both. Comparing only against the first
+        // declaration would miss the second edge.
+        let mut report = vec![];
+        report_dimensionality_conflicts(vec![
+            dimensionality_candidate(0, conditional(true), 0),
+            dimensionality_candidate(2, conditional(false), 1),
+            dimensionality_candidate(1, ExistCondition::Always, 2),
+        ], &mut report);
+
+        assert_eq!(report.len(), 1);
+        assert_eq!(report[0].span.range.row_start.0, 1);
+        assert_eq!(report[0].related.len(), 2);
+        assert_eq!(report[0].related[0].0.range.row_start.0, 0);
+        assert_eq!(report[0].related[1].0.range.row_start.0, 2);
+    }
+
+    #[test]
+    fn mutually_exclusive_dimensionalities_do_not_conflict() {
+        let mut report = vec![];
+        report_dimensionality_conflicts(vec![
+            dimensionality_candidate(0, conditional(true), 0),
+            dimensionality_candidate(1, conditional(false), 1),
+        ], &mut report);
+
+        assert!(report.is_empty());
+    }
+
+    #[test]
+    fn matching_dimensionalities_do_not_conflict() {
+        let mut report = vec![];
+        report_dimensionality_conflicts(vec![
+            dimensionality_candidate(0, ExistCondition::Always, 1),
+            dimensionality_candidate(1, ExistCondition::Always, 1),
+        ], &mut report);
+
+        assert!(report.is_empty());
+    }
+
+    #[test]
+    fn dimensionality_diagnostics_are_independent_of_input_order() {
+        let candidates = vec![
+            dimensionality_candidate(2, ExistCondition::Always, 0),
+            dimensionality_candidate(0, ExistCondition::Always, 1),
+            dimensionality_candidate(1, ExistCondition::Always, 2),
+        ];
+        let mut forward_report = vec![];
+        report_dimensionality_conflicts(
+            candidates.clone(), &mut forward_report);
+        let mut reverse_report = vec![];
+        report_dimensionality_conflicts(
+            candidates.into_iter().rev().collect(), &mut reverse_report);
 
         assert_eq!(forward_report, reverse_report);
     }
