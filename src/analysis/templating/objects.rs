@@ -1342,9 +1342,6 @@ where F: FnMut(&(ObjectDecl<Parameter>, Rank)) -> bool {
     to_return
 }
 
-// TODO: Right now, this does not consider existconditions at all. Needs
-// to try to resolve them at this point in order to non report conflicts
-// between mutually exclusive branches
 fn resolve_parameter(obj_loc: &ZeroSpan,
                      name: &str,
                      decls: Vec<(ObjectDecl<Parameter>, Rank)>,
@@ -1383,7 +1380,8 @@ fn resolve_parameter(obj_loc: &ZeroSpan,
         if def.obj.value.as_ref().is_some_and(
             |v|matches!(v, ParamValue::Auto(_))) {
             let conflicts: Vec<_> = sorted_definitions.iter().filter(
-                |(other, _)|other != def).collect();
+                |(other, _)|other != def &&
+                    !def.cond.guaranteed_excluded_from(&other.cond)).collect();
             if !conflicts.is_empty() {
                 report.push(DMLError {
                     span: *def.obj.span(),

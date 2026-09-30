@@ -85,3 +85,17 @@ template diamond_right is diamond_base {}
 } #else {
     is diamond_right;
 }
+
+template exclusive_auto {
+    param exclusive_auto_parameter auto;
+}
+
+template exclusive_auto_assignment {
+    param exclusive_auto_parameter = 1;
+}
+
+#if (simics_api_version == 4) {
+    is exclusive_auto;
+} #else {
+    is exclusive_auto_assignment;
+}

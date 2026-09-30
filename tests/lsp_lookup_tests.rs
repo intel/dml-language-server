@@ -837,7 +837,7 @@ mod tests {
                     all errors: {:#?}", errors);
         assert!(!errors.iter().any(|error|
             error.description.contains("auto-parameter")),
-            "unexpected conditional diamond conflict; all errors: {:#?}",
+            "unexpected conditional auto-parameter conflict; all errors: {:#?}",
             errors);
     }
 
