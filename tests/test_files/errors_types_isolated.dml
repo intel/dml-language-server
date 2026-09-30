@@ -1,0 +1,10 @@
+//  © 2024 Intel Corporation
+//  SPDX-License-Identifier: Apache-2.0 and MIT
+
+dml 1.4;
+device errors_types_isolated_test;
+
+typedef struct { int; } missing_struct_member_name_t; // @error[18]="missing name in declaration"
+typedef layout "little-endian" { int; } missing_layout_member_name_t; // @error[34]="missing name in declaration"
+typedef layout "middle-endian" { int value; } invalid_byte_order_t; // @error[16]="Must be 'big-endian' or 'little-endian'"
+session sequence() missing_sequence_name; // @error[9]="missing name in declaration" @error[18]="Unexpected token ')', expected type ident" @error[41]="Expected ')', got ';'"

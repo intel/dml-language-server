@@ -1,0 +1,16 @@
+//  © 2024 Intel Corporation
+//  SPDX-License-Identifier: Apache-2.0 and MIT
+
+dml 1.4;
+
+device builtin_type_lookup_test;
+
+session char v_char;
+session int v_int;
+session uint v_uint;
+session long v_long;
+session ulong v_ulong;
+session size_t v_size_t;
+session ssize_t v_ssize_t;
+session uint64_t v_uint64_t;
+session int64_t v_int64_t;

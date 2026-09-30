@@ -18,7 +18,7 @@ use crate::analysis::templating::objects::{CoarseObjectKind,
                                            DMLCoarseObjectKind,
                                            ObjectSpec, Spec};
 use crate::analysis::templating::Declaration;
-use crate::analysis::templating::types::eval_type_simple;
+use crate::analysis::templating::types::{eval_type_simple, GlobalTypeStorage};
 use crate::analysis::templating::topology::Rank;
 
 use crate::analysis::DeclarationSpan;
@@ -258,6 +258,7 @@ impl DMLTrait {
                    maybeloc: Option<&ZeroSpan>,
                    spec: &Arc<ObjectSpec>,
                    traits: &HashMap<String, Arc<DMLTrait>>,
+                   types: &mut GlobalTypeStorage,
                    report: &mut Vec<DMLError>)
                    -> Arc<DMLTrait> {
         debug!("Processing trait for {}", name);
@@ -345,62 +346,61 @@ impl DMLTrait {
 
         // Flatten sessions and saveds into non-colliding data declarations
         // with resolved types
-        let sessions: HashMap<String, Declaration> =
-            spec.sessions.iter().filter_map(discard_conditional)
-            .flat_map(|sess|sess.vars)
-            .map(|decl|Declaration {
-                name: decl.object.name.clone(),
-                type_ref: {
-                    // TODO: How to actually evaluate this?
-                    // Needs global scope
-                    let (_, typ) = eval_type_simple(
-                        &decl.typed, (), ());
-                    typ.into()
-                }
-            }).filter(|d|maybe_report_collision(
-                &mut used_names,
-                d.name.val.clone(),
-                d.name.span,
-                report)).map(|d|(d.name.val.clone(), d)).collect();
+        let mut sessions: HashMap<String, Declaration> = HashMap::default();
+        for decl in spec.sessions.iter().filter_map(discard_conditional)
+            .flat_map(|sess|sess.vars) {
+                let typ = eval_type_simple(&decl.typed, types, report);
+                let d = Declaration {
+                    name: decl.object.name.clone(),
+                    type_ref: typ,
+                };
+                if maybe_report_collision(
+                    &mut used_names,
+                    d.name.val.clone(),
+                    d.name.span,
+                    report) {
+                        sessions.insert(d.name.val.clone(), d);
+                    }
+            }
         trace!("sessions are: {:?}", sessions);
 
-        let saveds: HashMap<String, Declaration> =
-            spec.saveds.iter().filter_map(discard_conditional)
-            .flat_map(|sav|sav.vars)
-            .map(|decl|Declaration {
-                name: decl.object.name.clone(),
-                type_ref: {
-                    // TODO: How to actually evaluate this?
-                    // Needs global scope
-                    let (_, typ) = eval_type_simple(
-                        &decl.typed, (), ());
-                    typ.into()
-                }
-            }).filter(|d|maybe_report_collision(
-                &mut used_names,
-                d.name.val.clone(),
-                d.name.span,
-                report)).map(|d|(d.name.val.clone(), d)).collect();
+        let mut saveds: HashMap<String, Declaration> = HashMap::default();
+        for decl in spec.saveds.iter().filter_map(discard_conditional)
+            .flat_map(|sav|sav.vars) {
+                let typ = eval_type_simple(&decl.typed, types, report);
+                let d = Declaration {
+                    name: decl.object.name.clone(),
+                    type_ref: typ,
+                };
+                if maybe_report_collision(
+                    &mut used_names,
+                    d.name.val.clone(),
+                    d.name.span,
+                    report) {
+                        saveds.insert(d.name.val.clone(), d);
+                    }
+            }
         trace!("saveds are: {:?}", saveds);
 
         // Map typed parameters into non-colliding declarations
-        let params: HashMap<String, Declaration> = spec.params.iter()
+        let mut params: HashMap<String, Declaration> = HashMap::default();
+        for param in spec.params.iter()
             .filter_map(discard_conditional)
-            .filter(|param|param.typed.is_some())
-            .map(|param|Declaration {
-                name: param.object.name.clone(),
-                type_ref: {
-                    // TODO: How to actually evaluate this?
-                    // Needs global scope
-                    let (_, typ) = eval_type_simple(
-                        &param.typed.unwrap(), (), ());
-                    typ.into()
-                }
-            }).filter(|d|maybe_report_collision(
-                &mut used_names,
-                d.name.val.clone(),
-                d.name.span,
-                report)).map(|d|(d.name.val.clone(), d)).collect();
+            .filter(|param|param.typed.is_some()) {
+                let typ = eval_type_simple(
+                    &param.typed.clone().unwrap(), types, report);
+                let d = Declaration {
+                    name: param.object.name.clone(),
+                    type_ref: typ,
+                };
+                if maybe_report_collision(
+                    &mut used_names,
+                    d.name.val.clone(),
+                    d.name.span,
+                    report) {
+                        params.insert(d.name.val.clone(), d);
+                    }
+            }
         trace!("params are: {:?}", params);
 
         // Map methods into non-colliding method declarations
@@ -408,7 +408,7 @@ impl DMLTrait {
             .filter_map(discard_conditional)
             .filter(|method|method.is_abstract())
             .filter_map(|m| {
-                let new_m = MethodDecl::from_content(&m, report);
+                let new_m = MethodDecl::from_content(&m, types, report);
                 if maybe_report_collision(
                     &mut used_names,
                     new_m.identity().to_string(),
@@ -424,7 +424,7 @@ impl DMLTrait {
         for method in spec.methods.iter()
             .filter_map(discard_conditional)
             .filter(|method|!method.is_abstract()) {
-            let new_m = MethodDecl::from_content(&method, report);
+            let new_m = MethodDecl::from_content(&method, types, report);
             // special case, methods are allowed to conflict 
             // with abstract methods
             // NOTE: Right now this means we'd report the collision

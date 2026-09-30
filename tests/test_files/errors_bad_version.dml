@@ -1,0 +1,7 @@
+//  © 2024 Intel Corporation
+//  SPDX-License-Identifier: Apache-2.0 and MIT
+
+// Isolated-analysis error: the language server only supports DML 1.4.
+
+// @error[1]="only supports DML 1.4"
+dml 1.3;

@@ -1,22 +1,44 @@
 //  © 2024 Intel Corporation
 //  SPDX-License-Identifier: Apache-2.0 and MIT
-use crate::lint::{rules::{indentation::{IndentCodeBlockArgs, IndentClosingBraceArgs},
-                            spacing::SpBracesArgs,
-                            CurrentRules},
-                            AuxParams,
-                            DMLStyleError};
+use crate::{analysis::structure::types::string_to_endianness, lint::{AuxParams, DMLStyleError, rules::{CurrentRules, indentation::{IndentClosingBraceArgs, IndentCodeBlockArgs}, spacing::SpBracesArgs}}};
 use crate::span::Range;
 use crate::analysis::parsing::lexer::TokenKind;
 use crate::analysis::parsing::parser::{doesnt_understand_tokens,
                                        FileParser, Parse, ParseContext,
                                        FileInfo};
-use crate::analysis::parsing::tree::{AstObject, TreeElement, TreeElements,
-                            LeafToken, ZeroRange};
+use crate::analysis::parsing::tree::{AstObject, TreeElement, TreeElementMember,
+                            TreeElements, LeafToken, ZeroPosition, ZeroRange};
 use crate::analysis::parsing::misc::{CDecl, ident_filter};
 use crate::analysis::parsing::expression::Expression;
 use crate::analysis::reference::{CodeReference, Reference, ReferenceKind};
 use crate::analysis::{FileSpec, LocalDMLError};
 use crate::vfs::TextFile;
+
+#[derive(Debug)]
+pub enum StructOrLayoutRef<'t> {
+    Struct(&'t StructTypeContent),
+    Layout(&'t LayoutContent),
+}
+
+// Find the innermost struct/layout at a position
+pub fn struct_or_layout_at_pos<'t>(node: &'t dyn TreeElementMember, pos: ZeroPosition)
+    -> Option<StructOrLayoutRef<'t>> {
+    if !node.range().contains_pos(pos) {
+        return None;
+    }
+    for sub in node.subs() {
+        if let Some(found) = struct_or_layout_at_pos(sub, pos) {
+            return Some(found);
+        }
+    }
+    if let Some(s) = node.as_any().downcast_ref::<StructTypeContent>() {
+        return Some(StructOrLayoutRef::Struct(s));
+    }
+    if let Some(l) = node.as_any().downcast_ref::<LayoutContent>() {
+        return Some(StructOrLayoutRef::Layout(l));
+    }
+    None
+}
 
 pub fn typeident_filter(token: TokenKind) -> bool {
     match token {
@@ -91,7 +113,7 @@ impl Parse<BaseTypeContent> for StructTypeContent {
             }
         }
         let rbrace = new_context.expect_next_kind(stream, TokenKind::RBrace);
-        BaseTypeContent::StructType(StructTypeContent {
+        BaseTypeContent::Struct(StructTypeContent {
             structtok,
             lbrace,
             members,
@@ -125,9 +147,10 @@ impl TreeElement for LayoutContent {
         for (field, _) in &self.fields {
             errors.append(&mut field.ensure_named());
         }
+        // TODO: Consider not checking this here, and instead
+        // checking during structural conversion (we have to convert anyway)
         if let Some(byteorder) = self.byteorder.read_leaf(file) {
-            if byteorder != r#""big-endian""# &&
-                byteorder != r#""little-endian""# {
+            if string_to_endianness(byteorder.as_str()).is_none() {
                 errors.push(LocalDMLError {
                     range: self.byteorder.range(),
                     description: "Must be 'big-endian' or \
@@ -161,16 +184,14 @@ impl Parse<BaseTypeContent> for LayoutContent {
             stream, TokenKind::StringConstant);
         let lbrace = new_context.expect_next_kind(stream, TokenKind::LBrace);
         let mut fields = vec![];
-        while match new_context.peek_kind(stream) {
-            Some(TokenKind::RBrace) | None => false,
-            Some(_) => {
-                let field = CDecl::parse(&list_context, stream, file_info);
-                let semi = list_context.expect_next_kind(
-                    stream, TokenKind::SemiColon);
-                fields.push((field, semi));
-                true
-            },
-        } {}
+        let mut cont = !new_context.peek_kind(stream).is_none_or(|t|t == TokenKind::RBrace);
+        while cont {
+            let field = CDecl::parse(&list_context, stream, file_info);
+            let semi = list_context.expect_next_kind(
+                stream, TokenKind::SemiColon);
+            fields.push((field, semi));
+            cont = new_context.peek_kind(stream).is_some_and(|t|CDecl::first_token_matcher(t) || t == TokenKind::SemiColon);
+        }
         let rbrace = new_context.expect_next_kind(stream, TokenKind::RBrace);
         BaseTypeContent::Layout(LayoutContent {
             layout,
@@ -404,7 +425,7 @@ impl TreeElement for SequenceContent {
 impl Parse<BaseTypeContent> for SequenceContent {
     fn parse(context: &ParseContext, stream: &mut FileParser<'_>, _file_info: &FileInfo) -> BaseType {
         fn understands_rparen(token: TokenKind) -> bool {
-            token == TokenKind::RBracket
+            token == TokenKind::RParen
         }
         let mut new_context = context.enter_context(understands_rparen);
         // Guaranteed by parser
@@ -466,7 +487,7 @@ impl Parse<BaseTypeContent> for HookTypeContent {
             args.push((arg, comma));
         }
         let rparen = new_context.expect_next_kind(stream, TokenKind::RParen);
-        BaseTypeContent::HookType(HookTypeContent {
+        BaseTypeContent::Hook(HookTypeContent {
             hook, lparen, args, rparen
         }).into()
     }
@@ -475,12 +496,12 @@ impl Parse<BaseTypeContent> for HookTypeContent {
 #[derive(Debug, Clone, PartialEq)]
 pub enum BaseTypeContent {
     Ident(LeafToken),
-    StructType(StructTypeContent),
+    Struct(StructTypeContent),
     Layout(LayoutContent),
     Bitfields(BitfieldsContent),
     TypeOf(TypeOfContent),
     Sequence(SequenceContent),
-    HookType(HookTypeContent),
+    Hook(HookTypeContent),
 }
 
 impl TreeElement for BaseTypeContent {
@@ -488,7 +509,12 @@ impl TreeElement for BaseTypeContent {
                       accumulator: &mut Vec<Reference>,
                       file: FileSpec<'a>) {
         self.default_references(accumulator, file);
-        if let BaseTypeContent::Ident(leaf) = self {
+        let type_reference = match self {
+            BaseTypeContent::Ident(leaf) => Some(leaf),
+            BaseTypeContent::Sequence(sequence) => Some(&sequence.ident),
+            _ => None,
+        };
+        if let Some(leaf) = type_reference {
             if let Some(refr) = CodeReference::global_from_token(
                 leaf, file, ReferenceKind::Type) {
                 accumulator.push(refr.into());
@@ -499,23 +525,23 @@ impl TreeElement for BaseTypeContent {
     fn range(&self) -> ZeroRange {
         match self {
             Self::Ident(content) => content.range(),
-            Self::StructType(content) => content.range(),
+            Self::Struct(content) => content.range(),
             Self::Layout(content) => content.range(),
             Self::Bitfields(content) => content.range(),
             Self::TypeOf(content) => content.range(),
             Self::Sequence(content) => content.range(),
-            Self::HookType(content) => content.range(),
+            Self::Hook(content) => content.range(),
         }
     }
     fn subs(&self) -> TreeElements<'_> {
         match self {
             Self::Ident(content) => create_subs![content],
-            Self::StructType(content) => create_subs![content],
+            Self::Struct(content) => create_subs![content],
             Self::Layout(content) => create_subs![content],
             Self::Bitfields(content) => create_subs![content],
             Self::TypeOf(content) => create_subs![content],
             Self::Sequence(content) => create_subs![content],
-            Self::HookType(content) => create_subs![content],
+            Self::Hook(content) => create_subs![content],
         }
     }
 }
@@ -645,6 +671,7 @@ impl Parse<CTypeDeclSimpleContent> for CTypeDeclSimple {
     }
 }
 
+// NOTE: this is a  'ctypedecl' which is a C-style typedecl with NO identifier
 #[derive(Debug, Clone, PartialEq)]
 pub struct CTypeDeclContent {
     pub consttok: Option<LeafToken>,
@@ -695,6 +722,7 @@ impl CTypeDeclContent {
 mod test {
     use super::*;
     use crate::test_helpers::*;
+    use logos::Logos;
 
     #[test]
     fn ctypedecl() {
@@ -725,5 +753,132 @@ mod test {
                               }),
                       }),
             &vec![])
+    }
+
+    fn parse_base_type(source: &str) -> BaseType {
+        let lexer = TokenKind::lexer(source);
+        let mut fileparse = FileParser::new(lexer);
+        let top_context = ParseContext::new_context(doesnt_understand_tokens);
+        let file_info = FileInfo::default();
+        BaseType::parse(&top_context, &mut fileparse, &file_info)
+    }
+
+    #[test]
+    fn struct_or_layout_at_pos_finds_innermost_nested_match() {
+        let source = "struct { struct { int x; } inner; \
+                       layout \"big-endian\" { int y; } lay; int z; }";
+        let ast = parse_base_type(source);
+        let root: &dyn TreeElementMember = &ast;
+
+        match struct_or_layout_at_pos(root, zero_position(0, 22)) {
+            Some(StructOrLayoutRef::Struct(s)) =>
+                assert_eq!(s.range(), zero_range(0, 0, 9, 26)),
+            other => panic!("Expected inner struct, got {:?}", other),
+        }
+
+        match struct_or_layout_at_pos(root, zero_position(0, 60)) {
+            Some(StructOrLayoutRef::Layout(l)) =>
+                assert_eq!(l.range(), zero_range(0, 0, 34, 64)),
+            other => panic!("Expected layout, got {:?}", other),
+        }
+
+        match struct_or_layout_at_pos(root, zero_position(0, 74)) {
+            Some(StructOrLayoutRef::Struct(s)) =>
+                assert_eq!(s.range(), ast.range()),
+            other => panic!("Expected outer struct, got {:?}", other),
+        }
+
+        assert!(struct_or_layout_at_pos(root, zero_position(1, 0)).is_none());
+    }
+
+    #[test]
+    fn parses_type_content_variants() {
+        let struct_ty = parse_base_type("struct { }");
+        let struct_content = struct_ty.as_actual().expect("missing struct type");
+        let BaseTypeContent::Struct(StructTypeContent { members, .. }) = struct_content else {
+            panic!("expected struct type");
+        };
+        assert!(members.is_empty());
+
+        let layout_ty = parse_base_type("layout \"big-endian\" { }");
+        let layout_content = layout_ty.as_actual().expect("missing layout type");
+        let BaseTypeContent::Layout(LayoutContent { fields, .. }) = layout_content else {
+            panic!("expected layout type");
+        };
+        assert!(fields.is_empty());
+
+        let bitfields_ty = parse_base_type("bitfields 16 { uint8 hi @ [15:8]; uint1 flag @ [7]; }");
+        let bitfields_content = bitfields_ty.as_actual().expect("missing bitfields type");
+        let BaseTypeContent::Bitfields(BitfieldsContent { fields, .. }) = bitfields_content else {
+            panic!("expected bitfields type");
+        };
+        assert_eq!(fields.len(), 2);
+        assert!(matches!(fields[0].range, BitfieldsRange::Range(_, _, _)));
+        assert!(matches!(fields[1].range, BitfieldsRange::Expression(_)));
+
+        let typeof_ty = parse_base_type("typeof(value)");
+        assert!(matches!(typeof_ty.as_actual(), Some(BaseTypeContent::TypeOf(_))));
+
+        let sequence_ty = parse_base_type("sequence(template_t)");
+        let sequence_content = sequence_ty.as_actual().expect("missing sequence type");
+        let BaseTypeContent::Sequence(SequenceContent { ident, .. }) = sequence_content else {
+            panic!("expected sequence type");
+        };
+        assert_eq!(ident.get_token().expect("missing sequence identifier").kind,
+                   TokenKind::Identifier);
+
+        let hook_ty = parse_base_type("hook(int, float)");
+        let hook_content = hook_ty.as_actual().expect("missing hook type");
+        let BaseTypeContent::Hook(HookTypeContent { args, .. }) = hook_content else {
+            panic!("expected hook type");
+        };
+        assert_eq!(args.len(), 2);
+        assert!(args[0].1.is_some());
+        assert!(args[1].1.is_none());
+    }
+
+    #[test]
+    fn hook_argument_cardinality_and_comma_shape() {
+        let hook_args = |source: &str| {
+            let parsed = parse_base_type(source);
+            let Some(BaseTypeContent::Hook(HookTypeContent { args, .. })) = parsed.as_actual()
+                else { panic!("expected hook type for {}", source); };
+            args.clone()
+        };
+
+        assert!(hook_args("hook()").is_empty());
+        let one = hook_args("hook(int)");
+        assert_eq!(one.len(), 1);
+        assert!(one[0].1.is_none(), "one argument must not synthesize a comma");
+
+        let two = hook_args("hook(int, float)");
+        assert_eq!(two.len(), 2);
+        assert!(two[0].1.is_some(), "first argument must retain its comma");
+        assert!(two[1].1.is_none(), "last argument must not have a trailing comma");
+    }
+
+    #[test]
+    fn type_token_matchers_accept_c_type_words() {
+        for token in [TokenKind::Int, TokenKind::Float, TokenKind::Char,
+                      TokenKind::Double, TokenKind::Long, TokenKind::Short,
+                      TokenKind::Signed, TokenKind::Unsigned, TokenKind::Void,
+                      TokenKind::Register, TokenKind::Identifier] {
+            assert!(typeident_filter(token), "{:?} should be a type identifier", token);
+            assert!(BaseType::first_token_matcher(token));
+        }
+        for token in [TokenKind::LParen, TokenKind::SemiColon, TokenKind::Comma] {
+            assert!(!typeident_filter(token), "{:?} should not be a type identifier", token);
+            assert!(!BaseType::first_token_matcher(token));
+        }
+        for token in [TokenKind::Struct, TokenKind::Layout, TokenKind::Bitfields,
+                      TokenKind::TypeOf, TokenKind::Sequence, TokenKind::Hook] {
+            assert!(BaseType::first_token_matcher(token));
+            assert!(CTypeDeclContent::first_token_matcher(token));
+        }
+        assert!(CTypeDeclContent::first_token_matcher(TokenKind::Const));
+        for token in [TokenKind::LBracket, TokenKind::LParen, TokenKind::SemiColon,
+                      TokenKind::Comma, TokenKind::Multiply] {
+            assert!(!CTypeDeclContent::first_token_matcher(token));
+        }
     }
 }

@@ -1,0 +1,27 @@
+//  © 2024 Intel Corporation
+//  SPDX-License-Identifier: Apache-2.0 and MIT
+
+dml 1.4;
+
+device parameter_type_lookup_test;
+
+// @loc[31]=packet_t_def
+typedef struct { int value; } packet_t;
+
+template typed_parameter_template {
+    // @loc[11]=typed_parameter_def
+    param packet: packet_t; // @goto-type-def[11]->packet_t_def
+
+    method read_parameter() {
+        log info: "%d", packet.value; // @goto-decl[25]->typed_parameter_def @goto-type-def[25]->packet_t_def
+    }
+}
+
+bank instantiated is typed_parameter_template {
+}
+
+session typed_parameter_template typed_value;
+
+method read_typed_value() {
+    log info: "%d", typed_value.packet.value; // @goto-decl[33]->typed_parameter_def @goto-type-def[33]->packet_t_def
+}

@@ -1,0 +1,112 @@
+//  © 2024 Intel Corporation
+//  SPDX-License-Identifier: Apache-2.0 and MIT
+
+dml 1.4;
+device errors_methods_type_matrix_test;
+
+template sequence_a {}
+template sequence_b {}
+
+typedef int deep_0_t;
+typedef deep_0_t deep_1_t;
+typedef deep_1_t deep_2_t;
+
+template method_matrix_base {
+    method throws_direction() default {} // @related[12]of[31]="Non-throwing method declared here"
+    method fewer_args(int a, int b) default {} // @related[12]of[35]="Overridden method declared here"
+    method more_args(int a) default {} // @related[12]of[39]="Overridden method declared here"
+    method fewer_returns() -> (int, int) default {} // @related[12]of[43]="Overridden method declared here"
+    method more_returns() -> (int) default { return 0; } // @related[12]of[47]="Overridden method declared here"
+    inline method inline_match(inline value) default {}
+    inline method inline_mismatch(inline value) default {} // @related[42]of[55]="Corresponding argument declared here"
+    method pointer_target(int *value) default {} // @related[32]of[59]="Corresponding argument declared here"
+    method array_target(int value[2]) default {} // @related[29]of[63]="Corresponding argument declared here"
+    method vector_target(int vect value) default {} // @related[35]of[67]="Corresponding argument declared here"
+    method sequence_target(sequence(sequence_a) value) default {} // @related[49]of[71]="Corresponding argument declared here"
+    method deep_alias_target(deep_2_t value) -> (deep_2_t) default { return 0; }
+    method const_position_target(const int *value) default {} // @related[45]of[79]="Corresponding argument declared here"
+}
+
+template throws_direction_override is method_matrix_base {
+    method throws_direction() throws {} // @error[12]="Throwing method cannot override non-throwing method"
+}
+
+template fewer_args_override is method_matrix_base {
+    method fewer_args(int a) {} // @error[12]="Wrong number of arguments in method override"
+}
+
+template more_args_override is method_matrix_base {
+    method more_args(int a, int b) {} // @error[12]="Wrong number of arguments in method override"
+}
+
+template fewer_returns_override is method_matrix_base {
+    method fewer_returns() -> (int) { return 0; } // @error[12]="Wrong number of return types in method override"
+}
+
+template more_returns_override is method_matrix_base {
+    method more_returns() -> (int, int) {} // @error[12]="Wrong number of return types in method override"
+}
+
+template inline_match_override is method_matrix_base {
+    inline method inline_match(inline other) {}
+}
+
+template inline_mismatch_override is method_matrix_base {
+    method inline_mismatch(int value) {} // @error[32]="Mismatching argument type in method override"
+}
+
+template pointer_mismatch_override is method_matrix_base {
+    method pointer_target(bool *value) {} // @error[33]="Mismatching argument type in method override"
+}
+
+template array_mismatch_override is method_matrix_base {
+    method array_target(bool value[2]) {} // @error[30]="Mismatching argument type in method override"
+}
+
+template vector_mismatch_override is method_matrix_base {
+    method vector_target(bool vect value) {} // @error[36]="Mismatching argument type in method override"
+}
+
+template sequence_mismatch_override is method_matrix_base {
+    method sequence_target(sequence(sequence_b) value) {} // @error[49]="Mismatching argument type in method override"
+}
+
+template deep_alias_match_override is method_matrix_base {
+    method deep_alias_target(int value) -> (int) { return 0; }
+}
+
+template const_position_mismatch_override is method_matrix_base {
+    method const_position_target(int * const value) {} // @error[46]="Mismatching argument type in method override"
+}
+
+template composite_match_override is method_matrix_base {
+    method pointer_target(int *value) {}
+    method array_target(int value[2]) {}
+    method vector_target(int vect value) {}
+    method sequence_target(sequence(sequence_a) value) {}
+}
+
+typedef layout "big-endian" { int value; } layout_a_t;
+typedef layout "big-endian" { int value; } layout_b_t;
+
+template layout_override_base {
+    method layout_target(layout_a_t value) default {} // @related[37]of[97]="Corresponding argument declared here"
+}
+
+template layout_mismatch_override is layout_override_base {
+    method layout_target(layout_b_t value) {} // @error[37]="Mismatching argument type in method override"
+}
+
+template layout_match_override is layout_override_base {
+    method layout_target(layout_a_t value) {}
+}
+
+template composite_return_base {
+    method pointer_return() -> (int *) default {} // @related[33]of[110]="Corresponding return type declared here"
+    method sequence_return() -> (sequence(sequence_a)) default {} // @related[34]of[111]="Corresponding return type declared here"
+}
+
+template composite_return_mismatch is composite_return_base {
+    method pointer_return() -> (bool *) {} // @error[33]="Mismatching return type in method override"
+    method sequence_return() -> (sequence(sequence_b)) {} // @error[34]="Mismatching return type in method override"
+}

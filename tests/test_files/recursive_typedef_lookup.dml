@@ -1,0 +1,28 @@
+//  © 2024 Intel Corporation
+//  SPDX-License-Identifier: Apache-2.0 and MIT
+
+dml 1.4;
+
+device recursive_typedef_lookup_test;
+
+typedef struct {
+    // @loc[16]=next_field_def
+    node_ptr_t next;
+    // @loc[9]=value_field_def
+    int value; // @goto-ref[9]->value_direct_use,value_once_use,value_twice_use
+// @loc[3]=node_t_def
+} node_t;
+
+// @loc[17]=node_ptr_t_def
+typedef node_t *node_ptr_t; // @goto-def-decl[9]->node_t_def
+
+saved node_t root;
+
+method exercise_recursive_members() {
+    // @loc[10]=value_direct_use
+    root.value = 1; // @goto-def-decl[10]->value_field_def
+    // @loc[15]=value_once_use
+    root.next.value = 2; // @goto-def-decl[10]->next_field_def @goto-def-decl[15]->value_field_def @goto-type-def[10]->node_ptr_t_def
+    // @loc[20]=value_twice_use
+    root.next.next.value = 3; // @goto-def-decl[10]->next_field_def @goto-def-decl[15]->next_field_def @goto-def-decl[20]->value_field_def @goto-type-def[15]->node_ptr_t_def
+}

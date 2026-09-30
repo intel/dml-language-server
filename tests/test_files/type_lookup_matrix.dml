@@ -1,0 +1,90 @@
+//  © 2024 Intel Corporation
+//  SPDX-License-Identifier: Apache-2.0 and MIT
+
+dml 1.4;
+device type_lookup_matrix_test;
+
+typedef struct {
+    // @loc[9]=leaf_field_def
+    int field; // @goto-ref[9]->direct_field_use,pointer_array_field_use,outer_field_use,layout_field_use,argument_field_use
+// @loc[3]=leaf_t_def
+} leaf_t;
+
+// @loc[16]=alias_0_def
+typedef leaf_t alias_0_t; // @goto-def-decl[9]->leaf_t_def
+// @loc[19]=alias_1_def
+typedef alias_0_t alias_1_t; // @goto-def-decl[9]->alias_0_def
+// @loc[19]=alias_2_def
+typedef alias_1_t alias_2_t; // @goto-def-decl[9]->alias_1_def @goto-type-def[19]->alias_2_def
+
+saved alias_2_t deep_alias_value; // @goto-type-def[17]->alias_2_def
+
+saved leaf_t *pointer_array[2]; // @goto-type-def[17]->leaf_t_def
+
+typedef struct {
+    // @loc[13]=outer_leaf_def
+    leaf_t *leaf; // @goto-type-def[13]->leaf_t_def
+} outer_t;
+
+saved outer_t outer_value;
+
+typedef layout "little-endian" {
+    // @loc[12]=layout_leaf_def
+    leaf_t leaf; // @goto-type-def[12]->leaf_t_def
+} layout_t;
+
+saved layout_t layout_value;
+
+session int builtin_value; // @goto-type-def[13]->
+
+extern typedef struct {
+    // @loc[9]=extern_field_def
+    int field; // @goto-ref[9]->extern_field_use
+// @loc[3]=extern_t_def
+} extern_t;
+
+session extern_t extern_value; // @goto-def-decl[9]->extern_t_def @goto-type-def[18]->extern_t_def
+
+session hook(leaf_t, alias_2_t) hook_value; // @goto-def-decl[14]->leaf_t_def @goto-def-decl[22]->alias_2_def
+
+template untyped_parameter_template {
+    param scalar default 1; // @goto-type-def[11]->
+}
+
+bank untyped_parameter_object is untyped_parameter_template {
+}
+
+typedef struct {
+    struct {
+        // @loc[13]=nested_deep_field_def
+        int deep; // @goto-ref[13]->nested_deep_use_1,nested_deep_use_2
+    // @loc[7]=anonymous_nested_field_def
+    } nested;
+} nested_outer_t;
+
+saved nested_outer_t nested_value;
+
+method lookup_matrix(alias_2_t argument) { // @goto-type-def[36]->alias_2_def
+    // @loc[22]=direct_field_use
+    deep_alias_value.field = 1; // @goto-def-decl[22]->leaf_field_def @goto-type-def[5]->alias_2_def
+
+    // @loc[22]=pointer_array_field_use
+    pointer_array[0].field = 2; // @goto-def-decl[22]->leaf_field_def @goto-type-def[5]->leaf_t_def
+
+    // @loc[22]=outer_field_use
+    outer_value.leaf.field = 3; // @goto-def-decl[17]->outer_leaf_def @goto-def-decl[22]->leaf_field_def @goto-type-def[17]->leaf_t_def
+
+    // @loc[23]=layout_field_use
+    layout_value.leaf.field = 4; // @goto-def-decl[18]->layout_leaf_def @goto-def-decl[23]->leaf_field_def @goto-type-def[18]->leaf_t_def
+
+    // @loc[14]=argument_field_use
+    argument.field = 5; // @goto-type-def[5]->alias_2_def @goto-def-decl[14]->leaf_field_def
+
+    // @loc[18]=extern_field_use
+    extern_value.field = 6; // @goto-def-decl[18]->extern_field_def @goto-type-def[5]->extern_t_def
+
+    // @loc[25]=nested_deep_use_1
+    nested_value.nested.deep = 7; // @goto-def-decl[18]->anonymous_nested_field_def @goto-def-decl[25]->nested_deep_field_def
+    // @loc[25]=nested_deep_use_2
+    nested_value.nested.deep = 8; // @goto-def-decl[18]->anonymous_nested_field_def @goto-def-decl[25]->nested_deep_field_def
+}

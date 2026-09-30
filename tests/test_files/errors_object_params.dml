@@ -1,0 +1,37 @@
+//  © 2024 Intel Corporation
+//  SPDX-License-Identifier: Apache-2.0 and MIT
+
+// Device-analysis level errors relating to parameter assignments
+
+dml 1.4;
+
+device errors_object_params_test;
+
+template overridable_param_tmpl {
+    // @error[5]="Definition overrides non-default parameter"
+    // @related[5]of[11]="Non-default declaration here"
+    param overridden_param = 1;
+}
+
+// @error[6]="No assignment to parameter 'no_assignment_param'"
+bank errors_object_params_bank is overridable_param_tmpl {
+    // @related[5]of[16]="Declared here"
+    param no_assignment_param;
+
+    // @error[5]="Conflicting assignments to parameter 'conflicting_param'"
+    param conflicting_param default 1;
+    // @related[5]of[21]="Conflicting assignment here"
+    param conflicting_param default 2;
+
+    // @error[11]="Name collision in declaration on 'dup_name'"
+    param dup_name default 1;
+    // @related[17]of[26]="also declared here"
+    session int dup_name;
+
+    // @error[5]="Invalid assignment to auto-parameter 'auto_param'"
+    param auto_param auto;
+    // @related[5]of[31]="Conflicting assignment here"
+    param auto_param default 5;
+
+    param overridden_param default 2;
+}

@@ -21,10 +21,10 @@
 // possible
 macro_rules! internal_error {
     ( $mess:expr, $( $arg:expr ),* ) => {
-        error!("Internal Error: {}", format!($mess, $( $arg ),*));
+        error!("Internal Error: {}", format!($mess, $( $arg ),*))
     };
     ( $mess:expr ) => {
-        error!("Internal Error: {}", $mess);
+        error!("Internal Error: {}", $mess)
     }
 }
 

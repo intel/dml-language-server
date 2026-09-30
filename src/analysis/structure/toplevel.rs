@@ -20,7 +20,7 @@ use crate::analysis::scope::{Scope, ScopeContainer, MakeScopeContainer,
                              ContextKey};
 
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub enum ExistCondition {
     Always,
     // The bool here is whether the expression should be reversed, as the
@@ -79,7 +79,7 @@ impl Display for StatementContext {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub struct ObjectDecl<T> where T: DeclarationSpan
 {
     pub cond: ExistCondition,
@@ -184,7 +184,7 @@ where T: DeclarationSpan {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub enum StatementSpecStatement<'t> {
     Object(&'t ObjectDecl<CompositeObject>),
     Instantiation(&'t ObjectDecl<Instantiation>),
@@ -221,7 +221,7 @@ impl StatementSpec {
     }
 }
 
-    #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+    #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Hash)]
 pub struct StatementSpec {
     pub objects: Vec<ObjectDecl<CompositeObject>>,
     pub sessions: Vec<ObjectDecl<Variable>>,
@@ -626,7 +626,9 @@ impl Scope for TopLevel {
         self.spec.scopes()
     }
     fn defined_symbols(&self) -> Vec<&dyn StructureSymbol> {
-        self.spec.symbols()
+        let mut syms = self.spec.symbols();
+        syms.extend(self.typedefs.iter().map(|t| t as &dyn StructureSymbol));
+        syms
     }
 }
 

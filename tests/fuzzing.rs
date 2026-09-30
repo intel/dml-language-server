@@ -12,15 +12,17 @@
 //!   * `DLS_FUZZ_ITERS` — number of generated inputs per test (default 32).
 //!   * `DLS_FUZZ_SEED`  — PRNG seed (defaults to timestamp-based).
 
-use std::io::{Read, Write};
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
-use std::thread;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use rand::{RngExt, SeedableRng};
 use rand::rngs::StdRng;
 use rand::seq::IndexedRandom;
+
+#[path = "common/parser_runner.rs"]
+mod parser_runner;
+
+use parser_runner::{Outcome, run_with_timeout};
 
 /// Per-input wall-clock budget.
 const PARSE_TIMEOUT: Duration = Duration::from_secs(60);
@@ -36,133 +38,6 @@ const PANIC_PROBE_FLOOR: Duration = Duration::from_millis(100);
 
 /// Upper bound on bytes per generated input
 const MAX_INPUT_BYTES: usize = 64 * 1024;
-
-/// How often to poll the child while waiting for it to finish. 5 ms is
-/// negligible overhead next to the `PANIC_PROBE_FLOOR` (100 ms) and gives
-/// us reasonably tight timeout enforcement.
-const CHILD_POLL_INTERVAL: Duration = Duration::from_millis(5);
-
-/// Path to the `dml-fuzz-runner` binary. Cargo sets `CARGO_BIN_EXE_<name>`
-/// at compile time for integration tests and guarantees the bin is built
-/// (with its `required-features`) before the test runs.
-fn runner_exe() -> PathBuf {
-    PathBuf::from(env!("CARGO_BIN_EXE_dml-fuzz-runner"))
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Outcome {
-    Ok,
-    Panic,
-    Timeout,
-}
-
-/// Spawn the fuzz-runner subprocess on `input`, kill it after `timeout`,
-/// and classify the exit status.
-///
-/// Running the parser in a child process (rather than a worker thread)
-/// isolates uncatchable failures from the test process: a stack overflow
-/// or any other signal-induced abort in the parser only kills the child
-/// and is reported back as a `Panic` outcome with a signal note. The
-/// caller's `cargo test` invocation keeps running.
-fn run_with_timeout(input: &str, timeout: Duration)
-                    -> (Outcome, Option<String>, Duration) {
-    let started = Instant::now();
-
-    let mut child = match Command::new(runner_exe())
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-    {
-        Ok(c) => c,
-        Err(e) => {
-            return (Outcome::Panic,
-                    Some(format!("failed to spawn fuzz runner: {e}")),
-                    Duration::ZERO);
-        }
-    };
-
-    // Write stdin from a helper thread so a large input can't deadlock
-    // against the runner reading it.
-    let mut stdin = child.stdin.take().expect("piped");
-    let input_bytes = input.as_bytes().to_vec();
-    let writer = thread::spawn(move || {
-        let _ = stdin.write_all(&input_bytes);
-        // Dropping stdin closes the pipe so the runner's read_to_string returns.
-    });
-
-    // Poll until the child exits or we hit the deadline.
-    let deadline = started + timeout;
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break Some(status),
-            Ok(None) => {}
-            Err(e) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                let _ = writer.join();
-                return (Outcome::Panic,
-                        Some(format!("wait on fuzz runner failed: {e}")),
-                        started.elapsed());
-            }
-        }
-        if Instant::now() >= deadline {
-            break None;
-        }
-        thread::sleep(CHILD_POLL_INTERVAL);
-    };
-
-    let elapsed = started.elapsed();
-
-    let status = match status {
-        Some(s) => s,
-        None => {
-            let _ = child.kill();
-            let _ = child.wait();
-            let _ = writer.join();
-            return (Outcome::Timeout, None, timeout);
-        }
-    };
-
-    // Drain stderr (small: just our "PANIC: ..." line on panic, empty on success).
-    let mut stderr = String::new();
-    if let Some(mut s) = child.stderr.take() {
-        let _ = s.read_to_string(&mut stderr);
-    }
-    let _ = writer.join();
-
-    if status.success() {
-        return (Outcome::Ok, None, elapsed);
-    }
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::ExitStatusExt;
-        if let Some(sig) = status.signal() {
-            let hint = match sig {
-                11 => " (SIGSEGV; memory unsafety or guard-page hit)",
-                6 => " (SIGABRT; Rust abort — stack overflow handler, assertion, or explicit abort)",
-                _ => "",
-            };
-            return (Outcome::Panic,
-                    Some(format!("killed by signal {sig}{hint}")),
-                    elapsed);
-        }
-    }
-
-    let msg = stderr
-        .lines()
-        .find(|l| l.starts_with("PANIC: "))
-        .map(|l| l["PANIC: ".len()..].to_owned())
-        .unwrap_or_else(|| {
-            if stderr.is_empty() {
-                format!("exit code {}", status.code().unwrap_or(-1))
-            } else {
-                stderr.trim().to_owned()
-            }
-        });
-    (Outcome::Panic, Some(msg), elapsed)
-}
 
 /// The parser only accepts `&str`, so any bytes that aren't valid UTF-8 are
 /// replaced with U+FFFD via lossy conversion

@@ -18,10 +18,17 @@ pub type ZeroFilePosition = FilePosition::<ZeroIndexed>;
 
 // Marker trait, let's us implement things on things containing
 // treeelements without specifying the long list of trai
+// `'static` + `as_any` lets callers downcast a `&dyn TreeElementMember`
+// back to a concrete node type, e.g. to find the innermost AST node of a
+// specific kind containing a given position (see `struct_or_layout_at_pos`).
 pub trait TreeElementMember
-    : TreeElement + ReferenceContainer + std::fmt::Debug {}
-impl <T: TreeElement + ReferenceContainer + std::fmt::Debug>
-    TreeElementMember for T {}
+    : TreeElement + ReferenceContainer + std::fmt::Debug + 'static {
+    fn as_any(&self) -> &dyn std::any::Any;
+}
+impl <T: TreeElement + ReferenceContainer + std::fmt::Debug + 'static>
+    TreeElementMember for T {
+    fn as_any(&self) -> &dyn std::any::Any { self }
+}
 
 pub type TreeElements<'t> = Vec<&'t dyn TreeElementMember>;
 pub type TreeElementTokenIterator = Vec<Token>;
@@ -324,6 +331,15 @@ pub struct AstObject<T: Clone + PartialEq> {
     // Boxing the content here saves us headaches from recursive types
     // in other places
     pub content: Box<Content<T>>,
+}
+
+impl <T: TreeElement + Clone + PartialEq + 'static> AstObject<T> {
+    pub fn as_actual<'a>(&'a self) -> Option<&'a T> {
+        match self.content.as_ref() {
+            Content::Some(content) => Some(content),
+            Content::Missing(_) => None,
+        }
+    }
 }
 
 impl <T: MaybeIsNodeRef + Clone + PartialEq + 'static> MaybeIsNodeRef for AstObject<T> {
