@@ -205,8 +205,23 @@ impl Position<ZeroIndexed> {
 // We end up storing _a lot_ of file-aware position info, resulting in a lot
 // of duplicating PathBufs. Here we attempt to store each pathbuf at most twice
 // (once for index->path, once for path->index)
-#[derive(Copy, Clone, Hash, PartialEq, Eq, Ord, PartialOrd)]
+#[derive(Copy, Clone, Hash, PartialEq, Eq)]
 pub struct PathBufKey(DefaultKey);
+
+impl PartialOrd for PathBufKey {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for PathBufKey {
+    fn cmp(&self, other: &Self) -> Ordering {
+        let lock_storage = PATHBUF_STORAGE.lock().unwrap();
+        let path = lock_storage.get(self.0).unwrap();
+        let other_path = lock_storage.get(other.0).unwrap();
+        path.cmp(other_path)
+    }
+}
 
 impl std::fmt::Debug for PathBufKey {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
@@ -223,13 +238,12 @@ lazy_static! {
 }
 
 fn track_path(path: &PathBuf) -> PathBufKey {
-    {
-        if let Some(index) = PATHBUF_INDEXES.lock().unwrap().get(path) {
-            return PathBufKey(*index);
-        }
+    let mut indices_lock = PATHBUF_INDEXES.lock().unwrap();
+    if let Some(index) = indices_lock.get(path) {
+        return PathBufKey(*index);
     }
     let index = PATHBUF_STORAGE.lock().unwrap().insert(path.clone());
-    PATHBUF_INDEXES.lock().unwrap().insert(path.clone(), index);
+    indices_lock.insert(path.clone(), index);
     PathBufKey(index)
 }
 

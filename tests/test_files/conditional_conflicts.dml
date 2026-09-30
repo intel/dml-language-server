@@ -1,0 +1,101 @@
+//  © 2024 Intel Corporation
+//  SPDX-License-Identifier: Apache-2.0 and MIT
+dml 1.4;
+
+device conditional_conflicts;
+
+template exclusive_method {
+    method exclusive_name() {}
+}
+
+template exclusive_parameter {
+    param exclusive_name = 1;
+}
+
+#if (simics_api_version == 1) {
+    is exclusive_method;
+    bank exclusive_object {}
+    group exclusive_dimensions {}
+} #else {
+    is exclusive_parameter;
+    register exclusive_object {}
+    group exclusive_dimensions[i < 2] {}
+}
+
+template indeterminate_method {
+    method indeterminate_name() {}
+}
+
+template indeterminate_parameter {
+    param indeterminate_name = 1;
+}
+
+#if (simics_api_version == 2) {
+    is indeterminate_method;
+    is indeterminate_parameter;
+    bank indeterminate_object {}
+    register indeterminate_object {}
+    group indeterminate_dimensions {}
+    group indeterminate_dimensions[i < 2] {}
+}
+
+template false_live_method {
+    method false_dead_name() {}
+}
+
+template false_dead_parameter {
+    param false_dead_name = 1;
+}
+
+is false_live_method;
+bank false_dead_object {}
+group false_dead_dimensions {}
+#if (false) {
+    is false_dead_parameter;
+    register false_dead_object {}
+    group false_dead_dimensions[i < 2] {}
+}
+
+template dml_1_2_live_method {
+    method dml_1_2_dead_name() {}
+}
+
+template dml_1_2_dead_parameter {
+    param dml_1_2_dead_name = 1;
+}
+
+is dml_1_2_live_method;
+bank dml_1_2_dead_object {}
+group dml_1_2_dead_dimensions {}
+#if (dml_1_2) {
+    is dml_1_2_dead_parameter;
+    register dml_1_2_dead_object {}
+    group dml_1_2_dead_dimensions[i < 2] {}
+}
+
+template diamond_base {
+    param diamond_parameter auto;
+}
+
+template diamond_left is diamond_base {}
+template diamond_right is diamond_base {}
+
+#if (simics_api_version == 3) {
+    is diamond_left;
+} #else {
+    is diamond_right;
+}
+
+template exclusive_auto {
+    param exclusive_auto_parameter auto;
+}
+
+template exclusive_auto_assignment {
+    param exclusive_auto_parameter = 1;
+}
+
+#if (simics_api_version == 4) {
+    is exclusive_auto;
+} #else {
+    is exclusive_auto_assignment;
+}

@@ -2,12 +2,14 @@
 //  SPDX-License-Identifier: Apache-2.0 and MIT
 use std::fmt::{Display, Formatter, self as fmt};
 use std::path::PathBuf;
+use std::sync::Arc;
 
+use crate::analysis::templating::evaluation::{Evaluatable, EvaluationContext};
 use crate::logging::trace;
 
 use crate::analysis::structure::objects::{Bitorder, CBlock, CompObjectKind, CompositeObject, Constant, DMLObject, DMLStatement, Device, Error, Export, Hook, Import, InEach, Instantiation, Loggroup, Method, MethodModifier, Parameter, Statements, Template, ToStructure, Typedef, Variable, Version, make_statements};
 use crate::analysis::structure::expressions::{Expression};
-use crate::analysis::FileSpec;
+use crate::analysis::{DMLError, FileSpec, LocationRange};
 use crate::analysis::parsing::tree::{ZeroRange, ZeroSpan, TreeElement};
 use crate::analysis::parsing::structure;
 use crate::analysis::{DeclarationSpan, LocationSpan, Named,
@@ -22,6 +24,7 @@ use crate::analysis::scope::{Scope, ScopeContainer, MakeScopeContainer,
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ExistCondition {
+    Never,
     Always,
     // The bool here is whether the expression should be reversed, as the
     // thing existing is in an else branch
@@ -30,26 +33,179 @@ pub enum ExistCondition {
     // Note: Right now we are implicitly assuming this has some ordering, such
     // that two objectdecls within the same hashif block will have the same
     // existcondition
-    Conditional(Vec<(bool, Expression)>),
+    // These conditions are _hugely_ duplicated between objects, and are stored
+    // in an Arc to save memory. TODO: We could optimize this even further by
+    // storing references into a slice of conditional expression from outer
+    // to inner contexts
+    Conditional(Arc<Vec<(bool, Expression)>>),
+}
+
+impl ExistCondition {
+    pub fn and(&self, other: &ExistCondition) -> ExistCondition {
+        match (self, other) {
+            (ExistCondition::Never, _) |
+            (_, ExistCondition::Never) => ExistCondition::Never,
+            (ExistCondition::Always, condition) |
+            (condition, ExistCondition::Always) => condition.clone(),
+            (ExistCondition::Conditional(left),
+             ExistCondition::Conditional(right)) => {
+                let mut conditions = left.as_ref().clone();
+                for (branch, expression) in right.iter() {
+                    if conditions.iter().any(|(existing_branch,
+                                               existing_expression)|
+                        existing_expression == expression &&
+                        existing_branch != branch) {
+                        return ExistCondition::Never;
+                    }
+                    let condition = (*branch, expression.clone());
+                    if !conditions.contains(&condition) {
+                        conditions.push(condition);
+                    }
+                }
+                ExistCondition::Conditional(Arc::new(conditions))
+            },
+        }
+    }
+
+    // Attempts to simplify a condition into the least restrictive of
+    // two conditions.
+    pub fn try_or(&self, other: &ExistCondition) -> Option<ExistCondition> {
+        match (self, other) {
+            (ExistCondition::Never, condition) |
+            (condition, ExistCondition::Never) => Some(condition.clone()),
+            (ExistCondition::Always, _) |
+            (_, ExistCondition::Always) => Some(ExistCondition::Always),
+            (ExistCondition::Conditional(left),
+             ExistCondition::Conditional(right)) => {
+                if left.iter().all(|condition|right.contains(condition)) {
+                    return Some(self.clone());
+                }
+                if right.iter().all(|condition|left.contains(condition)) {
+                    return Some(other.clone());
+                }
+
+                let left_only: Vec<_> = left.iter().filter(
+                    |condition|!right.contains(condition)).collect();
+                let right_only: Vec<_> = right.iter().filter(
+                    |condition|!left.contains(condition)).collect();
+                // When there is exactly one unique condition, we can remove
+                // it if its inverse appears in the other set,
+                // reducing A & B & C with A & B & !C to A & B
+                if let ([left_condition], [right_condition]) =
+                    (left_only.as_slice(), right_only.as_slice()) {
+                    if left_condition.0 != right_condition.0 &&
+                       left_condition.1 == right_condition.1 {
+                        let common: Vec<_> = left.iter().filter(
+                            |condition|right.contains(condition)).cloned()
+                            .collect();
+                        return Some(if common.is_empty() {
+                            ExistCondition::Always
+                        } else {
+                            ExistCondition::Conditional(Arc::new(common))
+                        });
+                    }
+                }
+                None
+            },
+        }
+    }
+
+    pub fn exists_no_report(&self, context: &mut EvaluationContext) -> bool {
+        self.exists(context, &mut vec![])
+    }
+
+    pub fn exists(&self, context: &mut EvaluationContext, report: &mut Vec<DMLError>) -> bool {
+        match self {
+            ExistCondition::Never => false,
+            ExistCondition::Always => true,
+            ExistCondition::Conditional(conds) => {
+                for (tbranch, cond) in conds.as_ref() {
+                    let evaluated = cond.evaluate(context, report);
+                    // TODO/NOTE: For now this will only report for provably non-constant
+                    // expressions, which there are none. As evaluation improves we can
+                    // eventually flip this to report for non-provably constant expressions
+                    if evaluated.constant == Some(false) {
+                        // TODO: This can be improved to find the range of the nearest
+                        // sub-expression that is non-constant without blaming the whole expression
+                        // (probably as a related span)
+                        context.report_if_new(
+                            DMLError {
+                                span: *cond.span(),
+                                description: "Expression in #if construct must be constant".to_string(),
+                                related: vec![],
+                                severity: Some(lsp_types::DiagnosticSeverity::ERROR),
+                            }, report);
+                    }
+                    // TODO: check type and value validness
+                    // NOTE: this concludes that non-evaluatable conditions are treated
+                    // as always existing
+                    if evaluated.as_bool()
+                       .is_some_and(|b|b != *tbranch) {
+                        return false;
+                    }
+                }
+                true
+            }
+        }
+    }
+    pub fn guaranteed_exists(&self, context: &mut EvaluationContext, report: &mut Vec<DMLError>) -> bool {
+        match self {
+            ExistCondition::Never => false,
+            ExistCondition::Always => true,
+            ExistCondition::Conditional(conds) => {
+                for (tbranch, cond) in conds.as_ref() {
+                    let evaluated = cond.evaluate(context, report);
+                    // TODO: check type and value validness
+                    if let Some(value) = evaluated.as_bool() {
+                        if value != *tbranch {
+                            return false;
+                        }
+                    } else {
+                        return false;
+                    }
+                }
+                true
+            }
+        }
+    }
 }
 
 impl ExistCondition {
     pub fn guaranteed_overlaps(&self, other: &ExistCondition) -> bool {
         match (self, other) {
+            (ExistCondition::Never, _) |
+            (_, ExistCondition::Never) => false,
             (ExistCondition::Always, ExistCondition::Always) => true,
             (ExistCondition::Conditional(selfvec),
              ExistCondition::Conditional(othervec)) => {
-                // This becomes equivalent to checking if they are in the
-                // same nested hashifs
-                // As it turns out, collision is guaranted regardless of
-                // which branch they are in
-                for ((_, cond1),
-                     (_, cond2)) in selfvec.iter().zip(othervec.iter()) {
-                    if cond1 != cond2 {
+                // TODO/NOTE: Currently we cannot check if a condition is equivalent with another,
+                // so we will only check if they are literally the same condition expression
+                if selfvec.len() != othervec.len() {
+                    return false;
+                }
+                for ((invert1, cond1),
+                     (invert2, cond2)) in selfvec.iter().zip(othervec.iter()) {
+                    if cond1 != cond2 || invert1 != invert2 {
                         return false;
                     }
                 }
                 true
+            },
+            _ => false,
+        }
+    }
+
+    pub fn guaranteed_excluded_from(&self, other: &ExistCondition) -> bool {
+        match (self, other) {
+            (ExistCondition::Never, _) |
+            (_, ExistCondition::Never) => true,
+            (ExistCondition::Conditional(selfvec),
+             ExistCondition::Conditional(othervec)) => {
+                // Currently we cannot check if a condition is equivalent with another,
+                // so we will only check if they are literally the same condition expression
+                selfvec.iter().any(|(branch1, cond1)|
+                    othervec.iter().any(|(branch2, cond2)|
+                        cond1 == cond2 && branch1 != branch2))
             },
             _ => false,
         }
@@ -154,15 +310,12 @@ where T: DeclarationSpan {
 
 impl <T: Clone> ObjectDecl<T>
 where T: DeclarationSpan {
-    pub fn depending_on_context(obj: &T,
-                                context: StatementContext,
-                                conds: &[(bool, Expression)])
-    -> ObjectDecl<T> {
-        match context {
-            StatementContext::HashIfTrue |
-            StatementContext::HashIfElse =>
-                ObjectDecl::conditional(obj, conds),
-            _ => ObjectDecl::always(obj),
+    pub fn with_condition(obj: &T,
+                          condition: &ExistCondition) -> ObjectDecl<T> {
+        ObjectDecl {
+            cond: condition.clone(),
+            obj: obj.clone(),
+            spec: StatementSpec::empty(),
         }
     }
 
@@ -174,10 +327,10 @@ where T: DeclarationSpan {
         }
     }
     pub fn conditional(obj: &T,
-                       conds: &[(bool, Expression)])
+                       conds: &Arc<Vec<(bool, Expression)>>)
                        -> ObjectDecl<T> {
         ObjectDecl {
-            cond: ExistCondition::Conditional(conds.to_vec()),
+            cond: ExistCondition::Conditional(Arc::clone(conds)),
             obj: obj.clone(),
             spec: StatementSpec::empty(),
         }
@@ -311,7 +464,8 @@ impl StatementSpec {
                    exports: &mut Vec<ObjectDecl<Export>>,
                    errors: &mut Vec<ObjectDecl<Error>>,
                    templates: &mut Vec<ObjectDecl<Template>>,
-                   imports: &mut Vec<ObjectDecl<Import>>) {
+                   imports: &mut Vec<ObjectDecl<Import>>,
+                   hooks: &mut Vec<ObjectDecl<Hook>>) {
         objects.append(&mut self.objects);
         constants.append(&mut self.constants);
         sessions.append(&mut self.sessions);
@@ -324,13 +478,14 @@ impl StatementSpec {
         errors.append(&mut self.errors);
         imports.append(&mut self.imports);
         templates.append(&mut self.templates);
+        hooks.append(&mut self.hooks);
     }
 }
 
 // Flattens hashifs
 fn flatten_hashif_branch(context: StatementContext,
                          stmnts: &Statements,
-                         conds: Vec<(bool, Expression)>,
+                         condition: ExistCondition,
                          report: &mut Vec<LocalDMLError>)
                          -> StatementSpec {
     let mut objects = vec![];
@@ -347,26 +502,20 @@ fn flatten_hashif_branch(context: StatementContext,
     let mut errors = vec![];
     let mut templates = vec![];
     for inst in &stmnts.instantiations {
-        instantiations.push(ObjectDecl::depending_on_context(
-            inst, context, &conds));
+        instantiations.push(ObjectDecl::with_condition(
+            inst, &condition));
     }
     for err in &stmnts.errors {
-        errors.push(ObjectDecl::depending_on_context(
-            err, context, &conds));
+        errors.push(ObjectDecl::with_condition(
+            err, &condition));
     }
     for ineach in stmnts.ineachs.iter() {
         let spec = flatten_hashif_branch(StatementContext::InEach,
                                          &ineach.statements,
-                                         vec![], report);
+                                         condition.clone(), report);
         ineachs.push(
             ObjectDecl {
-                cond: match context {
-                    StatementContext::HashIfTrue |
-                    StatementContext::HashIfElse =>
-                        ExistCondition::Conditional(
-                            conds.clone()),
-                    _ => ExistCondition::Always,
-                },
+                cond: condition.clone(),
                 obj: ineach.clone(),
                 spec,
             });
@@ -412,7 +561,7 @@ fn flatten_hashif_branch(context: StatementContext,
                         let subspec = flatten_hashif_branch(
                             StatementContext::Template,
                             &tmpl.statements,
-                            vec![],
+                            ExistCondition::Always,
                             report);
                         templates.push(
                             ObjectDecl {
@@ -444,8 +593,8 @@ fn flatten_hashif_branch(context: StatementContext,
                     // TODO: Verify that conditions are constants
                     // or builtin parameters
                     DMLObject::Import(import) =>
-                        imports.push(ObjectDecl::depending_on_context(
-                            import, context, &conds)),
+                        imports.push(ObjectDecl::with_condition(
+                            import, &condition)),
                     DMLObject::Loggroup(loggroup) =>
                         report.push(LocalDMLError {
                             range: loggroup.span.range,
@@ -464,72 +613,78 @@ fn flatten_hashif_branch(context: StatementContext,
                         let subspec = flatten_hashif_branch(
                             StatementContext::Object,
                             &compobj.statements,
-                            vec![], report);
+                            condition.clone(), report);
                         objects.push(
                             ObjectDecl {
-                                cond: match context {
-                                    StatementContext::HashIfTrue |
-                                    StatementContext::HashIfElse =>
-                                        ExistCondition::Conditional(
-                                            conds.clone()),
-                                    _ => ExistCondition::Always,
-                                },
+                                cond: condition.clone(),
                                 obj: compobj.clone(),
                                 spec: subspec,
                             });
                     },
                     DMLObject::Export(exp) =>
-                        exports.push(ObjectDecl::depending_on_context(
-                            exp, context, &conds)),
+                        exports.push(ObjectDecl::with_condition(
+                            exp, &condition)),
                     DMLObject::Hook(hook)=>
-                        hooks.push(ObjectDecl::depending_on_context(
-                            hook, context, &conds)),
+                        hooks.push(ObjectDecl::with_condition(
+                            hook, &condition)),
                     DMLObject::Method(meth) =>
                     // This error has already been reported, but
                     // we also need to clear our and pretend
                     // that the method isnt saved to avoid
                     // errors in the analysis logic
                         if meth.modifier == MethodModifier::Shared &&
-                        context != StatementContext::Template {
+                            context != StatementContext::Template {
                             trace!("Set {:?} to be unshared", meth);
                             let mut modified_method = meth.clone();
                             modified_method.modifier
                                 = MethodModifier::None;
                             methods.push(
-                                ObjectDecl::depending_on_context(
-                                    &modified_method, context, &conds))
+                                ObjectDecl::with_condition(
+                                    &modified_method, &condition))
                         } else {
                             methods.push(
-                                ObjectDecl::depending_on_context(
-                                    meth, context, &conds))
+                                ObjectDecl::with_condition(
+                                    meth, &condition))
                         },
                     DMLObject::Saved(saved) =>
-                        saveds.push(ObjectDecl::depending_on_context(
-                            saved, context, &conds)),
+                        saveds.push(ObjectDecl::with_condition(
+                            saved, &condition)),
                     DMLObject::Session(sess) =>
-                        sessions.push(ObjectDecl::depending_on_context(
-                            sess, context, &conds)),
-                    DMLObject::Parameter(param) =>
-                            params.push(ObjectDecl::depending_on_context(
-                                param, context, &conds)),
+                        sessions.push(ObjectDecl::with_condition(
+                            sess, &condition)),
+                    DMLObject::Parameter(param) => {
+                            if matches!(context, StatementContext::HashIfElse | StatementContext::HashIfTrue) {
+                                report.push(LocalDMLError {
+                                    range: *param.loc_range(),
+                                    description: format!("Param declaration not allowed directly inside a {} block",
+                                        match context {
+                                            StatementContext::HashIfElse => "#else",
+                                            StatementContext::HashIfTrue => "#if",
+                                            _ => unreachable!("Unexpected statement context in param declaration check"),
+                                        }),
+                                });
+                            }
+                            params.push(ObjectDecl::with_condition(
+                                param, &condition))
+                            },
                 }
             },
             DMLStatement::HashIf(hi) => {
-                let mut true_conds = conds.clone();
-                true_conds.push(
-                    (true, hi.condition.clone()));
-                let mut false_conds = conds.clone();
-                false_conds.push(
-                    (false, hi.condition.clone()));
+                let true_condition = condition.and(
+                    &ExistCondition::Conditional(Arc::new(vec![
+                        (true, hi.condition.clone())])));
+                let false_condition = condition.and(
+                    &ExistCondition::Conditional(Arc::new(vec![
+                        (false, hi.condition.clone())])));
                 let truebranchspec = flatten_hashif_branch(
                     StatementContext::HashIfTrue,
                     &hi.truebranch,
-                    true_conds,
+                    true_condition,
                     report);
                 let falsebranchspec = flatten_hashif_branch(
                     StatementContext::HashIfElse,
                     &hi.falsebranch,
-                    false_conds,
+                    false_condition,
                     report);
                 truebranchspec.consume(&mut objects,
                                        &mut sessions,
@@ -542,7 +697,8 @@ fn flatten_hashif_branch(context: StatementContext,
                                        &mut exports,
                                        &mut errors,
                                        &mut templates,
-                                       &mut vec![]);
+                                       &mut imports,
+                                       &mut hooks);
                 falsebranchspec.consume(&mut objects,
                                         &mut sessions,
                                         &mut saveds,
@@ -554,7 +710,8 @@ fn flatten_hashif_branch(context: StatementContext,
                                         &mut exports,
                                         &mut errors,
                                         &mut templates,
-                                        &mut vec![]);
+                                        &mut imports,
+                                        &mut hooks);
             },
         }
     }
@@ -571,7 +728,7 @@ fn flatten_hashif_branch(context: StatementContext,
         instantiations,
         errors,
         templates,
-        imports: vec![],
+        imports,
     }
 }
 
@@ -695,7 +852,7 @@ impl TopLevel {
         for ineach in &statements.ineachs {
             let spec = flatten_hashif_branch(StatementContext::Object,
                                              &ineach.statements,
-                                             vec![], report);
+                                             ExistCondition::Always, report);
             ineachs.push(
                 ObjectDecl {
                     cond: ExistCondition::Always,
@@ -748,7 +905,7 @@ impl TopLevel {
                             let subspec = flatten_hashif_branch(
                                 StatementContext::Template,
                                 &tmpl.statements,
-                                vec![],
+                                ExistCondition::Always,
                                 report);
                             templates.push(
                                 ObjectDecl {
@@ -768,7 +925,7 @@ impl TopLevel {
                             let subspec = flatten_hashif_branch(
                                 StatementContext::Object,
                                 &compobj.statements,
-                                vec![], report);
+                                ExistCondition::Always, report);
                             objects.push(
                                 ObjectDecl {
                                     cond: ExistCondition::Always,
@@ -803,17 +960,19 @@ impl TopLevel {
                 DMLStatement::HashIf(hi) => {
                     // First element of the cond tuple is whether the
                     // condition is NOT in an elsebranch
-                    let true_conds = vec![(true, hi.condition.clone())];
-                    let false_conds = vec![(false, hi.condition.clone())];
+                    let true_condition = ExistCondition::Conditional(
+                        Arc::new(vec![(true, hi.condition.clone())]));
+                    let false_condition = ExistCondition::Conditional(
+                        Arc::new(vec![(false, hi.condition.clone())]));
                     let truebranchspec = flatten_hashif_branch(
                         StatementContext::HashIfTrue,
                         &hi.truebranch,
-                        true_conds,
+                        true_condition,
                         report);
                     let falsebranchspec = flatten_hashif_branch(
                         StatementContext::HashIfElse,
                         &hi.falsebranch,
-                        false_conds,
+                        false_condition,
                         report);
                     truebranchspec.consume(&mut objects,
                                            &mut sessions,
@@ -826,7 +985,8 @@ impl TopLevel {
                                            &mut exports,
                                            &mut errors,
                                            &mut templates,
-                                           &mut vec![]);
+                                           &mut imports,
+                                           &mut hooks);
                     falsebranchspec.consume(&mut objects,
                                             &mut sessions,
                                             &mut saveds,
@@ -838,7 +998,8 @@ impl TopLevel {
                                             &mut exports,
                                             &mut errors,
                                             &mut templates,
-                                            &mut vec![]);
+                                            &mut imports,
+                                            &mut hooks);
                 },
             }
         }
