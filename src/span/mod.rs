@@ -216,7 +216,10 @@ impl PartialOrd for PathBufKey {
 
 impl Ord for PathBufKey {
     fn cmp(&self, other: &Self) -> Ordering {
-        get_path(*self).cmp(&get_path(*other))
+        let lock_storage = PATHBUF_STORAGE.lock().unwrap();
+        let path = lock_storage.get(self.0).unwrap();
+        let other_path = lock_storage.get(other.0).unwrap();
+        path.cmp(other_path)
     }
 }
 

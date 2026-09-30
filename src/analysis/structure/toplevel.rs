@@ -133,7 +133,7 @@ impl ExistCondition {
                                 span: *cond.span(),
                                 description: "Expression in #if construct must be constant".to_string(),
                                 related: vec![],
-                                severity: Some(crate::lsp_data::DiagnosticSeverity::ERROR),
+                                severity: Some(lsp_types::DiagnosticSeverity::ERROR),
                             }, report);
                     }
                     // TODO: check type and value validness
