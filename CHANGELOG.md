@@ -5,7 +5,7 @@
 # Change Log
 
 ## 0.9.21
-
+- Added the ability to configure device include paths directly from cmake's `compile_commands.json`
 
 ## 0.9.20
 - Made GetKnownContexts custom request not wait for analysis results by default, reducing the chances of overfilling workpool capacity while analysises are running.

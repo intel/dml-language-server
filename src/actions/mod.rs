@@ -191,6 +191,64 @@ pub struct CompilationInfo {
 
 pub type CompilationInfoStorage = HashMap<CanonPath, CompilationInfo>;
 
+#[derive(Deserialize)]
+struct CMakeFileInfo {
+    directory: PathBuf,
+    command: Option<String>,
+    arguments: Option<Vec<String>>,
+    file: PathBuf,
+}
+
+fn compilation_info_from_cmake_content(file_content: &str) ->
+    Result<CompilationInfoStorage, String> {
+        let commands: Vec<CMakeFileInfo> =
+            serde_json::from_str(file_content).map_err(|e|e.to_string())?;
+        let mut new_compinfo = CompilationInfoStorage::default();
+        for command in commands {
+            let Some(generated_name) = command.file.file_name()
+                .and_then(|name|name.to_str()) else { continue; };
+            let Some(dml_stem) = generated_name.strip_suffix("-dml.c")
+            else { continue; };
+            let arguments = match command.arguments {
+                Some(arguments) => arguments,
+                None => command.command.as_deref()
+                    .and_then(shlex::split).unwrap_or_default(),
+            };
+            let mut include_paths = Vec::new();
+            let mut arguments = arguments.iter();
+            while let Some(argument) = arguments.next() {
+                let split_path = match argument.as_str() {
+                    "-I" | "-isystem" | "-iquote" => arguments.next(),
+                    _ => None,
+                };
+                let combined_path = ["-isystem", "-iquote", "-I"]
+                    .iter().find_map(|prefix|argument
+                        .strip_prefix(prefix)
+                        .filter(|path|!path.is_empty()));
+                if let Some(path) = split_path.map(String::as_str)
+                    .or(combined_path) {
+                        let path = PathBuf::from(path);
+                        include_paths.push(if path.is_absolute() {
+                            path
+                        } else {
+                            command.directory.join(path)
+                        });
+                    }
+            }
+            let dml_name = format!("{}.dml", dml_stem);
+            let Some(dml_path) = include_paths.iter()
+                .map(|include|include.join(&dml_name))
+                .find(|candidate|candidate.is_file()) else { continue; };
+            let Some(canon_path) = CanonPath::from_path_buf(dml_path)
+            else { continue; };
+            new_compinfo.entry(canon_path).or_insert(CompilationInfo {
+                extra_defines: vec![],
+                include_paths: include_paths.into_iter().collect(),
+            });
+        }
+        Ok(new_compinfo)
+    }
+
 #[derive(PartialEq, Debug)]
 pub enum AnalysisProgressKind {
     Isolated,
@@ -494,14 +552,19 @@ impl <O: Output> InitActionContext<O> {
     pub fn update_compilation_info(&self, out: &O) {
         trace!("Updating compile info");
         if let Ok(config) = self.config.lock() {
-            if let Some(compile_info) = &config.compile_info_path {
+            let compile_info = config.compile_info_path.as_ref();
+            let cmake_compile_commands =
+                config.cmake_compile_info_path.as_ref();
+            if compile_info.is_some() || cmake_compile_commands.is_some() {
                 // Ensure resolver exists
                 self.construct_resolver();
                 // And then remove it from storage (invalidates it)
                 let old_resolver = self.cached_path_resolver.lock()
                     .expect("Failed to grab resolver").take().unwrap();
+                let configured_path = compile_info
+                    .or(cmake_compile_commands).unwrap();
                 if let Some(canon_path) = CanonPath::from_path_buf(
-                    compile_info.clone()) {
+                    configured_path.clone()) {
                     let workspaces = self.workspace_roots.lock().unwrap();
                     if !workspaces.is_empty() &&
                         !workspaces.iter().any(
@@ -515,7 +578,28 @@ impl <O: Output> InitActionContext<O> {
                                  for a different workspace.".to_string());
                         }
                 }
-                match self.compilation_info_from_file(compile_info) {
+                let compilation_info = compile_info.map(|path|
+                    self.compilation_info_from_file(path));
+                let compilation_info = match compilation_info {
+                    Some(Ok(info)) => Ok(info),
+                    Some(Err(dml_error)) => {
+                        if let Some(cmake_path) = cmake_compile_commands {
+                            info!("Could not load DML compilation info: {}. \
+                                   Falling back to CMake compile commands.",
+                                  dml_error);
+                            self.compilation_info_from_cmake_file(cmake_path)
+                                .map_err(|cmake_error|format!(
+                                    "DML compilation info: {}; CMake compile \
+                                     commands: {}",
+                                    dml_error, cmake_error))
+                        } else {
+                            Err(dml_error)
+                        }
+                    },
+                    None => self.compilation_info_from_cmake_file(
+                        cmake_compile_commands.unwrap()),
+                };
+                match compilation_info {
                     Ok(compilation_info) => {
                         trace!("Updated to {:?}", compilation_info);
                         {
@@ -646,6 +730,14 @@ impl <O: Output> InitActionContext<O> {
             Ok(new_compinfo)
         }
 
+    pub fn compilation_info_from_cmake_file(&self, path: &PathBuf) ->
+        Result<CompilationInfoStorage, String> {
+            debug!("Reading CMake compile commands from {:?}", path);
+            let file_content = fs::read_to_string(path).map_err(
+                |e|e.to_string())?;
+            compilation_info_from_cmake_content(&file_content)
+        }
+
     pub fn update_analysis(&self) {
         self.analysis.lock().unwrap()
             .update_analysis(&self.construct_resolver());
@@ -710,7 +802,9 @@ impl <O: Output> InitActionContext<O> {
         let mut lint_reissue = LintReissueRequirement::None;
         {
             let config = self.config.lock().unwrap().clone();
-            if config.compile_info_path != old_config.compile_info_path {
+            if config.compile_info_path != old_config.compile_info_path ||
+                config.cmake_compile_info_path !=
+                    old_config.cmake_compile_info_path {
                 self.update_compilation_info(out);
             }
             if config.linting_enabled != old_config.linting_enabled {
@@ -1454,7 +1548,7 @@ fn find_word_at_pos(line: &str, pos: Column) -> (Column, Column) {
 
 // /// Client file-watching request / filtering logic
 pub struct FileWatch {
-    file_path: PathBuf,
+    file_paths: Vec<PathBuf>,
 }
 
 impl FileWatch {
@@ -1462,10 +1556,10 @@ impl FileWatch {
     pub fn new<O: Output>(ctx: &InitActionContext<O>) -> Option<Self> {
         match ctx.config.lock() {
             Ok(config) => {
-                config.compile_info_path.as_ref().map(
-                    |c| FileWatch {
-                        file_path: c.clone()
-                    })
+                let file_paths: Vec<PathBuf> = config.compile_info_path.iter()
+                    .chain(config.cmake_compile_info_path.iter())
+                    .cloned().collect();
+                (!file_paths.is_empty()).then_some(FileWatch { file_paths })
             },
             Err(e) => {
                 error!("Unable to access configuration: {:?}", e);
@@ -1482,7 +1576,8 @@ impl FileWatch {
     fn relevant_change_kind(&self, change_uri: &Uri,
                             _kind: FileChangeType) -> bool {
         let path = change_uri.as_str();
-        self.file_path.to_str().is_some_and(|fp|fp == path)
+                            self.file_paths.iter()
+                                .any(|file_path|file_path.to_str().is_some_and(|fp|fp == path))
     }
 
     #[inline]
@@ -1509,9 +1604,10 @@ impl FileWatch {
                                 kind: Some(kind) }
         }
 
-        let watchers = vec![watcher(
-            self.file_path.to_string_lossy().to_string())];
+        let watchers: Vec<FileSystemWatcher> = self.file_paths.iter()
+            .map(|path|watcher(path.to_string_lossy().to_string())).collect();
 
         json!({ "watchers": watchers })
     }
 }
+
