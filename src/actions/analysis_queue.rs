@@ -569,11 +569,12 @@ impl DeviceAnalysisJob {
                                   self.token.status) {
             Ok(analysis) => {
                 info!("Finished device analysis of {:?}", analysis.name);
-                self.notify.send(ServerToHandle::DeviceAnalysisDone(
-                    analysis.path.clone())).ok();
+                let path = analysis.path.clone();
                 self.report.send(TimestampedStorage::make_timestamped(
                     self.timestamp,
                     analysis)).ok();
+                self.notify.send(ServerToHandle::DeviceAnalysisDone(
+                    path)).ok();
             },
             // In general, an analysis shouldn't fail to be created
             Err(AnalysisError::VFSError(e)) => {
