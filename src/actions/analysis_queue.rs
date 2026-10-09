@@ -229,9 +229,11 @@ impl AnalysisQueue {
                 Some(QueuedJob::IsolatedAnalysisJob(job)) => {
                     thread::spawn({
                         let iso_tracker = Arc::clone(&isolated_tracker);
+                        let notify = job.notify.clone();
                         move ||{
                             job.process();
                             iso_tracker.lock().unwrap().remove(&job_id);
+                            notify.send(ServerToHandle::AnalysisJobExited).ok();
                         }});
                 },
                 Some(QueuedJob::FileLinterJob(job)) => {
@@ -240,9 +242,11 @@ impl AnalysisQueue {
                 Some(QueuedJob::DeviceAnalysisJob(job)) => {
                     thread::spawn({
                         let dev_tracker = Arc::clone(&device_tracker);
+                        let notify = job.notify.clone();
                         move ||{
                             job.process();
                             dev_tracker.lock().unwrap().remove(&job_id);
+                            notify.send(ServerToHandle::AnalysisJobExited).ok();
                         }});
                 },
                 Some(QueuedJob::Sentinel) => {
