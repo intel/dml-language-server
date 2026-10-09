@@ -33,9 +33,16 @@ use crate::server::ServerToHandle;
 use crate::logging::{info, debug, trace, error};
 use crossbeam::channel;
 
-// Maps in-process device jobs the timestamps of their dependencies
-type InFlightDeviceJobTracker = HashMap<u64, (CanonPath, HashMap<CanonPath, SystemTime>)>;
-type InFlightIsolatedJobTracker = HashMap<u64, CanonPath>;
+// In-flight jobs are keyed by a per-dispatch id rather than by job hash, since
+// several jobs with the same hash can be in flight at once (a cancelled job
+// keeps running until it notices) and each must only remove its own entry.
+type InFlightJobId = u64;
+// Maps in-process device jobs to their hash, device, and the timestamps of
+// their dependencies
+type InFlightDeviceJobTracker = HashMap<InFlightJobId,
+                                        (u64, CanonPath,
+                                         HashMap<CanonPath, SystemTime>)>;
+type InFlightIsolatedJobTracker = HashMap<InFlightJobId, CanonPath>;
 // Queue up analysis tasks and execute them on the same thread (this is slower
 // than executing in parallel, but allows us to skip indexing tasks).
 pub struct AnalysisQueue {
@@ -125,29 +132,21 @@ impl AnalysisQueue {
                               device_analysis_options: DeviceAnalysisJobOptions) -> bool {
         match DeviceAnalysisJob::new(tracking_token, storage, bases, device, device_analysis_options) {
             Ok(newjob) => {
-                if let Some((_, previous_bases)) = self.device_tracker
-                    .lock().unwrap()
-                    .get(&newjob.hash) {
-                        let mut newer_bases = false;
-                        for base in &newjob.bases {
-                            // If any base is missing or newer,
-                            // the job is ok to go
-                            if let Some(old_base_timestamp) =
-                                previous_bases.get(&base.stored.path) {
-                                    if !timestamp_is_newer(base.timestamp,
-                                                           *old_base_timestamp) {
-                                        continue;
-                                    }
-                                }
-                            newer_bases = true;
-                            break;
-                        }
-                        if !newer_bases {
-                            debug!("Skipped enqueueing device analysis job of \
-                                    {:?}, no new dependencies", device);
-                            return false;
-                        }
-                    }
+                // Skip if an in-flight job already covers these bases,
+                // i.e. no base is missing from it or newer than in it
+                let covered = self.device_tracker.lock().unwrap().values()
+                    .filter(|(hash, _, _)| *hash == newjob.hash)
+                    .any(|(_, _, previous_bases)| newjob.bases.iter().all(
+                        |base| previous_bases.get(&base.stored.path)
+                            .is_some_and(|old_base_timestamp|
+                                         !timestamp_is_newer(
+                                             base.timestamp,
+                                             *old_base_timestamp))));
+                if covered {
+                    debug!("Skipped enqueueing device analysis job of \
+                            {:?}, no new dependencies", device);
+                    return false;
+                }
                 debug!("Enqueued device analysis job of {:?}", device);
                 self.enqueue(newjob.into());
                 true
@@ -178,11 +177,14 @@ impl AnalysisQueue {
                          queue: Arc<Mutex<Vec<QueuedJob>>>,
                          device_tracker: Arc<Mutex<InFlightDeviceJobTracker>>,
                          isolated_tracker: Arc<Mutex<InFlightIsolatedJobTracker>>) {
+        let mut next_job_id: InFlightJobId = 0;
         loop {
             if no_more_work.load(std::sync::atomic::Ordering::SeqCst) {
                 thread::park();
                 continue;
             }
+            let job_id = next_job_id;
+            next_job_id += 1;
             let job = {
                 let mut queue = queue.lock().unwrap();
                 if queue.is_empty() {
@@ -195,15 +197,16 @@ impl AnalysisQueue {
                     match queue.first() {
                         Some(QueuedJob::DeviceAnalysisJob(job)) => {
                             device_tracker.lock().unwrap().insert(
-                                job.hash,
-                                (job.root.path.clone(),
+                                job_id,
+                                (job.hash,
+                                 job.root.path.clone(),
                                  job.bases.iter().map(
                                      |base|(base.stored.path.clone(),
                                             base.timestamp)).collect()));
                         },
                         Some(QueuedJob::IsolatedAnalysisJob(job)) => {
                             isolated_tracker.lock().unwrap()
-                                .insert(job.hash, job.path.clone());
+                                .insert(job_id, job.path.clone());
                         },
                         _ => (),
                     }
@@ -226,10 +229,9 @@ impl AnalysisQueue {
                 Some(QueuedJob::IsolatedAnalysisJob(job)) => {
                     thread::spawn({
                         let iso_tracker = Arc::clone(&isolated_tracker);
-                        let hash = job.hash;
                         move ||{
                             job.process();
-                            iso_tracker.lock().unwrap().remove(&hash);
+                            iso_tracker.lock().unwrap().remove(&job_id);
                         }});
                 },
                 Some(QueuedJob::FileLinterJob(job)) => {
@@ -238,10 +240,9 @@ impl AnalysisQueue {
                 Some(QueuedJob::DeviceAnalysisJob(job)) => {
                     thread::spawn({
                         let dev_tracker = Arc::clone(&device_tracker);
-                        let hash = job.hash;
                         move ||{
                             job.process();
-                            dev_tracker.lock().unwrap().remove(&hash);
+                            dev_tracker.lock().unwrap().remove(&job_id);
                         }});
                 },
                 Some(QueuedJob::Sentinel) => {
@@ -339,7 +340,7 @@ impl AnalysisQueue {
         }
         {
             let device_lock = self.device_tracker.lock().unwrap();
-            for (path, _) in device_lock.values() {
+            for (_, path, _) in device_lock.values() {
                 if paths.contains(path) {
                     trace!("Detected there is still device \
                             work in-flight on {:?}",
