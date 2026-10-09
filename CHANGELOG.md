@@ -5,7 +5,7 @@
 # Change Log
 
 ## 0.9.21
-
+- Fixed incorrect handling of explicit in-object constructs, correcting ranges of somer error reports and detection of some linting errors
 
 ## 0.9.20
 - Made GetKnownContexts custom request not wait for analysis results by default, reducing the chances of overfilling workpool capacity while analysises are running.
