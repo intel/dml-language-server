@@ -658,3 +658,90 @@ impl LinterJob {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+    use crate::concurrency::ConcurrentJob;
+
+    const TIMEOUT: Duration = Duration::from_secs(10);
+
+    fn wait_until(what: &str, cond: impl Fn() -> bool) {
+        let start = Instant::now();
+        while !cond() {
+            assert!(start.elapsed() < TIMEOUT,
+                    "timed out waiting until {}", what);
+            thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    fn no_isolated_job_queued(queue: &AnalysisQueue) -> bool {
+        !queue.queue.lock().unwrap().iter()
+            .any(|job| matches!(job, QueuedJob::IsolatedAnalysisJob(_)))
+    }
+
+    fn expect(rx: &channel::Receiver<ServerToHandle>,
+              what: &str,
+              pred: impl Fn(&ServerToHandle) -> bool) {
+        let message = rx.recv_timeout(TIMEOUT)
+            .unwrap_or_else(|e| panic!("no message for {}: {}", what, e));
+        assert!(pred(&message), "expected {}, got {:?}", what, message);
+    }
+
+    // Two isolated jobs on the same file are in flight at once. Each job
+    // sends on its own rendezvous channel, so it blocks until the test
+    // receives from it, and the test decides which job finishes first.
+    #[test]
+    fn job_stays_in_flight_when_an_older_job_on_its_file_exits() {
+        let dir = std::env::temp_dir().join(
+            format!("dls-analysis-queue-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("dev.dml");
+        std::fs::write(&file, "dml 1.4;\ndevice dev;\n").unwrap();
+        let path = CanonPath::from_path_buf(file.clone()).unwrap();
+        let paths: HashSet<CanonPath> = std::iter::once(path.clone()).collect();
+
+        let queue = AnalysisQueue::init(Arc::new(AtomicBool::new(false)));
+        let vfs = Vfs::new();
+        let (older_tx, older_rx) = channel::bounded(0);
+        let (newer_tx, newer_rx) = channel::bounded(0);
+        let mut storage = AnalysisStorage::init(older_tx);
+
+        let (mut older_job, older_token) = ConcurrentJob::new();
+        assert!(queue.enqueue_isolated_job(&mut storage, &vfs, None,
+                                           path.clone(), file.clone(),
+                                           older_token));
+        wait_until("the older job is dispatched",
+                   || no_isolated_job_queued(&queue));
+
+        storage.notify = newer_tx;
+        let (mut newer_job, newer_token) = ConcurrentJob::new();
+        assert!(queue.enqueue_isolated_job(&mut storage, &vfs, None,
+                                           path.clone(), file.clone(),
+                                           newer_token));
+        wait_until("the newer job is dispatched",
+                   || no_isolated_job_queued(&queue));
+
+        expect(&older_rx, "the older job's analysis",
+               |m| matches!(m, ServerToHandle::IsolatedAnalysisDone(..)));
+        expect(&older_rx, "the older job's exit",
+               |m| *m == ServerToHandle::AnalysisJobExited);
+        // The newer job is still blocked sending its analysis
+        assert!(queue.has_isolated_work());
+        assert!(queue.working_on_isolated_for_paths(&paths));
+        assert!(queue.has_work());
+
+        expect(&newer_rx, "the newer job's analysis",
+               |m| matches!(m, ServerToHandle::IsolatedAnalysisDone(..)));
+        expect(&newer_rx, "the newer job's exit",
+               |m| *m == ServerToHandle::AnalysisJobExited);
+        assert!(!queue.has_isolated_work());
+        assert!(!queue.working_on_isolated_for_paths(&paths));
+        wait_until("the queue has no work", || !queue.has_work());
+
+        older_job.kill();
+        newer_job.kill();
+        std::fs::remove_dir_all(&dir).ok();
+    }
+}
