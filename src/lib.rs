@@ -36,6 +36,7 @@ pub mod concurrency;
 pub mod config;
 pub mod dfa;
 pub mod file_management;
+pub mod backends;
 pub mod lint;
 pub mod lsp_data;
 pub mod server;

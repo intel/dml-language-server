@@ -842,7 +842,7 @@ pub struct DMLCompositeObject {
     pub declloc: ZeroSpan,
     // These are the ranges of the objectspecs declared with the
     // objects name
-    pub all_decls: Vec<ZeroSpan>,
+    pub all_decls: Vec<Arc<ObjectSpec>>,
     pub identity: DMLString,
     // Reference to self, let's us pass obj refs rather than
     // keys to functions unless necessary
@@ -1382,7 +1382,7 @@ fn create_object_instance(loc: Option<ZeroSpan>,
            all_decls);
     let obj = DMLCompositeObject {
         declloc: loc.unwrap_or(identity.span),
-        all_decls: all_decls.iter().map(|s|*s.loc_span()).collect(),
+        all_decls: all_decls.clone(),
         identity: identity.clone(),
         used_ineach_locs: vec![],
         key: StructureKey::null(),
