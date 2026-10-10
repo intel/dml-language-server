@@ -15,6 +15,10 @@ use std::fs;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
+use lsp_types::notification::{DidChangeWatchedFiles};
+use lsp_types::request::{RegisterCapability, UnregisterCapability};
+use lsp_types::Unregistration;
+
 use crate::actions::analysis_storage::AnalysisStorage;
 use crate::actions::analysis_queue::AnalysisQueue;
 use crate::actions::progress::{AnalysisProgressNotifier,
@@ -31,6 +35,7 @@ use crate::lint::{LintCfg, maybe_parse_lint_cfg};
 use crate::lsp_data;
 use crate::lsp_data::*;
 use crate::lsp_data::ls_util::{dls_to_range, dls_to_location};
+
 use crate::server::{Output, ServerToHandle, error_message,
                     Request, RequestId, SentRequest};
 use crate::server::message::RawResponse;
@@ -285,6 +290,7 @@ pub struct InitActionContext<O: Output> {
 
     pub config: Arc<Mutex<Config>>,
     pub lint_config: Arc<Mutex<LintCfg>>,
+    pub active_watch: Arc<Mutex<Option<FileWatch>>>,
     pub sent_warnings: Arc<Mutex<HashSet<(u64, PathBuf)>>>,
     jobs: Arc<Mutex<Jobs<String>>>,
     pub client_capabilities: Arc<lsp_data::ClientCapabilities>,
@@ -392,6 +398,7 @@ impl <O: Output> InitActionContext<O> {
             quiescent: Arc::new(AtomicBool::new(false)),
             prev_changes: Arc::default(),
             client_capabilities: Arc::new(client_capabilities),
+            active_watch: Arc::default(),
             has_notified_missing_builtins: false,
             //client_supports_cmd_run,
             active_waits: Arc::default(),
@@ -438,6 +445,8 @@ impl <O: Output> InitActionContext<O> {
             has_notified_missing_builtins: false,
             shut_down,
             pid: std::process::id(),
+            active_watch: Arc::new(Mutex::new(None)),        
+    
         }
     }
 
@@ -773,10 +782,52 @@ impl <O: Output> InitActionContext<O> {
                 self.report_errors(out);
             },
         }
-
         // Re-update log level
         if let Some(level) = self.config.lock().unwrap().server_debug_level {
             crate::logging::set_global_log_level(level);
+        }
+        self.update_file_watchers(out);
+    }
+
+
+    const WATCH_ID: &str = "dls-watch";
+    pub fn update_file_watchers(&self, out: &O) {
+        if self.active_watch.lock().unwrap().take().is_some() {
+            self.send_request::<UnregisterCapability>(
+                UnregistrationParams {
+                    unregisterations: vec![Unregistration {
+                        id: Self::WATCH_ID.to_string(),
+                        method: <DidChangeWatchedFiles
+                            as LSPNotification>::METHOD
+                            .to_string(),
+                    }]
+                },
+                out);
+        }
+        self.register_new_watchers(out);
+    }
+
+    pub fn register_new_watchers(&self, out: &O) {
+        let mut watchers = self.active_watch.lock().unwrap();
+        if let Some(previous) = watchers.take() {
+            error!("Wanted to register new watchers, but the previous ones \
+                    were not cleared. (were: {:?})", previous);
+        }
+        *watchers = FileWatch::new(self);
+        if let Some(watchers_spec) = watchers.as_ref() {
+            let reg_params = RegistrationParams {
+                registrations: vec![Registration {
+                    id: Self::WATCH_ID.to_string(),
+                    method: <DidChangeWatchedFiles as LSPNotification>
+                        ::METHOD.to_string(),
+                    register_options: Some(watchers_spec.watchers_config()),
+                }],
+            };
+            info!("Registered as {:?}", reg_params);
+            self.send_request::<RegisterCapability>(reg_params, out);
+        } else {
+            error!("Failed to register file watchers with config: {:?}",
+                   self.config.lock().unwrap());
         }
     }
 
@@ -1452,20 +1503,87 @@ fn find_word_at_pos(line: &str, pos: Column) -> (Column, Column) {
     (span::Column::new_zero_indexed(start), span::Column::new_zero_indexed(end))
 }
 
+#[derive(Debug, Clone)]
+pub struct FileWatchSpec {
+    full: CanonPath,
+    base: Uri,
+    relative: String,
+}
+
 // /// Client file-watching request / filtering logic
+#[derive(Debug, Clone)]
 pub struct FileWatch {
-    file_path: PathBuf,
+    file_paths: Vec<FileWatchSpec>,
 }
 
 impl FileWatch {
     /// Construct a new `FileWatch`.
     pub fn new<O: Output>(ctx: &InitActionContext<O>) -> Option<Self> {
+        let mut file_paths: HashMap<CanonPath, bool> = HashMap::default();
         match ctx.config.lock() {
             Ok(config) => {
-                config.compile_info_path.as_ref().map(
-                    |c| FileWatch {
-                        file_path: c.clone()
+                if let Some(compile_info) = config.compile_info_path.as_ref() {
+                    if let Some(canon_path) =
+                        CanonPath::from_path_buf(compile_info.clone()) {
+                            file_paths.insert(canon_path, false);
+                        } else {
+                            error!("Could not watch compilation info {:?}, \
+                                    not a canonizable path", compile_info);
+                        }
+                }
+                if let Some(lint_cfg_path) = config.lint_cfg_path.as_ref() {
+                    if let Some(canon_path) =
+                        CanonPath::from_path_buf(lint_cfg_path.clone()) {
+                            file_paths.insert(canon_path, false);
+                        } else {
+                            error!("Could not watch lint config path {:?}, \
+                                    not a canonizable path", lint_cfg_path);
+                        }
+                }
+                // Anchor each watcher at the file's immediate parent directory
+                // and use just the file name as the glob pattern. This avoids
+                // VS Code's "non-recursive unless the pattern starts with **/"
+                // behaviour for RelativePattern bases that aren't (recognised
+                // as) workspace folders, which previously caused us to never
+                // receive change events for files in subdirectories.
+                fn path_to_spec(path: CanonPath,
+                                hit_paths: &mut HashMap<CanonPath, bool>)
+                                -> Option<FileWatchSpec> {
+                    let parent = path.as_path().parent()?;
+                    let file_name = path.as_path().file_name()?
+                        .to_string_lossy().into_owned();
+                    let base = match parse_uri(&parent.to_string_lossy()) {
+                        Ok(uri) => uri,
+                        Err(e) => {
+                            error!("Could not build URI for watch parent \
+                                    dir {:?}: {}", parent, e);
+                            return None;
+                        }
+                    };
+                    hit_paths.insert(path.clone(), true);
+                    Some(FileWatchSpec {
+                        full: path,
+                        base,
+                        relative: file_name,
                     })
+                }
+
+                let watch_paths: Vec<_> = file_paths.keys().cloned()
+                    .collect::<Vec<_>>().into_iter()
+                    .filter_map(|p|path_to_spec(p, &mut file_paths))
+                    .collect();
+                for (path, watched) in &file_paths {
+                    if !watched {
+                        error!("Could not register watcher for {:?}", path);
+                    }
+                }
+                if !watch_paths.is_empty() {
+                    Some(FileWatch {
+                        file_paths: watch_paths,
+                    })
+                } else {
+                    None
+                }
             },
             Err(e) => {
                 error!("Unable to access configuration: {:?}", e);
@@ -1476,13 +1594,14 @@ impl FileWatch {
 
     /// Returns if a file change is relevant to the files we
     /// actually wanted to watch
-    /// Implementation note: This is expected to be called a
-    /// large number of times in a loop so should be fast / avoid allocation.
     #[inline]
     fn relevant_change_kind(&self, change_uri: &Uri,
                             _kind: FileChangeType) -> bool {
-        let path = change_uri.as_str();
-        self.file_path.to_str().is_some_and(|fp|fp == path)
+        let Ok(changed_path) = parse_file_path!(change_uri, "watched_change")
+        else { return false; };
+        let Some(changed_canon) = CanonPath::from_path_buf(changed_path)
+        else { return false; };
+        self.file_paths.iter().any(|ws|ws.full == changed_canon)
     }
 
     #[inline]
@@ -1499,19 +1618,24 @@ impl FileWatch {
 
     /// Returns json config for desired file watches
     pub fn watchers_config(&self) -> serde_json::Value {
-        fn watcher(pat: String) -> FileSystemWatcher {
-            FileSystemWatcher { glob_pattern: GlobPattern::String(pat),
-                                kind: None }
-        }
-        fn _watcher_with_kind(pat: String, kind: WatchKind)
-                             -> FileSystemWatcher {
-            FileSystemWatcher { glob_pattern: GlobPattern::String(pat),
-                                kind: Some(kind) }
+        fn watcher(base: Uri, pat: String) -> FileSystemWatcher {
+            FileSystemWatcher {
+                glob_pattern: GlobPattern::Relative(
+                    RelativePattern {
+                        base_uri: OneOf::Right(base),
+                        pattern: pat,
+                    }),
+                kind: Some(WatchKind::all()),
+            }
         }
 
-        let watchers = vec![watcher(
-            self.file_path.to_string_lossy().to_string())];
-
-        json!({ "watchers": watchers })
+        let watchers: Vec<_> = self.file_paths.iter()
+            .map(|ws|watcher(ws.base.clone(),
+                             ws.relative.clone()))
+            .collect();
+        let watchers = DidChangeWatchedFilesRegistrationOptions {
+            watchers,
+        };
+        json!(watchers)
     }
 }
