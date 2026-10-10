@@ -33,9 +33,16 @@ use crate::server::ServerToHandle;
 use crate::logging::{info, debug, trace, error};
 use crossbeam::channel;
 
-// Maps in-process device jobs the timestamps of their dependencies
-type InFlightDeviceJobTracker = HashMap<u64, (CanonPath, HashMap<CanonPath, SystemTime>)>;
-type InFlightIsolatedJobTracker = HashMap<u64, CanonPath>;
+// In-flight jobs are keyed by a per-dispatch id rather than by job hash, since
+// several jobs with the same hash can be in flight at once (a cancelled job
+// keeps running until it notices) and each must only remove its own entry.
+type InFlightJobId = u64;
+// Maps in-process device jobs to their hash, device, and the timestamps of
+// their dependencies
+type InFlightDeviceJobTracker = HashMap<InFlightJobId,
+                                        (u64, CanonPath,
+                                         HashMap<CanonPath, SystemTime>)>;
+type InFlightIsolatedJobTracker = HashMap<InFlightJobId, CanonPath>;
 // Queue up analysis tasks and execute them on the same thread (this is slower
 // than executing in parallel, but allows us to skip indexing tasks).
 pub struct AnalysisQueue {
@@ -125,29 +132,21 @@ impl AnalysisQueue {
                               device_analysis_options: DeviceAnalysisJobOptions) -> bool {
         match DeviceAnalysisJob::new(tracking_token, storage, bases, device, device_analysis_options) {
             Ok(newjob) => {
-                if let Some((_, previous_bases)) = self.device_tracker
-                    .lock().unwrap()
-                    .get(&newjob.hash) {
-                        let mut newer_bases = false;
-                        for base in &newjob.bases {
-                            // If any base is missing or newer,
-                            // the job is ok to go
-                            if let Some(old_base_timestamp) =
-                                previous_bases.get(&base.stored.path) {
-                                    if !timestamp_is_newer(base.timestamp,
-                                                           *old_base_timestamp) {
-                                        continue;
-                                    }
-                                }
-                            newer_bases = true;
-                            break;
-                        }
-                        if !newer_bases {
-                            debug!("Skipped enqueueing device analysis job of \
-                                    {:?}, no new dependencies", device);
-                            return false;
-                        }
-                    }
+                // Skip if an in-flight job already covers these bases,
+                // i.e. no base is missing from it or newer than in it
+                let covered = self.device_tracker.lock().unwrap().values()
+                    .filter(|(hash, _, _)| *hash == newjob.hash)
+                    .any(|(_, _, previous_bases)| newjob.bases.iter().all(
+                        |base| previous_bases.get(&base.stored.path)
+                            .is_some_and(|old_base_timestamp|
+                                         !timestamp_is_newer(
+                                             base.timestamp,
+                                             *old_base_timestamp))));
+                if covered {
+                    debug!("Skipped enqueueing device analysis job of \
+                            {:?}, no new dependencies", device);
+                    return false;
+                }
                 debug!("Enqueued device analysis job of {:?}", device);
                 self.enqueue(newjob.into());
                 true
@@ -178,11 +177,14 @@ impl AnalysisQueue {
                          queue: Arc<Mutex<Vec<QueuedJob>>>,
                          device_tracker: Arc<Mutex<InFlightDeviceJobTracker>>,
                          isolated_tracker: Arc<Mutex<InFlightIsolatedJobTracker>>) {
+        let mut next_job_id: InFlightJobId = 0;
         loop {
             if no_more_work.load(std::sync::atomic::Ordering::SeqCst) {
                 thread::park();
                 continue;
             }
+            let job_id = next_job_id;
+            next_job_id += 1;
             let job = {
                 let mut queue = queue.lock().unwrap();
                 if queue.is_empty() {
@@ -195,15 +197,16 @@ impl AnalysisQueue {
                     match queue.first() {
                         Some(QueuedJob::DeviceAnalysisJob(job)) => {
                             device_tracker.lock().unwrap().insert(
-                                job.hash,
-                                (job.root.path.clone(),
+                                job_id,
+                                (job.hash,
+                                 job.root.path.clone(),
                                  job.bases.iter().map(
                                      |base|(base.stored.path.clone(),
                                             base.timestamp)).collect()));
                         },
                         Some(QueuedJob::IsolatedAnalysisJob(job)) => {
                             isolated_tracker.lock().unwrap()
-                                .insert(job.hash, job.path.clone());
+                                .insert(job_id, job.path.clone());
                         },
                         _ => (),
                     }
@@ -226,10 +229,11 @@ impl AnalysisQueue {
                 Some(QueuedJob::IsolatedAnalysisJob(job)) => {
                     thread::spawn({
                         let iso_tracker = Arc::clone(&isolated_tracker);
-                        let hash = job.hash;
+                        let notify = job.notify.clone();
                         move ||{
                             job.process();
-                            iso_tracker.lock().unwrap().remove(&hash);
+                            iso_tracker.lock().unwrap().remove(&job_id);
+                            notify.send(ServerToHandle::AnalysisJobExited).ok();
                         }});
                 },
                 Some(QueuedJob::FileLinterJob(job)) => {
@@ -238,10 +242,11 @@ impl AnalysisQueue {
                 Some(QueuedJob::DeviceAnalysisJob(job)) => {
                     thread::spawn({
                         let dev_tracker = Arc::clone(&device_tracker);
-                        let hash = job.hash;
+                        let notify = job.notify.clone();
                         move ||{
                             job.process();
-                            dev_tracker.lock().unwrap().remove(&hash);
+                            dev_tracker.lock().unwrap().remove(&job_id);
+                            notify.send(ServerToHandle::AnalysisJobExited).ok();
                         }});
                 },
                 Some(QueuedJob::Sentinel) => {
@@ -339,7 +344,7 @@ impl AnalysisQueue {
         }
         {
             let device_lock = self.device_tracker.lock().unwrap();
-            for (path, _) in device_lock.values() {
+            for (_, path, _) in device_lock.values() {
                 if paths.contains(path) {
                     trace!("Detected there is still device \
                             work in-flight on {:?}",
@@ -568,11 +573,12 @@ impl DeviceAnalysisJob {
                                   self.token.status) {
             Ok(analysis) => {
                 info!("Finished device analysis of {:?}", analysis.name);
-                self.notify.send(ServerToHandle::DeviceAnalysisDone(
-                    analysis.path.clone())).ok();
+                let path = analysis.path.clone();
                 self.report.send(TimestampedStorage::make_timestamped(
                     self.timestamp,
                     analysis)).ok();
+                self.notify.send(ServerToHandle::DeviceAnalysisDone(
+                    path)).ok();
             },
             // In general, an analysis shouldn't fail to be created
             Err(AnalysisError::VFSError(e)) => {
@@ -650,5 +656,92 @@ impl LinterJob {
                 debug!("Linter analysis of {} was cancelled", self.file.as_str());
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+    use crate::concurrency::ConcurrentJob;
+
+    const TIMEOUT: Duration = Duration::from_secs(10);
+
+    fn wait_until(what: &str, cond: impl Fn() -> bool) {
+        let start = Instant::now();
+        while !cond() {
+            assert!(start.elapsed() < TIMEOUT,
+                    "timed out waiting until {}", what);
+            thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    fn no_isolated_job_queued(queue: &AnalysisQueue) -> bool {
+        !queue.queue.lock().unwrap().iter()
+            .any(|job| matches!(job, QueuedJob::IsolatedAnalysisJob(_)))
+    }
+
+    fn expect(rx: &channel::Receiver<ServerToHandle>,
+              what: &str,
+              pred: impl Fn(&ServerToHandle) -> bool) {
+        let message = rx.recv_timeout(TIMEOUT)
+            .unwrap_or_else(|e| panic!("no message for {}: {}", what, e));
+        assert!(pred(&message), "expected {}, got {:?}", what, message);
+    }
+
+    // Two isolated jobs on the same file are in flight at once. Each job
+    // sends on its own rendezvous channel, so it blocks until the test
+    // receives from it, and the test decides which job finishes first.
+    #[test]
+    fn job_stays_in_flight_when_an_older_job_on_its_file_exits() {
+        let dir = std::env::temp_dir().join(
+            format!("dls-analysis-queue-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("dev.dml");
+        std::fs::write(&file, "dml 1.4;\ndevice dev;\n").unwrap();
+        let path = CanonPath::from_path_buf(file.clone()).unwrap();
+        let paths: HashSet<CanonPath> = std::iter::once(path.clone()).collect();
+
+        let queue = AnalysisQueue::init(Arc::new(AtomicBool::new(false)));
+        let vfs = Vfs::new();
+        let (older_tx, older_rx) = channel::bounded(0);
+        let (newer_tx, newer_rx) = channel::bounded(0);
+        let mut storage = AnalysisStorage::init(older_tx);
+
+        let (mut older_job, older_token) = ConcurrentJob::new();
+        assert!(queue.enqueue_isolated_job(&mut storage, &vfs, None,
+                                           path.clone(), file.clone(),
+                                           older_token));
+        wait_until("the older job is dispatched",
+                   || no_isolated_job_queued(&queue));
+
+        storage.notify = newer_tx;
+        let (mut newer_job, newer_token) = ConcurrentJob::new();
+        assert!(queue.enqueue_isolated_job(&mut storage, &vfs, None,
+                                           path.clone(), file.clone(),
+                                           newer_token));
+        wait_until("the newer job is dispatched",
+                   || no_isolated_job_queued(&queue));
+
+        expect(&older_rx, "the older job's analysis",
+               |m| matches!(m, ServerToHandle::IsolatedAnalysisDone(..)));
+        expect(&older_rx, "the older job's exit",
+               |m| *m == ServerToHandle::AnalysisJobExited);
+        // The newer job is still blocked sending its analysis
+        assert!(queue.has_isolated_work());
+        assert!(queue.working_on_isolated_for_paths(&paths));
+        assert!(queue.has_work());
+
+        expect(&newer_rx, "the newer job's analysis",
+               |m| matches!(m, ServerToHandle::IsolatedAnalysisDone(..)));
+        expect(&newer_rx, "the newer job's exit",
+               |m| *m == ServerToHandle::AnalysisJobExited);
+        assert!(!queue.has_isolated_work());
+        assert!(!queue.working_on_isolated_for_paths(&paths));
+        wait_until("the queue has no work", || !queue.has_work());
+
+        older_job.kill();
+        newer_job.kill();
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
