@@ -892,10 +892,10 @@ impl DeviceAnalysis {
                                 vec![found_obj.clone()]
                             }
                         else {
-                            return Err(format!(
-                                "Context chain suggested {:?} should be a \
-                                 method, but it wasn't",
-                                found_obj.resolve(&self.objects)));
+                            // A higher-precedence symbol kind can legitimately
+                            // discard this method during object construction.
+                            // See ISSUE#241
+                            return Ok(vec![]);
                         }
                     }
                 else {
