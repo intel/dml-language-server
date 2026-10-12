@@ -58,7 +58,7 @@ pub struct AnalysisQueue {
 
 impl AnalysisQueue {
     // Create a new queue and start the worker thread.
-    pub fn init(no_more_work: Arc<AtomicBool>) -> AnalysisQueue {
+    pub fn init(no_more_work: Arc<AtomicBool>, server_notify: channel::Sender<ServerToHandle>) -> AnalysisQueue {
         let queue = Arc::default();
         let device_tracker = Arc::default();
         let isolated_tracker = Arc::default();
@@ -69,12 +69,13 @@ impl AnalysisQueue {
             || AnalysisQueue::run_worker_thread(no_more_work,
                                                 queue,
                                                 device_tracker,
-                                                isolated_tracker)
+                                                isolated_tracker,
+                                                server_notify)
         })
         .thread()
         .clone();
 
-        AnalysisQueue { queue, worker_thread, device_tracker, isolated_tracker}
+        AnalysisQueue { queue, worker_thread, device_tracker, isolated_tracker }
     }
 
     pub fn enqueue_linter_job(&self,
@@ -176,7 +177,8 @@ impl AnalysisQueue {
     fn run_worker_thread(no_more_work: Arc<AtomicBool>,
                          queue: Arc<Mutex<Vec<QueuedJob>>>,
                          device_tracker: Arc<Mutex<InFlightDeviceJobTracker>>,
-                         isolated_tracker: Arc<Mutex<InFlightIsolatedJobTracker>>) {
+                         isolated_tracker: Arc<Mutex<InFlightIsolatedJobTracker>>,
+                         server_notify: channel::Sender<ServerToHandle>) {
         let mut next_job_id: InFlightJobId = 0;
         loop {
             if no_more_work.load(std::sync::atomic::Ordering::SeqCst) {
@@ -229,24 +231,24 @@ impl AnalysisQueue {
                 Some(QueuedJob::IsolatedAnalysisJob(job)) => {
                     thread::spawn({
                         let iso_tracker = Arc::clone(&isolated_tracker);
-                        let notify = job.notify.clone();
+                        let notify = server_notify.clone();
                         move ||{
-                            job.process();
+                            let res = job.process();
                             iso_tracker.lock().unwrap().remove(&job_id);
-                            notify.send(ServerToHandle::AnalysisJobExited).ok();
+                            notify.send(res).ok();
                         }});
                 },
                 Some(QueuedJob::FileLinterJob(job)) => {
-                    job.process()
+                    server_notify.send(job.process()).ok();
                 },
                 Some(QueuedJob::DeviceAnalysisJob(job)) => {
                     thread::spawn({
                         let dev_tracker = Arc::clone(&device_tracker);
-                        let notify = job.notify.clone();
+                        let notify = server_notify.clone();
                         move ||{
-                            job.process();
+                            let res = job.process();
                             dev_tracker.lock().unwrap().remove(&job_id);
-                            notify.send(ServerToHandle::AnalysisJobExited).ok();
+                            notify.send(res).ok();
                         }});
                 },
                 Some(QueuedJob::Sentinel) => {
@@ -414,7 +416,6 @@ pub struct IsolatedAnalysisJob {
     client_path: PathBuf,
     timestamp: SystemTime,
     report: ResultChannel,
-    notify: channel::Sender<ServerToHandle>,
     content: TextFile,
     context: Option<CanonPath>,
     hash: u64,
@@ -443,7 +444,6 @@ impl IsolatedAnalysisJob {
             client_path,
             timestamp,
             report: analysis.report.clone(),
-            notify: analysis.notify.clone(),
             hash,
             context,
             content,
@@ -451,7 +451,7 @@ impl IsolatedAnalysisJob {
         })
     }
 
-    fn process(self) {
+    fn process(self) -> ServerToHandle {
         info!("Started work on isolated analysis of {}", self.path.as_str());
         match IsolatedAnalysis::new(&self.path,
                                     &self.client_path,
@@ -467,11 +467,11 @@ impl IsolatedAnalysisJob {
                 self.report.send(TimestampedStorage::make_timestamped(
                     self.timestamp,
                     analysis)).ok();
-                self.notify.send(ServerToHandle::IsolatedAnalysisDone(
+                return ServerToHandle::IsolatedAnalysisDone(
                     self.path.clone(),
                     new_context,
                     import_paths
-                )).ok();
+                );
             },
             Err(AnalysisError::VFSError(e)) => {
                 error!("Failed to create isolated analysis: {}", e);
@@ -481,6 +481,7 @@ impl IsolatedAnalysisJob {
                 debug!("Isolated analysis of {} was cancelled", self.path.as_str());
             }
         }
+        ServerToHandle::AnalysisJobExited
     }
 }
 
@@ -492,7 +493,6 @@ pub struct DeviceAnalysisJob {
     import_sources: HashMap<Import, CanonPath>,
     timestamp: SystemTime,
     report: ResultChannel,
-    notify: channel::Sender<ServerToHandle>,
     hash: u64,
     token: JobToken,
     device_analysis_options: DeviceAnalysisJobOptions,
@@ -553,14 +553,13 @@ impl DeviceAnalysisJob {
             timestamp,
             import_sources,
             report: analysis.report.clone(),
-            notify: analysis.notify.clone(),
             hash,
             token,
             device_analysis_options,
         })
     }
 
-    fn process(self) {
+    fn process(self) -> ServerToHandle{
         let root_path = self.root.path.clone();
         info!("Started work on deviceanalysis of {:?}, depending on {:?}",
               self.root.path,
@@ -577,8 +576,7 @@ impl DeviceAnalysisJob {
                 self.report.send(TimestampedStorage::make_timestamped(
                     self.timestamp,
                     analysis)).ok();
-                self.notify.send(ServerToHandle::DeviceAnalysisDone(
-                    path)).ok();
+                return ServerToHandle::DeviceAnalysisDone(path);
             },
             // In general, an analysis shouldn't fail to be created
             Err(AnalysisError::VFSError(e)) => {
@@ -589,6 +587,7 @@ impl DeviceAnalysisJob {
                 debug!("Device analysis of {} was cancelled", root_path.as_str());
             }
         }
+        ServerToHandle::AnalysisJobExited
     }
 }
 
@@ -597,7 +596,6 @@ pub struct LinterJob {
     file: CanonPath,
     timestamp: SystemTime,
     report: ResultChannel,
-    notify: channel::Sender<ServerToHandle>,
     content: TextFile,
     hash: u64,
     ast: IsolatedAnalysis,
@@ -623,7 +621,6 @@ impl LinterJob {
                 file: file.to_owned(),
                 timestamp,
                 report: analysis.report.clone(),
-                notify: analysis.notify.clone(),
                 hash,
                 ast: isolated_analysis.to_owned(),
                 cfg,
@@ -635,7 +632,7 @@ impl LinterJob {
         }
     }
 
-    fn process(self) {
+    fn process(self) -> ServerToHandle{
         debug!("Started work on isolated linting of {:?}", self.file);
         match LinterAnalysis::new(&self.file,
                                   self.content,
@@ -646,8 +643,7 @@ impl LinterJob {
                 self.report.send(TimestampedStorage::make_timestamped(
                     self.timestamp,
                     analysis)).ok();
-                self.notify.send(ServerToHandle::LinterDone(
-                    self.file.clone())).ok();
+                return ServerToHandle::LinterDone(self.file.clone());
             },
             Err(AnalysisError::VFSError(e)) => {
                 error!("Failed to create isolated linter analysis: {}", e);
@@ -656,6 +652,7 @@ impl LinterJob {
                 debug!("Linter analysis of {} was cancelled", self.file.as_str());
             }
         }
+        ServerToHandle::AnalysisJobExited
     }
 }
 
