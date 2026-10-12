@@ -467,9 +467,8 @@ impl<O: Output> LsService<O> {
                         }
                     }
                 },
-                // Sent after a job has left the in-flight trackers, finished
-                // or not, so that the loop gets to re-check whether there
-                // is any work left, and end the progress if not
+                // Sent after a job has left the in-flight trackers, but without
+                // a result that must be handled
                 ServerToHandle::AnalysisJobExited => {
                     if let ActionContext::Init(ctx) = &mut self.ctx {
                         ctx.check_state_waits();
