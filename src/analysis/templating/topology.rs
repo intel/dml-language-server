@@ -20,6 +20,7 @@ use crate::analysis::structure::toplevel::{ExistCondition, ObjectDecl,
                                            StatementSpecStatement,
                                            StatementSpec, TopLevel};
 use crate::analysis::DMLError;
+use crate::analysis::templating::evaluation::EvaluationContext;
 use crate::analysis::templating::objects::{create_objectspec};
 use crate::analysis::templating::traits::{TemplateTraitInfo,
                                           DMLTemplate,
@@ -171,6 +172,7 @@ pub fn create_templates_traits<'t>(
     invalid_isimps: HashMap<InferiorVariant<'t>, Vec<&'t str>>,
     imp_map: &'t HashMap<Import, CanonPath>,
     rank_struct: HashMap<&'t str, InEachStruct<'t>>,
+    eval_context: &mut EvaluationContext,
     report: &mut Vec<DMLError>)
     -> TemplateTraitInfo {
     let mut templates = HashMap::default();
@@ -192,6 +194,7 @@ pub fn create_templates_traits<'t>(
                                      imp_map,
                                      &templates,
                                      rankmaker,
+                                     eval_context,
                                      report);
         // In DMLC, we will only create a trait for templates
         // that contain 'trait statements', for now I am here
@@ -257,7 +260,9 @@ pub struct DependencyInfo<'t> {
 }
 
 pub fn dependencies<'t>(statements: &'t StatementSpec,
-                        imp_map: &'t HashMap<Import, CanonPath>)
+                        imp_map: &'t HashMap<Import, CanonPath>,
+                        eval_context: &mut EvaluationContext,
+                        report: &mut Vec<DMLError>)
                         -> DependencyInfo<'t> {
     let mut queue = vec![];
     let mut inferior = Inferiors::new();
@@ -265,37 +270,56 @@ pub fn dependencies<'t>(statements: &'t StatementSpec,
     let mut in_eachs = InEachStructMap::new();
 
     for inst in &statements.instantiations {
-        queue.push(InferiorVariant::Is(inst));
+        if inst.cond.exists(eval_context, report) {
+            queue.push(InferiorVariant::Is(inst));
+        }
     }
     for ineach in &statements.ineachs {
-        queue.push(InferiorVariant::InEach(ineach));
+        if ineach.cond.exists(eval_context, report) {
+            queue.push(InferiorVariant::InEach(ineach));
+        }
     }
     for objstmnt in &statements.objects {
-        queue.push(InferiorVariant::Object(objstmnt));
-        queue.push(InferiorVariant::ImplicitIs(
-            &objstmnt.obj.kind));
+        if objstmnt.cond.exists(eval_context, report) {
+            queue.push(InferiorVariant::Object(objstmnt));
+            queue.push(InferiorVariant::ImplicitIs(
+                &objstmnt.obj.kind));
+        }
     }
     for import in &statements.imports {
-        queue.push(InferiorVariant::Import(import));
+        if import.cond.exists(eval_context, report) {
+            queue.push(InferiorVariant::Import(import));
+        }
     }
 
     while let Some(decl) = queue.pop() {
         match decl {
             InferiorVariant::Object(obj) => {
-                queue.extend(obj.spec.objects.iter().map(
-                    |o|InferiorVariant::Object(o)));
-                queue.push(InferiorVariant::ImplicitIs(
-                    &obj.obj.kind));
-                queue.extend(obj.spec.ineachs.iter().map(
-                    |o|InferiorVariant::InEach(o)));
-                queue.extend(obj.spec.instantiations.iter().map(
-                    |o|InferiorVariant::Is(o)));
+                for object in &obj.spec.objects {
+                    if object.cond.exists(eval_context, report) {
+                        queue.push(InferiorVariant::Object(object));
+                    }
+                }
+                queue.push(InferiorVariant::ImplicitIs(&obj.obj.kind));
+                for ineach in &obj.spec.ineachs {
+                    if ineach.cond.exists(eval_context, report) {
+                        queue.push(InferiorVariant::InEach(ineach));
+                    }
+                }
+                for instantiation in &obj.spec.instantiations {
+                    if instantiation.cond.exists(eval_context, report) {
+                        queue.push(InferiorVariant::Is(instantiation));
+                    }
+                }
                 // There should not be any imports to add here
                 if !obj.spec.imports.is_empty() {
                     error!("Unexpectedly allowed imports in object declaration \
                             {:?}", obj);
-                    queue.extend(obj.spec.imports.iter().map(
-                        |o|InferiorVariant::Import(o)));
+                    for import in &obj.spec.imports {
+                        if import.cond.exists(eval_context, report) {
+                            queue.push(InferiorVariant::Import(import));
+                        }
+                    }
                 }
             },
             InferiorVariant::Is(is) => {
@@ -324,7 +348,7 @@ pub fn dependencies<'t>(statements: &'t StatementSpec,
                     inferior: mut inf_inferior,
                     in_eachs: inf_in_eachs,
                     unconditional_references: inf_unconditional_references,
-                } = dependencies(&ineach.spec, imp_map);
+                } = dependencies(&ineach.spec, imp_map, eval_context, report);
 
                 for name in &ineach.obj.spec {
                     inf_inferior.insert(&name.val,
@@ -481,6 +505,7 @@ pub fn rank_templates<'t>(real_templates: &HashMap<&'t str,
                                                    &'t ObjectDecl<Template>>,
                           files: &HashMap<&'t str, &'t TopLevel>,
                           imp_map: &'t HashMap<Import, CanonPath>,
+                          eval_context: &mut EvaluationContext,
                           report: &mut Vec<DMLError>)
                           -> RankedTemplates<'t>
 {
@@ -493,7 +518,8 @@ pub fn rank_templates<'t>(real_templates: &HashMap<&'t str,
             .map(|(k,t)|
                  (*k, TemplateRef::Exists(
                      TemplateRefKind::File(t)))));
-    rank_templates_aux(temp_templates, imp_map, HashMap::default(), report)
+    rank_templates_aux(temp_templates, imp_map, HashMap::default(),
+                       eval_context, report)
 }
 
 // We do not output errors for these, as they are confusing and the warning
@@ -552,6 +578,7 @@ pub fn rank_templates_aux<'t>(mut templates: HashMap<&'t str,
                               imp_map: &'t HashMap<Import, CanonPath>,
                               mut invalid_isimps: HashMap<InferiorVariant<'t>,
                                                           Vec<&'t str>>,
+                              eval_context: &mut EvaluationContext,
                               report: &mut Vec<DMLError>)
                               -> RankedTemplates<'t>
 {
@@ -564,7 +591,7 @@ pub fn rank_templates_aux<'t>(mut templates: HashMap<&'t str,
             inferior,
             in_eachs,
             unconditional_references,
-        } = dependencies(template.get_spec(), imp_map);
+        } = dependencies(template.get_spec(), imp_map, eval_context, report);
         let referenced: HashSet<&'t str>
             = inferior.keys().filter(|s|!invalid_isimps.values().flatten().
                                      any(|s2|&s2 == s))
@@ -687,7 +714,7 @@ pub fn rank_templates_aux<'t>(mut templates: HashMap<&'t str,
             }
             trace!("Recursed template ranking");
             return rank_templates_aux(templates, imp_map,
-                                      invalid_isimps, report);
+                                      invalid_isimps, eval_context, report);
         }
         rank_struct.insert(template.get_name(),
                            InEachStruct {
@@ -777,8 +804,9 @@ pub fn rank_templates_aux<'t>(mut templates: HashMap<&'t str,
                     StatementSpecStatement::Import(imp) => {
                         debug!("considering {:?}", stmnt);
 
-                        // TODO: Look over if this is actually always safe
-                        if &imp_map[&imp.obj].as_str() == second {
+                        // The get here can fail if an import was discarded from imp_map due to being
+                        // behind an hashif whose condition was considered false
+                        if imp_map.get(&imp.obj).is_some_and(|v|&v.as_str() == second) {
                             trace!("Set to disregard invalid 'import' {:?}",
                                    imp);
                             removed_one = true;
@@ -796,7 +824,8 @@ pub fn rank_templates_aux<'t>(mut templates: HashMap<&'t str,
                 error!("Failed to break cycle around {}", second);
                 return (HashMap::new(), vec![], HashMap::new(), HashMap::new());
             }
-            rank_templates_aux(templates, imp_map, invalid_isimps, report)
+            rank_templates_aux(templates, imp_map, invalid_isimps,
+                               eval_context, report)
         },
         SortResult::Sorted(order) => (templates,
                                       order,

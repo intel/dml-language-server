@@ -5,6 +5,7 @@ pub mod objects;
 pub mod topology;
 pub mod types;
 pub mod traits;
+pub mod evaluation;
 
 use crate::analysis::templating::types::DMLResolvedType;
 use crate::analysis::structure::expressions::DMLString;

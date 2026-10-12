@@ -1,0 +1,16 @@
+//  © 2024 Intel Corporation
+//  SPDX-License-Identifier: Apache-2.0 and MIT
+dml 1.4;
+
+device conflicting_auto_parameter;
+
+template auto_parameter {
+    param p auto;
+}
+
+template explicit_parameter {
+    param p = 1;
+}
+
+is auto_parameter;
+is explicit_parameter;
