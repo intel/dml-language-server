@@ -466,7 +466,14 @@ impl<O: Output> LsService<O> {
                                 &importpath, Some(source), context, &self.output);
                         }
                     }
-                }
+                },
+                // Sent after a job has left the in-flight trackers, but without
+                // a result that must be handled
+                ServerToHandle::AnalysisJobExited => {
+                    if let ActionContext::Init(ctx) = &mut self.ctx {
+                        ctx.check_state_waits();
+                    }
+                },
             }
         }
     }
@@ -652,6 +659,7 @@ pub enum ServerToHandle {
     DeviceAnalysisDone(CanonPath),
     LinterDone(CanonPath),
     AnalysisRequest(PathBuf, Option<CanonPath>, CanonPath),
+    AnalysisJobExited,
 }
 
 // Indicates how the server should proceed.

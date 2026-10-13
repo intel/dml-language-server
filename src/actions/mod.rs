@@ -378,11 +378,12 @@ impl <O: Output> InitActionContext<O> {
         _client_supports_cmd_run: bool,
     ) -> InitActionContext<O> {
         let shut_down = Arc::new(AtomicBool::new(false));
+        let server_notify = analysis.as_ref().lock().unwrap().notify.clone();
         InitActionContext {
             vfs,
-            analysis,
             analysis_queue: Arc::new(AnalysisQueue::init(
-                Arc::clone(&shut_down))),
+                Arc::clone(&shut_down), server_notify)),
+            analysis,
             current_notifier: Arc::default(),
             config,
             lint_config: Arc::new(Mutex::new(LintCfg::default())),
@@ -414,11 +415,12 @@ impl <O: Output> InitActionContext<O> {
     ) -> InitActionContext<O> {
         let shut_down = Arc::new(AtomicBool::new(false));
         let config = Arc::new(Mutex::new(Config::default()));
-        
+        let server_notify = analysis.as_ref().lock().unwrap().notify.clone();
+
         InitActionContext {
             analysis,
             vfs,
-            analysis_queue: Arc::new(AnalysisQueue::init(Arc::clone(&shut_down))),
+            analysis_queue: Arc::new(AnalysisQueue::init(Arc::clone(&shut_down), server_notify)),
             current_notifier: Arc::new(Mutex::new(None)),
             quiescent: Arc::new(AtomicBool::new(false)),
             workspace_roots: Arc::new(Mutex::new(Vec::new())),
