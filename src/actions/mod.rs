@@ -288,7 +288,7 @@ pub struct InitActionContext<O: Output> {
     pub sent_warnings: Arc<Mutex<HashSet<(u64, PathBuf)>>>,
     jobs: Arc<Mutex<Jobs<String>>>,
     pub client_capabilities: Arc<lsp_data::ClientCapabilities>,
-    pub has_notified_missing_builtins: bool,
+
     /// Whether the server is performing cleanup (after having received
     /// 'shutdown' request), just before final 'exit' request.
     pub shut_down: Arc<AtomicBool>,
@@ -392,7 +392,6 @@ impl <O: Output> InitActionContext<O> {
             quiescent: Arc::new(AtomicBool::new(false)),
             prev_changes: Arc::default(),
             client_capabilities: Arc::new(client_capabilities),
-            has_notified_missing_builtins: false,
             //client_supports_cmd_run,
             active_waits: Arc::default(),
             outstanding_requests: Arc::default(),
@@ -435,7 +434,6 @@ impl <O: Output> InitActionContext<O> {
             sent_warnings: Arc::new(Mutex::new(HashSet::new())),
             jobs: Arc::new(Mutex::new(Jobs::default())),
             client_capabilities: Arc::new(ClientCapabilities::default()),
-            has_notified_missing_builtins: false,
             shut_down,
             pid: std::process::id(),
         }
@@ -805,7 +803,7 @@ impl <O: Output> InitActionContext<O> {
                     "Analysing".to_string(),
                     out.clone());
                 notifier.notify_end_progress();
-                self.maybe_warn_missing_builtins(out);
+                self.maybe_warn_missing_builtins();
                 *self.current_notifier.lock().unwrap() = None;
             }
         }
@@ -814,18 +812,14 @@ impl <O: Output> InitActionContext<O> {
     // NOTE: Do not call this method from outside the main server loop,
     // as notification/request handlers obtain _copies_ of the context,
     // and not the context itself
-    fn maybe_warn_missing_builtins(&mut self, out: &O) {
-        if !self.has_notified_missing_builtins &&
-            !self.analysis.lock().unwrap().has_client_file(
-                &PathBuf::from("dml-builtins.dml")) {
-                self.has_notified_missing_builtins = true;
-                crate::server::warning_message(
-                    out,
-                    "Unable to find dml-builtins, various essential \
-                     built-in templates, methods, and paramters will \
-                     be unavailable and semantic analysis is likely \
-                     to produce errors as a result".to_string());
-            }
+    fn maybe_warn_missing_builtins(&self) {
+        if !self.analysis.lock().unwrap().has_client_file(
+            &PathBuf::from("dml-builtins.dml")) {
+            info!("Unable to find dml-builtins, various essential \
+                   built-in templates, methods, and paramters will \
+                   be unavailable and semantic analysis is likely \
+                   to produce errors as a result");
+        }
     }
 
     pub fn construct_resolver(&self) -> PathResolver {
