@@ -148,7 +148,7 @@ extern int (*foo)(bool); // @goto-ref[14]->extern_foo_call
 extern attr_value_t bar; // @goto-ref[21]->extern_bar_ref
 
 method refs_to_externs() {
-    // @loc[26]=extern_foo_call
+    // @loc[28]=extern_foo_call
     // @goto-def-decl[28]->extern_foo_decl
     local int foo_called = foo(false);
     // @loc[36]=extern_bar_ref

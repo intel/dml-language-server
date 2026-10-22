@@ -13,6 +13,7 @@
 - The server will no longer send an LSP warning if dml-builtins is not found, instead relying on the client to perform this task
 - Fixed incorrect handling of explicit in-object constructs, correcting ranges of some error reports and detection of some linting errors
 - Fixed an issue where the server would sometimes report `progress end` too early
+- Fixed reference-matching for `extern` declarations, goto-functionality around these declarations will now work correctly
 
 ## 0.9.20
 - Made GetKnownContexts custom request not wait for analysis results by default, reducing the chances of overfilling workpool capacity while analysises are running.

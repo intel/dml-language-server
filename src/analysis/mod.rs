@@ -983,6 +983,8 @@ impl DeviceAnalysis {
                         self.symbol_info.method_symbols
                             .get(m.location())
                             .and_then(|m|m.get(&parent.key)),
+                    DMLShallowObjectVariant::Extern(e) =>
+                        self.symbol_info.variable_symbols.get(e.loc_span()),
                     DMLShallowObjectVariant::Session(s) |
                     DMLShallowObjectVariant::Saved(s) =>
                         self.symbol_info.variable_symbols.get(s.loc_span()),
@@ -1110,7 +1112,6 @@ impl DeviceAnalysis {
             }
         }
         // TODO: types
-        // TODO: externs
     }
 
     fn lookup_global_from_ref(&self,
@@ -1187,8 +1188,6 @@ impl DeviceAnalysis {
             },
             // TODO: DMLType lookup
             DMLSymbolKind::Typedef => Ok(vec![]),
-            // TODO: Extern lookup
-            DMLSymbolKind::Extern => Ok(vec![]),
             e => {
                 Err(format!("Unexpected symbol kind of global symbol: {:?}", e))
             },
@@ -1200,8 +1199,7 @@ impl DeviceAnalysis {
                                                   sym: &ContextedSymbol<'t>,
                                                   limitations: &mut HashSet<DLSLimitation>)
         -> Result<Vec<SymbolRef>, String> {
-        if matches!(sym.symbol.kind, DMLSymbolKind::Template |
-                    DMLSymbolKind::Typedef | DMLSymbolKind::Extern)
+        if matches!(sym.symbol.kind, DMLSymbolKind::Template | DMLSymbolKind::Typedef)
         {
             return self.lookup_global_sym(sym.symbol);
         }
@@ -2059,6 +2057,10 @@ fn add_new_symbol_from_shallow(maker: &SymbolMaker,
             (vec![*constant.loc_span()],
              vec![*constant.loc_span()],
              vec![*constant.loc_span()]),
+        DMLShallowObjectVariant::Extern(e) =>
+            (vec![*e.loc_span()],
+             vec![*e.loc_span()],
+             vec![*e.loc_span()]),
         DMLShallowObjectVariant::Session(data) |
         DMLShallowObjectVariant::Saved(data) =>
             (vec![*data.declaration.loc_span()],
@@ -2094,6 +2096,7 @@ fn add_new_symbol_from_shallow(maker: &SymbolMaker,
         DMLShallowObjectVariant::Method(method_ref) => {
            internal_error!("Unreachable method_ref case reached, ignored. ({:?})", method_ref);
         },
+        DMLShallowObjectVariant::Extern(_) |
         DMLShallowObjectVariant::Constant(_) |
         DMLShallowObjectVariant::Session(_) |
         DMLShallowObjectVariant::Saved(_) |

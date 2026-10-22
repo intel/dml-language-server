@@ -11,18 +11,9 @@ use lsp_types::DiagnosticSeverity;
 use slotmap::{DefaultKey, Key, SlotMap};
 
 use crate::utility::{partial_sort_by_key, partial_sort_by_key_in_place};
-use crate::analysis::{DMLNamed, DMLError};
+use crate::analysis::{DMLError, DMLNamed, Named};
 use crate::analysis::parsing::tree::ZeroSpan;
-use crate::analysis::structure::objects::{ArrayDim, CompObjectKind,
-                                          CompObjectKindDecl,
-                                          CompositeObject,
-                                          Constant,
-                                          DMLObjectCommon, Error, Hook,
-                                          Import, InEach, Initializer,
-                                          Instantiation, MaybeAbstract, Method,
-                                          Parameter, ParamValue,
-                                          Variable,
-                                          VariableDecl};
+use crate::analysis::structure::objects::{ArrayDim, CompObjectKind, CompObjectKindDecl, CompositeObject, Constant, DMLObjectCommon, Error, Extern, Hook, Import, InEach, Initializer, Instantiation, MaybeAbstract, Method, ParamValue, Parameter, Variable, VariableDecl};
 use crate::analysis::structure::expressions::{DMLString, Value, ExpressionKind,
                                               Identifier, ConstantList};
 use crate::analysis::structure::toplevel::{ExistCondition, ObjectDecl,
@@ -59,6 +50,7 @@ pub struct ObjectSpec {
     pub in_eachs: InEachSpec,
     pub params: Vec<ObjectDecl<Parameter>>,
     pub constants: Vec<ObjectDecl<Constant>>,
+    pub externs: Vec<Extern>,
     pub saveds: Vec<ObjectDecl<Variable>>,
     pub sessions: Vec<ObjectDecl<Variable>>,
     pub errors: Vec<ObjectDecl<Error>>,
@@ -296,6 +288,7 @@ fn create_spec<'t>(loc: ZeroSpan,
         errors: spec.errors.to_vec(),
         methods: spec.methods.to_vec(),
         hooks: spec.hooks.to_vec(),
+        externs: spec.externs.to_vec(),
     }.into()
 }
 
@@ -498,6 +491,7 @@ impl CoarseObjectKind for DMLObject {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum DMLCoarseObjectKind {
+    Extern,
     CompositeObject,
     Method,
     Session,
@@ -626,6 +620,8 @@ impl DMLHierarchyMember for DMLShallowObject {
     }
     fn kind(&self) -> DMLSymbolKind {
         match &self.variant {
+            DMLShallowObjectVariant::Extern(_) =>
+                DMLSymbolKind::Extern,
             DMLShallowObjectVariant::Method(_) =>
                 DMLSymbolKind::Method,
             DMLShallowObjectVariant::Session(_) =>
@@ -644,6 +640,7 @@ impl DMLHierarchyMember for DMLShallowObject {
 
 #[derive(Clone, PartialEq, Eq)]
 pub enum DMLShallowObjectVariant {
+    Extern(Extern),
     Method(Arc<DMLMethodRef>),
     Session(DMLVariable),
     Saved(DMLVariable),
@@ -655,6 +652,11 @@ pub enum DMLShallowObjectVariant {
 impl std::fmt::Debug for DMLShallowObjectVariant {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            DMLShallowObjectVariant::Extern(e) => f
+                .debug_struct("Extern")
+                .field("name", &e.var.name().val)
+                .field("location", e.loc_span())
+                .finish(),
             DMLShallowObjectVariant::Method(m) => f
                 .debug_struct("Method")
                 .field("name", &m.identity())
@@ -729,6 +731,7 @@ impl CoarseObjectKind for DMLShallowObjectVariant {
             DMLShallowObjectVariant::Method(_) => DMLCoarseObjectKind::Method,
             DMLShallowObjectVariant::Session(_) => DMLCoarseObjectKind::Session,
             DMLShallowObjectVariant::Saved(_) => DMLCoarseObjectKind::Saved,
+            DMLShallowObjectVariant::Extern(_) => DMLCoarseObjectKind::Extern,
             DMLShallowObjectVariant::Parameter(_) =>
                 DMLCoarseObjectKind::Parameter,
             DMLShallowObjectVariant::Hook(_) =>
@@ -742,11 +745,12 @@ impl CoarseObjectKind for DMLShallowObjectVariant {
 impl DMLNamedMember for DMLShallowObjectVariant {
     fn identity(&self) -> &str {
         match self {
-            // TODO: probably these should themselve implement
+            // TODO: probably these should themselves implement
             // DMLNamedMember
             DMLShallowObjectVariant::Method(m) => m.identity(),
             DMLShallowObjectVariant::Session(d) |
             DMLShallowObjectVariant::Saved(d) => &d.declaration.name.val,
+            DMLShallowObjectVariant::Extern(e) => &e.var.name().val,
             DMLShallowObjectVariant::Parameter(p) => &p.identity,
             DMLShallowObjectVariant::Constant(c) => &c.name().val,
             DMLShallowObjectVariant::Hook(h) => &h.obj.name().val,
@@ -761,6 +765,7 @@ impl DMLNamedMember for DMLShallowObjectVariant {
             DMLShallowObjectVariant::Parameter(_) => "parameter",
             DMLShallowObjectVariant::Constant(_) => "constant",
             DMLShallowObjectVariant::Hook(_) => "hook",
+            DMLShallowObjectVariant::Extern(_) => "extern",
         }
     }
 
@@ -775,6 +780,7 @@ impl DMLNamedMember for DMLShallowObjectVariant {
                 c.loc_span(),
             DMLShallowObjectVariant::Hook(h) =>
                 h.loc_span(),
+            DMLShallowObjectVariant::Extern(e) => e.loc_span(),
         }
     }
 }
@@ -1188,6 +1194,13 @@ fn add_hooks(obj: &mut DMLCompositeObject,
     }
 }
 
+fn add_externs(obj: &mut DMLCompositeObject,
+               externs: Vec<Extern>) {
+    for extrn in externs {
+        obj.add_shallow_component(DMLShallowObjectVariant::Extern(extrn));
+    }
+}
+
 fn add_constants(obj: &mut DMLCompositeObject,
                  constants: Vec<ObjectDecl<Constant>>) {
     for constant in constants {
@@ -1569,11 +1582,13 @@ type HookMapping = HashMap<String, (bool, Vec<(Rank, ObjectDecl<Hook>)>)>;
 type CollectedSymbols = (HashMap<String, (ExistCondition, ZeroSpan, Vec<ZeroSpan>)>,
                          Vec<ObjectDecl<Constant>>,
                          SavedMapping, SessionMapping,
-                         MethodMapping, HookMapping, ObjectMapping);
+                         MethodMapping, HookMapping, ObjectMapping,
+                         Vec<Extern>);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum CollisionKind {
     Constant,
+    Extern,
     Parameter,
     Subobject,
     Method,
@@ -1808,6 +1823,7 @@ fn collect_symbols(parameters: &[DMLParameter],
     // them. Allows for stable sorting.
     let mut errors = vec![];
     let mut constant_decls = vec![];
+    let mut externs = vec![];
     let mut saved_decls = vec![];
     let mut session_decls = vec![];
     let mut method_decls = vec![];
@@ -1827,6 +1843,10 @@ fn collect_symbols(parameters: &[DMLParameter],
                 errors.push(error);
             }
         }
+        // Externs are unconditional and unranked by definition
+        for extrn in &spec.spec.externs {
+            externs.push(extrn.clone());
+        }
         for constant in &spec.spec.constants {
             let condition = spec.declaration_condition(constant);
             if condition.exists(eval_context, report) {
@@ -1835,6 +1855,7 @@ fn collect_symbols(parameters: &[DMLParameter],
                 constant_decls.push((spec.spec.rank.clone(), constant));
             }
         }
+
         for saved in &spec.spec.saveds {
             let condition = spec.declaration_condition(saved);
             if condition.exists(eval_context, report) {
@@ -1912,6 +1933,7 @@ fn collect_symbols(parameters: &[DMLParameter],
             severity: Some(DiagnosticSeverity::ERROR),
         });
     }
+
     for (_, constant) in constant_decls {
         constants.push(constant);
     }
@@ -2004,6 +2026,16 @@ fn collect_symbols(parameters: &[DMLParameter],
 
     // Fully cross-check all declarations for collisions
     let mut collision_candidates = vec![];
+    collision_candidates.extend(externs.iter().map(|extrn|
+        CollisionCandidate {
+            name: extrn.var.name().val.clone(),
+            condition: ExistCondition::Always,
+            span: extrn.var.name().span,
+            kind: CollisionKind::Extern,
+            logical_group: Some(CollisionGroup::Source(
+                extrn.var.name().span)),
+        }));
+
     collision_candidates.extend(constants.iter().map(|constant|
         CollisionCandidate {
             name: constant.obj.name().val.clone(),
@@ -2072,9 +2104,14 @@ fn collect_symbols(parameters: &[DMLParameter],
     // Map names to the most relevant declaration. Collision reporting is
     // handled separately below so it can check every declaration pair.
     // This creates an order for symbol definition precedence
-    // constant > parameter > subobj > method > saved > session > hook
+    // extern > constant > parameter > subobj > method > saved > session > hook
     let mut symbols: HashMap<String, (ExistCondition, ZeroSpan, Vec<ZeroSpan>)>
         = HashMap::new();
+
+    for extrn in &externs {
+        symbols.entry(extrn.var.get_name()).or_insert_with(||
+            (ExistCondition::Always, *extrn.loc_span(), vec![]));
+    }
 
     for constant in &constants {
         symbols.entry(constant.obj.name().val.clone()).or_insert_with(||
@@ -2136,7 +2173,7 @@ fn collect_symbols(parameters: &[DMLParameter],
     }
 
     report_collision_candidates(collision_candidates, report);
-    (symbols, constants, saveds, sessions, methods, hooks, subobjs)
+    (symbols, constants, saveds, sessions, methods, hooks, subobjs, externs)
 }
 
 fn merge_composite_subobj<'c>(name: String,
@@ -2798,7 +2835,7 @@ fn make_object(loc: ZeroSpan,
     let (symbols, constants,
          saveds, sessions,
          methods, hooks,
-         subobjs) = collect_symbols(&parameters, &obj_specs,
+         subobjs, externs) = collect_symbols(&parameters, &obj_specs,
                                     eval_context, report);
     trace!("All local symbols are: {:?}",
            symbols.keys().map(|k|k.as_str()).collect::<Vec<&str>>());
@@ -2817,6 +2854,7 @@ fn make_object(loc: ZeroSpan,
         let new_obj = container.get_mut(new_obj_key).unwrap();
         new_obj.used_ineach_locs = used_ineach_locs;
         add_templates(new_obj, &obj_specs);
+        add_externs(new_obj, externs);
         add_constants(new_obj, constants);
         add_parameters(new_obj, parameters);
         add_hooks(new_obj, hooks);
