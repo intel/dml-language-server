@@ -1579,11 +1579,16 @@ type HookMapping = HashMap<String, (bool, Vec<(Rank, ObjectDecl<Hook>)>)>;
 // Figure out symbol mappings for these specs
 // reports unguarded error
 // the hashmap is the symbol mapping
-type CollectedSymbols = (HashMap<String, (ExistCondition, ZeroSpan, Vec<ZeroSpan>)>,
-                         Vec<ObjectDecl<Constant>>,
-                         SavedMapping, SessionMapping,
-                         MethodMapping, HookMapping, ObjectMapping,
-                         Vec<Extern>);
+struct CollectedSymbols {
+    symbols: HashMap<String, (ExistCondition, ZeroSpan, Vec<ZeroSpan>)>,
+    constants: Vec<ObjectDecl<Constant>>,
+    saveds: SavedMapping,
+    sessions: SessionMapping,
+    methods: MethodMapping,
+    hooks: HookMapping,
+    subobjs: ObjectMapping,
+    externs: Vec<Extern>,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum CollisionKind {
@@ -2173,7 +2178,16 @@ fn collect_symbols(parameters: &[DMLParameter],
     }
 
     report_collision_candidates(collision_candidates, report);
-    (symbols, constants, saveds, sessions, methods, hooks, subobjs, externs)
+    CollectedSymbols {
+        symbols,
+        constants,
+        saveds,
+        sessions,
+        methods,
+        hooks,
+        subobjs,
+        externs,
+    }
 }
 
 fn merge_composite_subobj<'c>(name: String,
@@ -2832,11 +2846,16 @@ fn make_object(loc: ZeroSpan,
 
     trace!("Parameters are: {:?}", parameters);
 
-    let (symbols, constants,
-         saveds, sessions,
-         methods, hooks,
-         subobjs, externs) = collect_symbols(&parameters, &obj_specs,
-                                    eval_context, report);
+    let CollectedSymbols {
+        symbols,
+        constants,
+        saveds,
+        sessions,
+        methods,
+        hooks,
+        subobjs,
+        externs,
+    } = collect_symbols(&parameters, &obj_specs, eval_context, report);
     trace!("All local symbols are: {:?}",
            symbols.keys().map(|k|k.as_str()).collect::<Vec<&str>>());
 
