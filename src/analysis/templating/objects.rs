@@ -1195,8 +1195,8 @@ fn add_hooks(obj: &mut DMLCompositeObject,
 }
 
 fn add_externs(obj: &mut DMLCompositeObject,
-               externs: Vec<Extern>) {
-    for extrn in externs {
+               externs: Vec<(ExistCondition, Extern)>) {
+    for (_, extrn) in externs {
         obj.add_shallow_component(DMLShallowObjectVariant::Extern(extrn));
     }
 }
@@ -1587,7 +1587,7 @@ struct CollectedSymbols {
     methods: MethodMapping,
     hooks: HookMapping,
     subobjs: ObjectMapping,
-    externs: Vec<Extern>,
+    externs: Vec<(ExistCondition, Extern)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -1848,9 +1848,10 @@ fn collect_symbols(parameters: &[DMLParameter],
                 errors.push(error);
             }
         }
-        // Externs are unconditional and unranked by definition
+        // Externs are unranked and cannot be spec-guarded,
+        // but inherit the condition of their spec.
         for extrn in &spec.spec.externs {
-            externs.push(extrn.clone());
+            externs.push((spec.condition.clone(), extrn.clone()));
         }
         for constant in &spec.spec.constants {
             let condition = spec.declaration_condition(constant);
@@ -2031,10 +2032,10 @@ fn collect_symbols(parameters: &[DMLParameter],
 
     // Fully cross-check all declarations for collisions
     let mut collision_candidates = vec![];
-    collision_candidates.extend(externs.iter().map(|extrn|
+    collision_candidates.extend(externs.iter().map(|(condition, extrn)|
         CollisionCandidate {
             name: extrn.var.name().val.clone(),
-            condition: ExistCondition::Always,
+            condition: condition.clone(),
             span: extrn.var.name().span,
             kind: CollisionKind::Extern,
             logical_group: Some(CollisionGroup::Source(
@@ -2113,9 +2114,9 @@ fn collect_symbols(parameters: &[DMLParameter],
     let mut symbols: HashMap<String, (ExistCondition, ZeroSpan, Vec<ZeroSpan>)>
         = HashMap::new();
 
-    for extrn in &externs {
+    for (condition, extrn) in &externs {
         symbols.entry(extrn.var.get_name()).or_insert_with(||
-            (ExistCondition::Always, *extrn.loc_span(), vec![]));
+            (condition.clone(), *extrn.loc_span(), vec![]));
     }
 
     for constant in &constants {
