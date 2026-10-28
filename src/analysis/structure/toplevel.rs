@@ -7,7 +7,7 @@ use std::sync::Arc;
 use crate::analysis::templating::evaluation::{Evaluatable, EvaluationContext};
 use crate::logging::trace;
 
-use crate::analysis::structure::objects::{Bitorder, CBlock, CompObjectKind, CompositeObject, Constant, DMLObject, DMLStatement, Device, Error, Export, Hook, Import, InEach, Instantiation, Loggroup, Method, MethodModifier, Parameter, Statements, Template, ToStructure, Typedef, Variable, Version, make_statements};
+use crate::analysis::structure::objects::{Bitorder, CBlock, CompObjectKind, CompositeObject, Constant, DMLObject, DMLStatement, Device, Error, Export, Extern, Hook, Import, InEach, Instantiation, Loggroup, Method, MethodModifier, Parameter, Statements, Template, ToStructure, Typedef, Variable, Version, make_statements};
 use crate::analysis::structure::expressions::{Expression};
 use crate::analysis::{DMLError, FileSpec, LocationRange};
 use crate::analysis::parsing::tree::{ZeroRange, ZeroSpan, TreeElement};
@@ -394,6 +394,7 @@ pub struct StatementSpec {
     pub imports: Vec<ObjectDecl<Import>>,
     pub errors: Vec<ObjectDecl<Error>>,
     pub constants: Vec<ObjectDecl<Constant>>,
+    pub externs: Vec<Extern>,
 }
 
 impl SymbolContainer for StatementSpec {
@@ -405,6 +406,7 @@ impl SymbolContainer for StatementSpec {
         symbols.append(&mut self.methods.to_symbols());
         symbols.append(&mut self.constants.to_symbols());
         symbols.append(&mut self.hooks.to_symbols());
+        symbols.append(&mut self.externs.to_symbols());
         symbols
     }
 }
@@ -442,6 +444,7 @@ impl StatementSpec {
             saveds: vec![],
             params: vec![],
             constants: vec![],
+            externs: vec![],
             methods: vec![],
             hooks: vec![],
             instantiations: vec![],
@@ -550,7 +553,7 @@ fn flatten_hashif_branch(context: StatementContext,
                     DMLObject::Extern(ext) =>
                         report.push(LocalDMLError {
                             range:
-                            ext.vars.first().unwrap().object.name.span.range,
+                            ext.var.object.name.span.range,
                             description: format!(
                                 "Extern declaration not allowed in {}",
                                 context),
@@ -729,6 +732,7 @@ fn flatten_hashif_branch(context: StatementContext,
         errors,
         templates,
         imports,
+        externs: vec![],
     }
 }
 
@@ -744,7 +748,6 @@ pub struct TopLevel {
     pub bitorder: Option<Bitorder>,
     pub loggroups: Vec<Loggroup>,
     pub cblocks: Vec<CBlock>,
-    pub externs: Vec<Variable>,
     pub typedefs: Vec<Typedef>,
     pub references: Vec<Reference>,
     pub spec: StatementSpec,
@@ -1007,7 +1010,7 @@ impl TopLevel {
         let spec = StatementSpec {
             objects, instantiations, ineachs, errors, imports,
             saveds, sessions, params, constants, methods, exports, hooks,
-            templates,
+            templates, externs,
         };
         let mut references = vec![];
         ast.references(&mut references, filespec);
@@ -1026,7 +1029,6 @@ impl TopLevel {
             version,
             device,
             cblocks,
-            externs,
             typedefs,
             bitorder,
             loggroups,

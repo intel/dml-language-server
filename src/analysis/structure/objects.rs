@@ -647,6 +647,8 @@ impl SymbolContainer for DMLStatement {
                 vec![con as &dyn StructureSymbol],
             DMLStatement::Object(DMLObject::Parameter(param)) =>
                 vec![param as &dyn StructureSymbol],
+            DMLStatement::Object(DMLObject::Extern(ext)) =>
+                vec![ext as &dyn StructureSymbol],
             DMLStatement::HashIf(hashif) => hashif.symbols(),
             _ => vec![]
         }
@@ -1344,6 +1346,38 @@ fn to_variable_decl_structure<'a>(content: &misc::CDecl,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Extern {
+    pub var: VariableDecl,
+    pub span: ZeroSpan,
+}
+
+impl DMLNamed for Extern {
+    fn name(&self) -> &DMLString {
+        self.var.name()
+    }
+}
+
+impl DeclarationSpan for Extern {
+    fn span(&self) -> &ZeroSpan {
+        &self.span
+    }
+}
+
+impl StructureSymbol for Extern {
+    fn kind(&self) -> DMLSymbolKind {
+        DMLSymbolKind::Extern
+    }
+}
+
+pub fn to_extern_structure<'a>(extrn: &structure::ExternContent,
+                                report: &mut Vec<LocalDMLError>,
+                                file: FileSpec<'a>) -> Option<Extern> {
+    let var = to_variable_decl_structure(&extrn.cdecl, VariableDeclKind::Extern, report, file)?;
+    let span = ZeroSpan::from_range(extrn.range(), file.path);
+    Some(Extern { var, span })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Variable {
     pub vars: Vec<VariableDecl>,
     pub values: Vec<Initializer>,
@@ -1513,7 +1547,7 @@ pub enum DMLObject {
     Device(Device),
     Version(Version),
     Export(Export),
-    Extern(Variable),
+    Extern(Extern),
     Footer(CBlock),
     Header(CBlock),
     Hook(Hook),
@@ -1613,10 +1647,7 @@ fn to_objectstatement<'a>(content: &structure::DMLObjectContent,
                 Export::to_structure(con, report, file)?))),
         structure::DMLObjectContent::Extern(con) =>
             DMLStatementKind::Statement(DMLStatement::Object(DMLObject::Extern(
-                to_variable_structure(&con.cdecl,
-                                      con.initializer.as_ref().map(|(_,i)|i),
-                                      VariableDeclKind::Extern,
-                                      report, file)?))),
+                to_extern_structure(con, report, file)?))),
         structure::DMLObjectContent::Event(con) =>
             DMLStatementKind::Statement(DMLStatement::Object(
                 DMLObject::CompositeObject(

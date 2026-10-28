@@ -99,3 +99,8 @@ template exclusive_auto_assignment {
 } #else {
     is exclusive_auto_assignment;
 }
+
+extern int extern_int;
+#if (false) {
+    session int extern_int;
+}

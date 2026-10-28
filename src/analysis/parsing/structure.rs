@@ -485,7 +485,30 @@ pub fn parse_vardecl(context: &ParseContext, stream: &mut FileParser<'_>, file_i
     }
 }
 
-// session, saved, and extern
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExternContent {
+    pub kind: LeafToken,
+    pub cdecl: CDecl,
+    pub semi: LeafToken,
+}
+
+impl TreeElement for ExternContent {
+    fn range(&self) -> ZeroRange {
+        Range::combine(
+            self.kind.range(),
+            self.semi.range())
+    }
+    fn subs(&self) -> TreeElements<'_> {
+        create_subs!(&self.kind,
+                     &self.cdecl,
+                     &self.semi)
+    }
+    fn post_parse_sanity(&self, _file: &TextFile) -> Vec<LocalDMLError> {
+        self.cdecl.ensure_named()
+    }
+}
+
+// session, saved
 #[derive(Debug, Clone, PartialEq)]
 pub struct VariableContent {
     pub kind: LeafToken,
@@ -544,19 +567,11 @@ impl Parse<DMLObjectContent> for VariableContent {
 fn parse_extern(
     externtok: LeafToken, context: &ParseContext, stream: &mut FileParser<'_>, file_info: &FileInfo)
     -> DMLObject {
-    let (mut outer, mut inner) = object_contexts(context);
-    let cdecl = VarDecl::One(CDecl::parse(&inner, stream, file_info));
-    let initializer = match inner.peek_kind(stream) {
-        Some(TokenKind::Assign) => {
-            let assign = inner.next_leaf(stream);
-            let initializer = Initializer::parse(&inner, stream, file_info);
-            Some((assign, initializer))
-        },
-        _ => None,
-    };
+    let (mut outer, inner) = object_contexts(context);
+    let cdecl = CDecl::parse(&inner, stream, file_info);
     let semi = outer.expect_next_kind(stream, TokenKind::SemiColon);
-    DMLObjectContent::Extern(VariableContent {
-        kind: externtok, cdecl, initializer, semi
+    DMLObjectContent::Extern(ExternContent {
+        kind: externtok, cdecl, semi
     }).into()
 }
 
@@ -1885,7 +1900,7 @@ pub enum DMLObjectContent {
     DMLVersion(DMLVersionContent),
     ErrorObject(ErrorObjectContent),
     Export(ExportContent),
-    Extern(VariableContent),
+    Extern(ExternContent),
     Event(CompositeObjectContent),
     Field(FieldContent),
     Footer(CBlockContent),

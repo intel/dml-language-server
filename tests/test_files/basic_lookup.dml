@@ -140,3 +140,18 @@ method phantom_calls() { // @goto-ref[8]->
     nonexistent_method(); // @goto-def-decl[5]->
     nonexistent_bank.nonexistent_reg.read(); // @goto-def-decl[5]-> @goto-def-decl[22]-> @goto-def-decl[38]->
 }
+
+// extern methods and values
+// @loc[14]=extern_foo_decl
+extern int (*foo)(bool); // @goto-ref[14]->extern_foo_call
+// @loc[21]=extern_bar_decl
+extern attr_value_t bar; // @goto-ref[21]->extern_bar_ref
+
+method refs_to_externs() {
+    // @loc[28]=extern_foo_call
+    // @goto-def-decl[28]->extern_foo_decl
+    local int foo_called = foo(false);
+    // @loc[36]=extern_bar_ref
+    // @goto-def-decl[36]->extern_bar_decl
+    local attr_value_t* bar_ref = &bar;
+}
