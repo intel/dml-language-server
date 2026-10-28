@@ -4,6 +4,9 @@
 -->
 # Change Log
 
+## 0.9.22
+
+
 ## 0.9.21
 - The DLS will now properly not report conflicts between statements in a `#if` and its corresponding `#else` branch
 - The DLS will now consider all `#if` branches on conditions directly based on `dml_1_2` and `dml_1_4` dead or alive appropriately
