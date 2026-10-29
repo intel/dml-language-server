@@ -5,7 +5,7 @@
 # Change Log
 
 ## 0.9.22
-
+- Fixed an issue in server logging where the large allocations could be made by debug prints even at lower debug levels
 
 ## 0.9.21
 - The DLS will now properly not report conflicts between statements in a `#if` and its corresponding `#else` branch
