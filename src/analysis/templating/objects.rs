@@ -640,7 +640,7 @@ impl DMLHierarchyMember for DMLShallowObject {
 
 #[derive(Clone, PartialEq, Eq)]
 pub enum DMLShallowObjectVariant {
-    Extern(Extern),
+    Extern(DMLAmbiguousDef<Extern>),
     Method(Arc<DMLMethodRef>),
     Session(DMLVariable),
     Saved(DMLVariable),
@@ -654,8 +654,8 @@ impl std::fmt::Debug for DMLShallowObjectVariant {
         match self {
             DMLShallowObjectVariant::Extern(e) => f
                 .debug_struct("Extern")
-                .field("name", &e.var.name().val)
-                .field("location", e.loc_span())
+                .field("name", &e.name().val)
+                .field("location", e.get_likely_definition().loc_span())
                 .finish(),
             DMLShallowObjectVariant::Method(m) => f
                 .debug_struct("Method")
@@ -750,7 +750,7 @@ impl DMLNamedMember for DMLShallowObjectVariant {
             DMLShallowObjectVariant::Method(m) => m.identity(),
             DMLShallowObjectVariant::Session(d) |
             DMLShallowObjectVariant::Saved(d) => &d.declaration.name.val,
-            DMLShallowObjectVariant::Extern(e) => &e.var.name().val,
+            DMLShallowObjectVariant::Extern(e) => &e.name().val,
             DMLShallowObjectVariant::Parameter(p) => &p.identity,
             DMLShallowObjectVariant::Constant(c) => &c.name().val,
             DMLShallowObjectVariant::Hook(h) => &h.obj.name().val,
@@ -780,7 +780,8 @@ impl DMLNamedMember for DMLShallowObjectVariant {
                 c.loc_span(),
             DMLShallowObjectVariant::Hook(h) =>
                 h.loc_span(),
-            DMLShallowObjectVariant::Extern(e) => e.loc_span(),
+            DMLShallowObjectVariant::Extern(e) =>
+                e.get_likely_definition().loc_span(),
         }
     }
 }
@@ -1196,8 +1197,22 @@ fn add_hooks(obj: &mut DMLCompositeObject,
 
 fn add_externs(obj: &mut DMLCompositeObject,
                externs: Vec<(ExistCondition, Extern)>) {
-    for (_, extrn) in externs {
-        obj.add_shallow_component(DMLShallowObjectVariant::Extern(extrn));
+    let mut declarations: HashMap<String, Vec<(ExistCondition, Extern)>> =
+        HashMap::new();
+    for (condition, extrn) in externs {
+        let paths = declarations.entry(extrn.name().val.clone()).or_default();
+        if !paths.iter().any(|(guard, declaration)|
+            *guard == condition && *declaration == extrn) {
+            paths.push((condition, extrn));
+        }
+    }
+    for (name, mut paths) in declarations {
+        paths.sort_by_key(|(_, extrn)|*extrn.loc_span());
+        // DMLC merges externs by name and checks resolved type equivalence.
+        // TODO: Check extern type compatibility and report EEXTERNINCOMP once
+        // DMLType supports resolved types rather than just source spans.
+        obj.add_shallow_component(DMLShallowObjectVariant::Extern(
+            DMLAmbiguousDef::new(name, paths, vec![], vec![])));
     }
 }
 
@@ -1635,6 +1650,10 @@ struct CollisionCandidate {
 
 impl CollisionCandidate {
     fn overlaps(&self, other: &Self) -> bool {
+        if self.kind == CollisionKind::Extern &&
+           other.kind == CollisionKind::Extern {
+            return false;
+        }
         let same_logical_symbol = self.kind == other.kind && matches!(
             (self.logical_group, other.logical_group),
             (Some(first), Some(second)) if first == second);

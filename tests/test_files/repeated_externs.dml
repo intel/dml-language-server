@@ -1,0 +1,19 @@
+//  © 2024 Intel Corporation
+//  SPDX-License-Identifier: Apache-2.0 and MIT
+dml 1.4;
+
+device repeated_externs;
+import "repeated_extern_import.dml";
+
+extern int shared_value; // @loc[12]=value @goto-ref[12]->value_use
+extern int shared_value; // @loc[12]=value_again @goto-ref[12]->value_use
+extern int shared_function(int argument); // @loc[12]=function
+extern int shared_function(int renamed_argument); // @loc[12]=function_again
+
+method use_externs() -> (int) {
+    local int result = shared_value; // @loc[24]=value_use @goto-def-decl[24]->value,value_again,repeated_extern_import.dml:imported_value
+    return shared_function(result); // @goto-def-decl[12]->function,function_again,repeated_extern_import.dml:imported_function
+}
+
+extern int colliding_name;
+session int colliding_name;

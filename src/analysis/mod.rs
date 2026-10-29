@@ -984,7 +984,8 @@ impl DeviceAnalysis {
                             .get(m.location())
                             .and_then(|m|m.get(&parent.key)),
                     DMLShallowObjectVariant::Extern(e) =>
-                        self.symbol_info.variable_symbols.get(e.loc_span()),
+                        self.symbol_info.variable_symbols.get(
+                            e.get_likely_definition().loc_span()),
                     DMLShallowObjectVariant::Session(s) |
                     DMLShallowObjectVariant::Saved(s) =>
                         self.symbol_info.variable_symbols.get(s.loc_span()),
@@ -2057,10 +2058,13 @@ fn add_new_symbol_from_shallow(maker: &SymbolMaker,
             (vec![*constant.loc_span()],
              vec![*constant.loc_span()],
              vec![*constant.loc_span()]),
-        DMLShallowObjectVariant::Extern(e) =>
-            (vec![*e.loc_span()],
-             vec![*e.loc_span()],
-             vec![*e.loc_span()]),
+        DMLShallowObjectVariant::Extern(e) => {
+            let mut locations: Vec<_> = e.used_definitions.iter()
+                .map(|(_, def)|*def.loc_span()).collect();
+            locations.sort();
+            locations.dedup();
+            (locations.clone(), locations.clone(), locations)
+        },
         DMLShallowObjectVariant::Session(data) |
         DMLShallowObjectVariant::Saved(data) =>
             (vec![*data.declaration.loc_span()],
@@ -2096,7 +2100,13 @@ fn add_new_symbol_from_shallow(maker: &SymbolMaker,
         DMLShallowObjectVariant::Method(method_ref) => {
            internal_error!("Unreachable method_ref case reached, ignored. ({:?})", method_ref);
         },
-        DMLShallowObjectVariant::Extern(_) |
+        DMLShallowObjectVariant::Extern(e) => {
+            for (_, declaration) in &e.used_definitions {
+                log_non_same_insert(&mut storage.variable_symbols,
+                                    *declaration.loc_span(),
+                                    Arc::clone(&new_sym));
+            }
+        },
         DMLShallowObjectVariant::Constant(_) |
         DMLShallowObjectVariant::Session(_) |
         DMLShallowObjectVariant::Saved(_) |

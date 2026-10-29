@@ -809,6 +809,27 @@ mod tests {
     }
 
     #[test]
+    fn repeated_externs_share_a_symbol_and_keep_all_declarations() {
+        init_logging();
+        let setup = setup_test(&[
+            "repeated_externs.dml", "repeated_extern_import.dml"]);
+        {
+            let analysis = setup.analysis.lock().unwrap();
+            let device = analysis.get_device_analysis(&setup.main_canon_path)
+                .expect("device analysis should exist");
+            let errors: Vec<_> = device.errors.values().flatten().filter(
+                |error|!error.description.starts_with("Could not find file;"))
+                .collect();
+            let descriptions: Vec<_> = errors.iter().map(
+                |error|error.description.as_str()).collect();
+            assert_eq!(descriptions, vec![
+                "Name collision in declaration on 'colliding_name'",
+            ], "unexpected extern diagnostics: {:#?}", errors);
+        }
+        run_annotation_tests(&setup.ctx, &setup.main_file, setup.annotations);
+    }
+
+    #[test]
     fn conditional_paths_do_not_conflict_with_the_same_parameter_assignment() {
         init_logging();
         let setup = setup_test(&["conditional_parameter_paths.dml"]);
