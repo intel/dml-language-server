@@ -5,6 +5,7 @@
 # Change Log
 
 ## 0.9.22
+- Fixed false parameter self-conflicts when the same template is instantiated through multiple conditional paths
 - Fixed an issue in server logging where the large allocations could be made by debug prints even at lower debug levels
 
 ## 0.9.21

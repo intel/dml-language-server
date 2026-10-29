@@ -809,6 +809,36 @@ mod tests {
     }
 
     #[test]
+    fn conditional_paths_do_not_conflict_with_the_same_parameter_assignment() {
+        init_logging();
+        let setup = setup_test(&["conditional_parameter_paths.dml"]);
+        let analysis = setup.analysis.lock().unwrap();
+        let device = analysis.get_device_analysis(&setup.main_canon_path)
+            .expect("device analysis should exist");
+        let errors: Vec<_> = device.errors.values().flatten().filter(|error|
+            error.description.starts_with("Conflicting assignments") ||
+            error.description.contains("auto-parameter")).collect();
+        let mut descriptions: Vec<_> = errors.iter().map(
+            |error|error.description.as_str()).collect();
+        descriptions.sort();
+        assert_eq!(descriptions, vec![
+            "Conflicting assignments to parameter 'shared_default'",
+            "Conflicting assignments to parameter 'shared_default'",
+            "Conflicting assignments to parameter 'shared_fixed'",
+            "Conflicting assignments to parameter 'shared_fixed'",
+            "Invalid assignment to auto-parameter 'shared_auto'",
+            "Invalid assignment to auto-parameter 'shared_auto'",
+        ], "unexpected parameter conflicts: {:#?}", errors);
+        for error in errors {
+            assert!(!error.related.is_empty());
+            assert_eq!(error.related.len(), 1,
+                       "duplicate conflicting paths: {:#?}", error);
+            assert!(error.related.iter().all(|(span, _)|*span != error.span),
+                    "assignment conflicts with itself: {:#?}", error);
+        }
+    }
+
+    #[test]
     fn hashif_conflicts_respect_branch_reachability() {
         init_logging();
         let setup = setup_test(&["conditional_conflicts.dml"]);

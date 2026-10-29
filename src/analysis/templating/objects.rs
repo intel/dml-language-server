@@ -1392,9 +1392,14 @@ fn resolve_parameter(obj_loc: &ZeroSpan,
     for (def, _) in &sorted_definitions {
         if def.obj.value.as_ref().is_some_and(
             |v|matches!(v, ParamValue::Auto(_))) {
-            let conflicts: Vec<_> = sorted_definitions.iter().filter(
-                |(other, _)|other != def &&
-                    !def.cond.guaranteed_excluded_from(&other.cond)).collect();
+            let mut conflicts: Vec<_> = sorted_definitions.iter().filter(
+                |(other, _)|other.obj != def.obj &&
+                    sorted_definitions.iter().any(|(path, _)|
+                        path.obj == def.obj &&
+                        !path.cond.guaranteed_excluded_from(&other.cond)))
+                .collect();
+            conflicts.sort_by_key(|(other, _)|*other.obj.span());
+            conflicts.dedup_by_key(|(other, _)|*other.obj.span());
             if !conflicts.is_empty() {
                 report.push(DMLError {
                     span: *def.obj.span(),
@@ -1444,23 +1449,34 @@ fn resolve_parameter(obj_loc: &ZeroSpan,
         // Sort declarations by span for consistent reporting
         rest.sort_by_key(|o|o.0.loc_span());
 
-        // TODO: This could be improved to report conflicts between rest
-        let (first, rest) = rest.split_first().unwrap();
-        let conflicts: Vec<_> = rest.iter().filter(
-            |(o, _)|!first.0.cond.guaranteed_excluded_from(&o.cond)
-        ).collect();
-
-        if !conflicts.is_empty() {
-           report.push(DMLError {
-                span: *first.0.obj.span(),
-                description: format!(
-                    "Conflicting assignments to parameter '{}'", name),
-                related: conflicts.into_iter().map(
-                    |(def2, _)| (*def2.obj.span(),
-                             "Conflicting assignment here"
-                             .to_string())).collect(),
-                severity: Some(DiagnosticSeverity::ERROR),
-            });
+        // A single assignment can arrive through multiple conditional paths.
+        // Keep every guard, but compare distinct source assignments only.
+        let mut assignments: Vec<Vec<&ObjectDecl<Parameter>>> = vec![];
+        for (def, _) in rest {
+            if let Some(paths) = assignments.iter_mut().find(
+                |paths|paths[0].obj == def.obj) {
+                paths.push(def);
+            } else {
+                assignments.push(vec![def]);
+            }
+        }
+        for (index, paths) in assignments.iter().enumerate() {
+            let conflicts: Vec<_> = assignments[index + 1..].iter().filter(
+                |others|paths.iter().any(|first|others.iter().any(
+                    |other|!first.cond.guaranteed_excluded_from(&other.cond))))
+                .collect();
+            if !conflicts.is_empty() {
+                report.push(DMLError {
+                    span: *paths[0].obj.span(),
+                    description: format!(
+                        "Conflicting assignments to parameter '{}'", name),
+                    related: conflicts.into_iter().map(
+                        |others| (*others[0].obj.span(),
+                                  "Conflicting assignment here".to_string()))
+                        .collect(),
+                    severity: Some(DiagnosticSeverity::ERROR),
+                });
+            }
         }
     }
 
