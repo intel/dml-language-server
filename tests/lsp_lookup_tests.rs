@@ -825,6 +825,60 @@ mod tests {
             assert_eq!(descriptions, vec![
                 "Name collision in declaration on 'colliding_name'",
             ], "unexpected extern diagnostics: {:#?}", errors);
+            let symbols: Vec<_> = device.symbol_info.all_symbols().collect();
+            let unique_ids: HashSet<_> = symbols.iter().map(|symbol|symbol.id)
+                .collect();
+            assert_eq!(symbols.len(), unique_ids.len(),
+                       "all_symbols returned duplicate symbols");
+            let merged_externs: Vec<_> = device.symbol_info.variable_symbols
+                .values().filter(|symbol|
+                    symbol.lock().unwrap().declarations.len() == 3).collect();
+            assert_eq!(merged_externs.len(), 2,
+                       "each merged extern should be stored exactly once");
+            for symbol in merged_externs {
+                let symbol = symbol.lock().unwrap();
+                assert_eq!(symbol.definitions.len(), 3);
+                assert_eq!(symbol.references.len(), 1);
+            }
+        }
+        for annotation in &setup.annotations {
+            let position = ZeroFilePosition::new(
+                annotation.location.position,
+                annotation.location.file_path.as_ref().unwrap().clone());
+            for lookup in [definitions_at_fp as LookupFn,
+                           declarations_at_fp, references_at_fp] {
+                let spans = lookup(&setup.ctx, &position, &mut HashSet::new())
+                    .expect("extern lookup should succeed");
+                let unique_spans: HashSet<_> = spans.iter().collect();
+                assert_eq!(spans.len(), unique_spans.len(),
+                           "extern lookup returned duplicate locations: {:?}",
+                           spans);
+            }
+        }
+        let declaration_locations: Vec<_> = {
+            let analysis = setup.analysis.lock().unwrap();
+            let device = analysis.get_device_analysis(&setup.main_canon_path)
+                .unwrap();
+            device.symbol_info.variable_symbols.values().flat_map(|symbol| {
+                let symbol = symbol.lock().unwrap();
+                if symbol.declarations.len() == 3 {
+                    symbol.declarations.clone()
+                } else {
+                    vec![]
+                }
+            }).collect()
+        };
+        for location in declaration_locations {
+            let position = ZeroFilePosition::new(
+                location.range.start(), location.path());
+            for lookup in [definitions_at_fp as LookupFn, declarations_at_fp] {
+                let locations = lookup(&setup.ctx, &position, &mut HashSet::new())
+                    .expect("lookup from every extern declaration should succeed");
+                assert_eq!(locations.len(), 3);
+            }
+            let references = references_at_fp(
+                &setup.ctx, &position, &mut HashSet::new()).unwrap();
+            assert_eq!(references.len(), 1);
         }
         run_annotation_tests(&setup.ctx, &setup.main_file, setup.annotations);
     }
