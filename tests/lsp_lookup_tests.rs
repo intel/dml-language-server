@@ -1079,9 +1079,72 @@ mod tests {
     }
 
     #[test]
-    fn incompatible_types_produce_device_diagnostics() {
+    fn test_type_structs() {
         init_logging();
-        let setup = setup_test(&["type_diagnostics.dml"]);
+        let setup = setup_test(&["type_structs.dml"]);
+        run_fixture_annotations(&setup);
+    }
+
+    #[test]
+    fn test_type_method_calls() {
+        init_logging();
+        let setup = setup_test(&["type_method_calls.dml"]);
+        run_fixture_annotations(&setup);
+    }
+
+    #[test]
+    fn test_type_variables() {
+        init_logging();
+        let setup = setup_test(&["type_variables.dml"]);
+        run_fixture_annotations(&setup);
+    }
+
+    #[test]
+    fn test_type_overrides() {
+        init_logging();
+        let setup = setup_test(&["type_overrides.dml"]);
+        run_fixture_annotations(&setup);
+    }
+
+    #[test]
+    fn test_type_default_calls() {
+        init_logging();
+        let setup = setup_test(&["type_default_calls.dml"]);
+        run_fixture_annotations(&setup);
+    }
+
+    #[test]
+    fn test_type_returns() {
+        init_logging();
+        let setup = setup_test(&["type_returns.dml"]);
+        run_fixture_annotations(&setup);
+    }
+
+    #[test]
+    fn test_type_switch_scope() {
+        init_logging();
+        let setup = setup_test(&["type_switch_scope.dml"]);
+        run_fixture_annotations(&setup);
+    }
+
+    #[test]
+    fn test_type_narrowing() {
+        init_logging();
+        let setup = setup_test(&["type_narrowing.dml"]);
+        run_fixture_annotations(&setup);
+    }
+
+    #[test]
+    fn test_type_assignments() {
+        init_logging();
+        let setup = setup_test(&["type_assignments.dml"]);
+        run_fixture_annotations(&setup);
+    }
+
+    #[test]
+    fn test_type_arrays() {
+        init_logging();
+        let setup = setup_test(&["type_arrays.dml"]);
         run_fixture_annotations(&setup);
     }
 
@@ -1347,20 +1410,17 @@ mod tests {
         run_fixture_annotations(&setup);
     }
 
-    /// End-to-end tests for the first type-lookup vertical slice.
-    ///
-    /// Exercises goto-def, goto-ref, and goto-type-def on:
-    ///   - a `typedef` of a primitive type,
-    ///   - a `typedef` of a struct with fields,
-    ///   - method arguments (including one with a struct-typed argument),
-    ///   - method-local variables,
-    ///   - `saved` variables (one primitive, one struct-typed).
-    ///
     #[test]
-    fn test_type_lookup() {
+    fn test_type_interfaces() {
         init_logging();
-        let setup = setup_test(&["type_lookup.dml"]);
+        let setup = setup_test(&["type_interfaces.dml"]);
+        run_fixture_annotations(&setup);
+    }
 
+    #[test]
+    fn test_type_template_types() {
+        init_logging();
+        let setup = setup_test(&["type_template_types.dml"]);
         run_fixture_annotations(&setup);
     }
 

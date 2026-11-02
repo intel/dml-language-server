@@ -1,0 +1,65 @@
+//  © 2026 Intel Corporation
+//  SPDX-License-Identifier: Apache-2.0 and MIT
+
+dml 1.4;
+device type_returns;
+
+template shared_return_source {
+    shared method shared_text() -> (const char *) {
+        return "shared";
+    }
+}
+
+template shared_return_calls is shared_return_source {
+    shared method invalid_shared_forward() -> (int) { // @loc[48]=shared_forward_return
+        // @diag-error: Cannot return value of type 'const char *' | related->shared_forward_return: Return type declared here
+        return shared_text();
+    }
+}
+
+bank shared_return_diagnostics is shared_return_calls {
+}
+
+bank diagnostics {
+    method typed_pair(int argument, bool flag) -> (int, bool) {
+        return (argument, flag);
+    }
+
+    method invalid_return() -> (int, bool) { // @loc[33]=invalid_return_int @loc[38]=invalid_return_bool
+        // @diag-error: return value of type 'const char *' | related->invalid_return_int: Return type declared here
+        // @diag-error: return value of type 'uint64' | related->invalid_return_bool: Return type declared here
+        return ("return", 4);
+    }
+
+    method valid_scalar_return() -> (int) {
+        return 1;
+    }
+
+    method invalid_scalar_return() -> (int) { // @loc[40]=invalid_scalar_return_type
+        // @diag-error: return value of type 'const char *' | related->invalid_scalar_return_type: Return type declared here
+        return "scalar return";
+    }
+
+    method unresolved_call_return() -> (int) {
+        return unknown_get();
+    }
+
+    method unknown_tuple_return() -> (int) { // @loc[12]=unknown_tuple_method
+        // @diag-error: declares 1 return values but return statement provides 2 | related->unknown_tuple_method: Method declared here
+        return (null, 1);
+    }
+
+    method known_tuple_return() -> (int) { // @loc[12]=known_tuple_method
+        // @diag-error: declares 1 return values but return statement provides 2 | related->known_tuple_method: Method declared here
+        return (2, 1);
+    }
+
+    method short_return() -> (int, bool) { // @loc[12]=short_return_method
+        // @diag-error: declares 2 return values but return statement provides 1 | related->short_return_method: Method declared here
+        return 4;
+    }
+
+    method forwarded_return() -> (int, bool) {
+        return typed_pair(4, false);
+    }
+}

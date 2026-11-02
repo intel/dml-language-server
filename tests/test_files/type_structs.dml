@@ -1,0 +1,47 @@
+//  © 2026 Intel Corporation
+//  SPDX-License-Identifier: Apache-2.0 and MIT
+
+dml 1.4;
+device type_structs;
+
+typedef struct {
+    int value;
+} diagnostic_inner_t;
+
+typedef struct {
+    int value;
+    int *pointer;
+    int array[2];
+    diagnostic_inner_t nested;
+// @loc[3]=outer_type_def
+} diagnostic_outer_t; // @goto-ref[3]->outer_type_use,outer_pointer_type_use
+
+bank diagnostics {
+    method struct_fields(
+        // @loc[9]=outer_type_use
+        diagnostic_outer_t value, // @goto-def-decl[9]->outer_type_def
+        // @loc[9]=outer_pointer_type_use
+        diagnostic_outer_t *pointer) { // @goto-def-decl[9]->outer_type_def
+        local int scalar_field = value.value;
+        local int *pointer_field = value.pointer;
+        local int *array_field = value.array;
+        local int array_element = value.array[0];
+        local int nested_field = value.nested.value;
+        local int indirect_field = pointer->value;
+
+        // @diag-error: bad_scalar_field | related->bad_scalar_field_decl: declared as 'bool' here
+        local bool bad_scalar_field = value.value; // @loc[20]=bad_scalar_field_decl
+        // @diag-error: bad_pointer_field | related->bad_pointer_field_decl: declared as 'int' here
+        local int bad_pointer_field = value.pointer; // @loc[19]=bad_pointer_field_decl
+        // @diag-error: bad_array_field | related->bad_array_field_decl: declared as 'bool' here
+        local bool bad_array_field = value.array; // @loc[20]=bad_array_field_decl
+        // @diag-error: bad_array_element | related->bad_array_element_decl: declared as 'bool' here
+        local bool bad_array_element = pointer->array[0]; // @loc[20]=bad_array_element_decl
+        // @diag-error: bad_nested_field | related->bad_nested_field_decl: declared as 'bool' here
+        local bool bad_nested_field = value.nested.value; // @loc[20]=bad_nested_field_decl
+        // @diag-error: bad_indirect_field | related->bad_indirect_field_decl: declared as 'bool' here
+        local bool bad_indirect_field = pointer->value; // @loc[20]=bad_indirect_field_decl
+        // @diag-error: Struct type has no field named 'missing'
+        local int missing_field = value.missing;
+    }
+}

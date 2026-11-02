@@ -1,0 +1,56 @@
+//  © 2026 Intel Corporation
+//  SPDX-License-Identifier: Apache-2.0 and MIT
+
+dml 1.4;
+device type_assignments;
+
+bank diagnostics {
+    method assignments() {
+        local (int tuple_int, bool tuple_bool) = (4, false);
+        // @diag-error: bad_tuple_int | related->bad_tuple_int_decl: declared as 'int' here
+        // @diag-error: bad_tuple_bool | related->bad_tuple_bool_decl: declared as 'bool' here
+        local (int bad_tuple_int, bool bad_tuple_bool) = ("tuple", 4); // @loc[20]=bad_tuple_int_decl @loc[40]=bad_tuple_bool_decl
+        local (bool const_tuple_bool, const int const_tuple_int) = (false, 4);
+        local (bool bad_const_tuple_bool, const int bad_const_tuple_int) = // @loc[53]=bad_const_tuple_int_decl
+            // @diag-error: bad_const_tuple_int | related->bad_const_tuple_int_decl: declared as 'const int' here
+            (false, "const tuple");
+
+        local int simultaneous_int;
+        local bool simultaneous_bool;
+        (simultaneous_int, simultaneous_bool) = (4, false);
+        local int bad_simultaneous_int; // @loc[19]=bad_simultaneous_int_decl
+        local bool bad_simultaneous_bool; // @loc[20]=bad_simultaneous_bool_decl
+        // @diag-error: bad_simultaneous_int | related->bad_simultaneous_int_decl: declared as 'int' here
+        // @diag-error: bad_simultaneous_bool | related->bad_simultaneous_bool_decl: declared as 'bool' here
+        (bad_simultaneous_int, bad_simultaneous_bool) = ("simultaneous", 4);
+        local int short_simultaneous_int;
+        local bool short_simultaneous_bool;
+        local int short_simultaneous_extra;
+        // @diag-error: has 3 targets but initializer provides 2 values
+        (short_simultaneous_int, short_simultaneous_bool,
+         short_simultaneous_extra) = (4, false);
+        local int long_simultaneous_int;
+        local bool long_simultaneous_bool;
+        // @diag-error: has 2 targets but initializer provides 3 values
+        (long_simultaneous_int, long_simultaneous_bool) = (4, false, 8);
+        // @diag-error: has 2 targets but initializer provides 1 value
+        (long_simultaneous_int, long_simultaneous_bool) = 4;
+        (long_simultaneous_int, long_simultaneous_bool) = unknown_pair();
+
+        local int chain_int; // @loc[19]=chain_int_decl
+        local bool chain_bool;
+        // @diag-error: Cannot assign value of type 'bool' | related->chain_int_decl: declared as 'int' here
+        chain_int = chain_bool = false;
+
+        local int swap_i = 1;
+        local int swap_j = 0;
+        (swap_i, swap_j) = (swap_j, swap_i);
+
+        local int8 chain_byte; // @loc[20]=chain_byte_decl
+        local float chain_float;
+        local int chain_integer; // @loc[19]=chain_integer_decl
+        // @diag-warning: chain_byte | related->chain_byte_decl: declared as 'int8' here
+        // @diag-warning: chain_integer | related->chain_integer_decl: declared as 'int' here
+        chain_float = chain_byte = chain_integer = 255.1;
+    }
+}

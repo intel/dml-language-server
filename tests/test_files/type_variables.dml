@@ -1,9 +1,8 @@
-//  © 2024 Intel Corporation
+//  © 2026 Intel Corporation
 //  SPDX-License-Identifier: Apache-2.0 and MIT
 
 dml 1.4;
-
-device type_test_device;
+device type_variables;
 
 // @loc[16]=register_addr_t_def
 typedef uint32 register_addr_t; // @goto-ref[16]->register_addr_t_use_saved,register_addr_t_use_arg,register_addr_t_use_local
@@ -67,41 +66,25 @@ method kickoff() {
     process(last_packet, 0); // @goto-def-decl[5]->process_method_def @goto-def-decl[13]->last_packet_def
 }
 
-extern typedef struct {
-    // @loc[12]=some_interface_method_def
-    // @goto-impl[12]->some_interface_method_impl
-    void (*interface_method)(conf_object_t *obj);
-// @loc[3]=some_interface_t_def
-// @goto-ref[3]->some_interface_t_ref
-// @goto-impl[3]->some_interface_t_ref
-} some_interface_t;
-
-// @loc[11]=some_interface_t_ref
-// @goto-def-decl[11]->some_interface_t_def
-// @goto-type-def[11]->some_interface_t_def
-implement some {
-    // @loc[12]=some_interface_method_impl
-    // @goto-decl[12]->some_interface_method_def
-    // @goto-def[12]->some_interface_method_impl
-    method interface_method() {}
+method valid_scalar_return() -> (int) {
+    return 1;
 }
 
-// @loc[10]=template_as_type_def
-// @goto-ref[10]->template_as_type_instantiation,template_as_type_type_ref1,template_as_type_type_ref2
-// @goto-impl[10]->template_as_type_instantiation
-template template_as_type {}
-
-// @loc[7]=template_user_def
-// @loc[24]=template_as_type_instantiation
-// @goto-def-decl[24]->template_as_type_def
-// @goto-ref[7]->template_user_cast_ref
-group template_user is template_as_type {}
-
-// @loc[9]=template_as_type_type_ref1
-// @loc[51]=template_user_cast_ref
-// @loc[66]=template_as_type_type_ref2
-// @goto-def-decl[9]->template_as_type_def
-// @goto-type-def[26]->template_as_type_def
-// @goto-def-decl[51]->template_user_def
-// @goto-def-decl[66]->template_as_type_def
-session template_as_type template_user_ref = cast(template_user, template_as_type);
+method bad_initializers() {
+    local int valid = 123;
+    local int copied = valid;
+    // @diag-error: bad_typeof_local | related->bad_typeof_local_decl: declared as 'int' here
+    local typeof(valid) bad_typeof_local = "typeof local"; // @loc[29]=bad_typeof_local_decl
+    // @diag-error: bad_typeof_literal | related->bad_typeof_literal_decl: declared as 'bool' here
+    local typeof(false) bad_typeof_literal = 1; // @loc[29]=bad_typeof_literal_decl
+    // @diag-error: bad_typeof_call | related->bad_typeof_call_decl: declared as 'int' here
+    local typeof(valid_scalar_return()) bad_typeof_call = "typeof call"; // @loc[45]=bad_typeof_call_decl
+    local typeof(unknown_type_source) unresolved_typeof = "unknown";
+    // @diag-error: bad_typeof_cast | related->bad_typeof_cast_decl: declared as 'bool' here
+    local bool bad_typeof_cast = cast(1, typeof(valid)); // @loc[20]=bad_typeof_cast_decl
+    // @diag-error: Cannot initialize local variable 'test' | related->test_decl: declared as 'int' here
+    local int test = "123"; // @loc[15]=test_decl
+    // @diag-error: boolean_test | related->boolean_test_decl: declared as 'int' here
+    local int boolean_test = false; // @loc[19]=boolean_test_decl
+    local int object_test = some_random_object;
+}
