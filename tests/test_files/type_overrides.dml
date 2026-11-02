@@ -1,0 +1,32 @@
+//  © 2026 Intel Corporation
+//  SPDX-License-Identifier: Apache-2.0 and MIT
+
+dml 1.4;
+device type_overrides;
+
+template typed_base {
+    method update(int value) default { // @loc[23]=base_update_arg
+    }
+
+    method update_narrow(uint64 value) default { // @loc[33]=base_narrow_arg
+    }
+}
+
+template typed_override is typed_base {
+    // @diag-error: Mismatching argument type in method override | related->base_update_arg: Corresponding argument declared here
+    // @diag-error: Mismatching argument type in method override | related->base_update_arg: Corresponding argument declared here
+    // @diag-error: Mismatching argument type in method override | related->base_update_arg: Corresponding argument declared here
+    // @diag-error: Mismatching argument type in method override | related->base_update_arg: Corresponding argument declared here
+    method update(uint8 *value) {
+    }
+
+    // @diag-error: Mismatching argument type in method override | related->base_narrow_arg: Corresponding argument declared here
+    // @diag-error: Mismatching argument type in method override | related->base_narrow_arg: Corresponding argument declared here
+    // @diag-error: Mismatching argument type in method override | related->base_narrow_arg: Corresponding argument declared here
+    // @diag-error: Mismatching argument type in method override | related->base_narrow_arg: Corresponding argument declared here
+    method update_narrow(uint8 value) {
+    }
+}
+
+bank diagnostics is typed_override {
+}

@@ -1,0 +1,82 @@
+//  © 2026 Intel Corporation
+//  SPDX-License-Identifier: Apache-2.0 and MIT
+
+dml 1.4;
+device type_method_calls;
+
+group typed_object {
+    method object_pair(int argument, bool flag) -> (int, bool) { // @loc[12]=object_pair_method @loc[28]=object_pair_argument @loc[43]=object_pair_flag @goto-ref[12]->object_pair_bad_arg_call,object_pair_short_call,object_pair_bad_bind_call
+        return (argument, flag);
+    }
+}
+
+bank diagnostics {
+    method typed_pair(int argument, bool flag) -> (int, bool) { // @loc[12]=typed_pair_method @loc[27]=typed_pair_argument @loc[42]=typed_pair_flag
+        return (argument, flag);
+    }
+
+    method valid_scalar_return() -> (int) { // @loc[12]=valid_scalar_method
+        return 1;
+    }
+
+    method typed_text() -> (const char *) { // @loc[12]=typed_text_method
+        return "nested";
+    }
+
+    method accepts_int(int value) { // @loc[12]=accepts_int_method @loc[28]=accepts_int_arg
+    }
+
+    method nested_call_argument() {
+        // @diag-error: Cannot pass value of type 'const char *' | related->accepts_int_arg: Argument declared here
+        accepts_int(typed_text()); // @goto-def-decl[9]->accepts_int_method @goto-def-decl[21]->typed_text_method
+    }
+
+    inline method argument_assignment(inline selector, uint8 value) { // @loc[46]=selector_arg @loc[62]=value_arg
+        // @diag-error: Cannot assign to inline method argument 'selector' | related->selector_arg: Inline argument declared here
+        selector = 1; // @goto-def-decl[9]->selector_arg
+        // @diag-error: Cannot assign value of type 'const char *' | related->value_arg: declared as 'uint8' here
+        value = "argument assignment"; // @goto-def-decl[9]->value_arg
+    }
+
+    method test_method_types() {
+        local (int call_int, bool call_bool) = typed_pair(4, false);
+        local int assigned_call_int;
+        local bool assigned_call_bool;
+        (assigned_call_int, assigned_call_bool) = typed_pair(4, false);
+        // @diag-error: returns 2 values but assignment has 1 targets | related->typed_pair_method: Method declared here
+        assigned_call_int = typed_pair(4, false);
+        // @diag-error: returns 1 values but assignment has 2 targets | related->valid_scalar_method: Method declared here
+        (assigned_call_int, assigned_call_bool) = valid_scalar_return();
+        local (int bad_arg_int, bool bad_arg_bool) =
+            // @diag-error: argument 'argument' of method 'typed_pair' | related->typed_pair_argument: Argument declared here
+            // @diag-error: argument 'flag' of method 'typed_pair' | related->typed_pair_flag: Argument declared here
+            typed_pair("argument", 4); // @goto-def-decl[13]->typed_pair_method
+        // @diag-error: expects 2 arguments but call provides 1 | related->typed_pair_method: Method declared here
+        local (int missing_arg_int, bool missing_arg_bool) = typed_pair(4);
+        // @diag-error: returns 2 values but declaration binds 1 | related->typed_pair_method: Method declared here
+        local int short_binding = typed_pair(4, false);
+        // @diag-error: bad_bind_bool | related->bad_bind_bool_decl: declared here
+        // @diag-error: bad_bind_int | related->bad_bind_int_decl: declared here
+        local (bool bad_bind_bool, int bad_bind_int) = typed_pair(4, false); // @loc[21]=bad_bind_bool_decl @loc[40]=bad_bind_int_decl
+        local bool bad_assigned_call_bool; // @loc[20]=bad_assigned_bool_decl
+        local int bad_assigned_call_int; // @loc[19]=bad_assigned_int_decl
+        // @diag-error: bad_assigned_call_int | related->bad_assigned_int_decl: declared here
+        // @diag-error: bad_assigned_call_bool | related->bad_assigned_bool_decl: declared here
+        (bad_assigned_call_bool, bad_assigned_call_int) = typed_pair(4, false);
+
+        local (int object_arg_int, bool object_arg_bool) =
+            // @diag-error: argument 'argument' of method 'object_pair' | related->object_pair_argument: Argument declared here
+            // @diag-error: argument 'flag' of method 'object_pair' | related->object_pair_flag: Argument declared here
+            // @loc[26]=object_pair_bad_arg_call
+            typed_object.object_pair("object argument", 4); // @goto-def-decl[26]->object_pair_method
+        local (int object_short_int, bool object_short_bool) =
+            // @diag-error: expects 2 arguments but call provides 1 | related->object_pair_method: Method declared here
+            // @loc[26]=object_pair_short_call
+            typed_object.object_pair(4); // @goto-def-decl[26]->object_pair_method
+        local (bool bad_object_bind_bool, int bad_object_bind_int) = // @loc[21]=bad_object_bind_bool_decl @loc[47]=bad_object_bind_int_decl
+            // @diag-error: bad_object_bind_bool | related->bad_object_bind_bool_decl: declared here
+            // @diag-error: bad_object_bind_int | related->bad_object_bind_int_decl: declared here
+            // @loc[26]=object_pair_bad_bind_call
+            typed_object.object_pair(4, false); // @goto-def-decl[26]->object_pair_method
+    }
+}

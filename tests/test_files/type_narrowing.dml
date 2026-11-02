@@ -1,0 +1,32 @@
+//  © 2026 Intel Corporation
+//  SPDX-License-Identifier: Apache-2.0 and MIT
+
+dml 1.4;
+device type_narrowing;
+
+bank diagnostics {
+    method narrowing() {
+        local uint64 wide = 1;
+        local uint8 fitting_literal = 255;
+        // @diag-warning: truncated_literal | related->truncated_literal_decl: declared as 'uint8' here
+        local uint8 truncated_literal = 256; // @loc[21]=truncated_literal_decl
+        // @diag-warning: narrowed | related->narrowed_decl: declared as 'uint8' here
+        local uint8 narrowed = wide; // @loc[21]=narrowed_decl
+        // @diag-warning: platform_narrowed | related->platform_narrowed_decl: declared as 'long' here
+        local long platform_narrowed = wide; // @loc[20]=platform_narrowed_decl
+        local uint8 fitting_assignment;
+        fitting_assignment = 255;
+        local uint8 narrowed_assignment; // @loc[21]=narrowed_assignment_decl
+        // @diag-warning: narrowed_assignment | related->narrowed_assignment_decl: declared as 'uint8' here
+        narrowed_assignment = wide;
+        local uint8 truncated_assignment; // @loc[21]=truncated_assignment_decl
+        // @diag-warning: truncated_assignment | related->truncated_assignment_decl: declared as 'uint8' here
+        truncated_assignment = 256;
+        local long platform_assignment; // @loc[20]=platform_assignment_decl
+        // @diag-warning: platform_assignment | related->platform_assignment_decl: declared as 'long' here
+        platform_assignment = wide;
+        local int incompatible_assignment; // @loc[19]=incompatible_assignment_decl
+        // @diag-error: incompatible_assignment | related->incompatible_assignment_decl: declared as 'int' here
+        incompatible_assignment = "123";
+    }
+}

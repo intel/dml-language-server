@@ -1,0 +1,21 @@
+//  © 2026 Intel Corporation
+//  SPDX-License-Identifier: Apache-2.0 and MIT
+
+dml 1.4;
+device type_switch_scope;
+
+bank diagnostics {
+    method switch_scope(int selector) {
+        switch (selector) {
+        case 0:
+            local int switched; // @loc[23]=switched_decl
+            break;
+        case 1:
+            // @diag-error: Cannot assign value of type 'const char *' | related->switched_decl: declared as 'int' here
+            switched = "switch assignment";
+            break;
+        }
+        // @diag-error: Cannot assign value of type 'const char *' | related->switched_decl: declared as 'int' here
+        switched = "post-switch assignment";
+    }
+}
