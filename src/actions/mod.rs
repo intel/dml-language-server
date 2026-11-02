@@ -9,7 +9,6 @@ use serde::Deserialize;
 use serde_json::json;
 
 use std::collections::{HashMap, HashSet};
-use std::cmp::Ordering;
 use std::path::{Path, PathBuf};
 use std::fs;
 use std::sync::atomic::AtomicBool;
@@ -555,11 +554,14 @@ impl <O: Output> InitActionContext<O> {
             // when we have done linting but then turned off the setting
             lint.clear();
         }
-        let files: HashSet<&PathBuf> =
+        let mut files: Vec<&PathBuf> =
             isolated.keys()
             .chain(device.keys())
             .chain(lint.keys())
+            .collect::<HashSet<_>>()
+            .into_iter()
             .collect();
+        files.sort();
         let direct_opens = self.direct_opens.lock().unwrap();
         for file in files {
             let Some(canon_path) = CanonPath::from_path_buf(file.clone())
@@ -577,13 +579,22 @@ impl <O: Output> InitActionContext<O> {
                         .map(|e|e.with_source("dml-lint")))
                 .collect();
             debug!("Reporting errors for {:?}", file);
-            // Sort by line
-            sorted_errors.sort_unstable_by(
-                |e1, e2|if e1.error.span.range > e2.error.span.range {
-                    Ordering::Greater
-                } else {
-                    Ordering::Less
-                });
+            let severity_order = |severity|match severity {
+                Some(lsp_types::DiagnosticSeverity::ERROR) => 0,
+                Some(lsp_types::DiagnosticSeverity::WARNING) => 1,
+                Some(lsp_types::DiagnosticSeverity::INFORMATION) => 2,
+                Some(lsp_types::DiagnosticSeverity::HINT) => 3,
+                Some(_) => 4,
+                None => 5,
+            };
+            sorted_errors.sort_unstable_by(|left, right|
+                left.error.span.range.cmp(&right.error.span.range)
+                    .then_with(||severity_order(left.error.severity)
+                        .cmp(&severity_order(right.error.severity)))
+                    .then_with(||left.error.description
+                        .cmp(&right.error.description))
+                    .then_with(||left.source.cmp(right.source))
+                    .then_with(||left.error.related.cmp(&right.error.related)));
             match parse_uri(file.to_str().unwrap()) {
                 Ok(url) => notifier.notify_publish_diagnostics(
                     PublishDiagnosticsParams::new(
