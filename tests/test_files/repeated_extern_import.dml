@@ -1,0 +1,6 @@
+//  © 2024 Intel Corporation
+//  SPDX-License-Identifier: Apache-2.0 and MIT
+dml 1.4;
+
+extern int shared_value; // @loc[12]=imported_value
+extern int shared_function(int argument); // @loc[12]=imported_function

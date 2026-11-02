@@ -1,0 +1,68 @@
+//  © 2024 Intel Corporation
+//  SPDX-License-Identifier: Apache-2.0 and MIT
+dml 1.4;
+
+device conditional_parameter_paths;
+
+template shared_parameters {
+    param shared_default default 1;
+    param shared_fixed = 2;
+    param shared_auto auto;
+    group child {
+        param child_default default 3;
+        param child_auto auto;
+    }
+}
+
+template left_path is shared_parameters {}
+template right_path is shared_parameters {}
+
+#if (simics_api_version == 1) {
+    is left_path;
+}
+#if (simics_api_version == 2) {
+    is right_path;
+}
+
+template conflicting_parameters {
+    param shared_default default 4;
+    param shared_fixed = 5;
+    param shared_auto = 6;
+}
+
+group real_conflicts {
+    #if (simics_api_version == 3) {
+        is left_path;
+    }
+    #if (simics_api_version == 4) {
+        is right_path;
+        is conflicting_parameters;
+    }
+}
+
+group exclusive_paths {
+    #if (simics_api_version == 5) {
+        is left_path;
+    } #else {
+        is right_path;
+    }
+}
+
+group exclusive_assignments {
+    #if (simics_api_version == 6) {
+        is shared_parameters;
+    } #else {
+        is conflicting_parameters;
+    }
+}
+
+group guarded_conflicts {
+    #if (simics_api_version == 7) {
+        is left_path;
+    } #else {
+        #if (simics_api_version == 8) {
+            is right_path;
+            is conflicting_parameters;
+        }
+    }
+}

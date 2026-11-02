@@ -809,6 +809,111 @@ mod tests {
     }
 
     #[test]
+    fn repeated_externs_share_a_symbol_and_keep_all_declarations() {
+        init_logging();
+        let setup = setup_test(&[
+            "repeated_externs.dml", "repeated_extern_import.dml"]);
+        {
+            let analysis = setup.analysis.lock().unwrap();
+            let device = analysis.get_device_analysis(&setup.main_canon_path)
+                .expect("device analysis should exist");
+            let errors: Vec<_> = device.errors.values().flatten().filter(
+                |error|!error.description.starts_with("Could not find file;"))
+                .collect();
+            let descriptions: Vec<_> = errors.iter().map(
+                |error|error.description.as_str()).collect();
+            assert_eq!(descriptions, vec![
+                "Name collision in declaration on 'colliding_name'",
+            ], "unexpected extern diagnostics: {:#?}", errors);
+            let symbols: Vec<_> = device.symbol_info.all_symbols().collect();
+            let unique_ids: HashSet<_> = symbols.iter().map(|symbol|symbol.id)
+                .collect();
+            assert_eq!(symbols.len(), unique_ids.len(),
+                       "all_symbols returned duplicate symbols");
+            let merged_externs: Vec<_> = device.symbol_info.variable_symbols
+                .values().filter(|symbol|
+                    symbol.lock().unwrap().declarations.len() == 3).collect();
+            assert_eq!(merged_externs.len(), 2,
+                       "each merged extern should be stored exactly once");
+            for symbol in merged_externs {
+                let symbol = symbol.lock().unwrap();
+                assert_eq!(symbol.definitions.len(), 3);
+                assert_eq!(symbol.references.len(), 1);
+            }
+        }
+        for annotation in &setup.annotations {
+            let position = ZeroFilePosition::new(
+                annotation.location.position,
+                annotation.location.file_path.as_ref().unwrap().clone());
+            for lookup in [definitions_at_fp as LookupFn,
+                           declarations_at_fp, references_at_fp] {
+                let spans = lookup(&setup.ctx, &position, &mut HashSet::new())
+                    .expect("extern lookup should succeed");
+                let unique_spans: HashSet<_> = spans.iter().collect();
+                assert_eq!(spans.len(), unique_spans.len(),
+                           "extern lookup returned duplicate locations: {:?}",
+                           spans);
+            }
+        }
+        let declaration_locations: Vec<_> = {
+            let analysis = setup.analysis.lock().unwrap();
+            let device = analysis.get_device_analysis(&setup.main_canon_path)
+                .unwrap();
+            device.symbol_info.variable_symbols.values().flat_map(|symbol| {
+                let symbol = symbol.lock().unwrap();
+                if symbol.declarations.len() == 3 {
+                    symbol.declarations.clone()
+                } else {
+                    vec![]
+                }
+            }).collect()
+        };
+        for location in declaration_locations {
+            let position = ZeroFilePosition::new(
+                location.range.start(), location.path());
+            for lookup in [definitions_at_fp as LookupFn, declarations_at_fp] {
+                let locations = lookup(&setup.ctx, &position, &mut HashSet::new())
+                    .expect("lookup from every extern declaration should succeed");
+                assert_eq!(locations.len(), 3);
+            }
+            let references = references_at_fp(
+                &setup.ctx, &position, &mut HashSet::new()).unwrap();
+            assert_eq!(references.len(), 1);
+        }
+        run_annotation_tests(&setup.ctx, &setup.main_file, setup.annotations);
+    }
+
+    #[test]
+    fn conditional_paths_do_not_conflict_with_the_same_parameter_assignment() {
+        init_logging();
+        let setup = setup_test(&["conditional_parameter_paths.dml"]);
+        let analysis = setup.analysis.lock().unwrap();
+        let device = analysis.get_device_analysis(&setup.main_canon_path)
+            .expect("device analysis should exist");
+        let errors: Vec<_> = device.errors.values().flatten().filter(|error|
+            error.description.starts_with("Conflicting assignments") ||
+            error.description.contains("auto-parameter")).collect();
+        let mut descriptions: Vec<_> = errors.iter().map(
+            |error|error.description.as_str()).collect();
+        descriptions.sort();
+        assert_eq!(descriptions, vec![
+            "Conflicting assignments to parameter 'shared_default'",
+            "Conflicting assignments to parameter 'shared_default'",
+            "Conflicting assignments to parameter 'shared_fixed'",
+            "Conflicting assignments to parameter 'shared_fixed'",
+            "Invalid assignment to auto-parameter 'shared_auto'",
+            "Invalid assignment to auto-parameter 'shared_auto'",
+        ], "unexpected parameter conflicts: {:#?}", errors);
+        for error in errors {
+            assert!(!error.related.is_empty());
+            assert_eq!(error.related.len(), 1,
+                       "duplicate conflicting paths: {:#?}", error);
+            assert!(error.related.iter().all(|(span, _)|*span != error.span),
+                    "assignment conflicts with itself: {:#?}", error);
+        }
+    }
+
+    #[test]
     fn hashif_conflicts_respect_branch_reachability() {
         init_logging();
         let setup = setup_test(&["conditional_conflicts.dml"]);

@@ -349,7 +349,8 @@ pub struct SymbolStorage {
     // This is doubly-indexed, by decl location and then
     // by parent object key
     pub method_symbols: HashMap<ZeroSpan, HashMap<StructureKey, SymbolRef>>,
-    // constants, sessions, saveds, hooks, method args
+    // variable symbols keyed by canonical decl location
+    // Includes externs, constants, sessions, saveds, hooks and method args.
     pub variable_symbols: HashMap<ZeroSpan, SymbolRef>,
 }
 
@@ -984,7 +985,8 @@ impl DeviceAnalysis {
                             .get(m.location())
                             .and_then(|m|m.get(&parent.key)),
                     DMLShallowObjectVariant::Extern(e) =>
-                        self.symbol_info.variable_symbols.get(e.loc_span()),
+                        self.symbol_info.variable_symbols.get(
+                            e.get_likely_definition().loc_span()),
                     DMLShallowObjectVariant::Session(s) |
                     DMLShallowObjectVariant::Saved(s) =>
                         self.symbol_info.variable_symbols.get(s.loc_span()),
@@ -1982,59 +1984,24 @@ fn log_non_same_insert<K>(map: &mut HashMap<K, SymbolRef>,
                           val: SymbolRef) -> bool
 where K: std::hash::Hash + Eq + Clone + std::fmt::Debug,
 {
-    // NOTE: We should not need to do these comparisons, when
-    // object symbol creation is properly guided by structural AST
-    // this code can be simplified and the comparison discarded
-
-    // NOTE: Insert first rather than checking for key is faster, I think
-    if let Some(old) = map.insert(key.clone(), val) {
-        // NOTE: the equivalent operation is a slight-better-than-eq
-        // comparison, skipping the comparison of structure keys and
-        // some meta-info
-        if !old.lock().unwrap().equivalent(
-            &map.get(&key).unwrap().lock().unwrap()) {
+    // NOTE: We should not need these equivalence comparisons, once symbol
+    // creation is properly guided by the structural AST this code can be
+    // probably be simplified and the comparisons discarded
+    let mut conflicting = false;
+    map.entry(key.clone()).and_modify(|stored| {
+        if Arc::ptr_eq(stored, &val) {
+            return;
+        }
+        let old = std::mem::replace(stored, Arc::clone(&val));
+        // Compare declaration equivalence, ignoring structure keys and metadata.
+        if !old.lock().unwrap().equivalent(&stored.lock().unwrap()) {
             internal_error!(
                 "Overwrote previous symbol {:?} at {:?} with non-similar symbol {:?}",
-                old, key, map.get(&key));
-            return true;
+                old, key, stored);
+            conflicting = true;
         }
-    }
-    false
-}
-
-// The current strategy for method symbols is:
-// Create a symbol for each level of overriding for each object where the method
-// is actualized. We then end up with many symbols for the same decl location,
-// and leave it to requests to collect the aggregate information at the point
-fn add_new_symbol_from_method(maker: &SymbolMaker, parent_obj_key: &StructureKey, method_ref: &Arc<DMLMethodRef>, errors: &mut Vec<DMLError>, storage: &mut SymbolStorage, method_structure: &mut HashMap<ZeroSpan, RangeEntry>) {
-    let (bases, definitions, declarations) = (
-        method_ref.get_bases().iter().map(|b|*b.location()).collect(),
-        vec![*method_ref.get_decl().location()],
-        vec![*method_ref.get_decl().location()],
-    );
-    debug!("Made symbol for method {:?}", method_ref);
-    let new_sym = symbol_ref!(
-        maker,
-        *method_ref.location(),
-        DMLSymbolKind::Method,
-        SymbolSource::Method(*parent_obj_key, Arc::clone(method_ref)),
-        bases = bases,
-        definitions = definitions,
-        declarations = declarations);
-    let insert_at = storage.method_symbols.entry(*method_ref.location())
-        .or_default();
-    if !log_non_same_insert(insert_at, *parent_obj_key, new_sym) {
-        for arg in method_ref.args() {
-            let new_argsymbol = new_symbol_from_arg(maker, method_ref, arg);
-            log_non_same_insert(&mut storage.variable_symbols, *arg.loc_span(), new_argsymbol);
-        }
-        add_method_scope_symbols(maker, method_ref, method_structure, storage, errors);
-        if let Some(defaults) = method_ref.get_default() {
-            for default in defaults.flat_refs() {
-                add_new_symbol_from_method(maker, parent_obj_key, default, errors, storage, method_structure);
-            }
-        }
-    }
+    }).or_insert(val);
+    conflicting
 }
 
 #[allow(clippy::ptr_arg)]
@@ -2057,10 +2024,13 @@ fn add_new_symbol_from_shallow(maker: &SymbolMaker,
             (vec![*constant.loc_span()],
              vec![*constant.loc_span()],
              vec![*constant.loc_span()]),
-        DMLShallowObjectVariant::Extern(e) =>
-            (vec![*e.loc_span()],
-             vec![*e.loc_span()],
-             vec![*e.loc_span()]),
+        DMLShallowObjectVariant::Extern(e) => {
+            let mut locations: Vec<_> = e.used_definitions.iter()
+                .map(|(_, def)|*def.loc_span()).collect();
+            locations.sort();
+            locations.dedup();
+            (locations.clone(), locations.clone(), locations)
+        },
         DMLShallowObjectVariant::Session(data) |
         DMLShallowObjectVariant::Saved(data) =>
             (vec![*data.declaration.loc_span()],
@@ -2692,4 +2662,85 @@ fn bind_method_implementations(method_symbols: &mut HashMap<ZeroSpan, HashMap<St
             }
         }
     }
+}
+
+// The current strategy for method symbols is:
+// Create a symbol for each level of overriding for each object where the method
+// is actualized. We then end up with many symbols for the same decl location,
+// and leave it to requests to collect the aggregate information at the point
+fn add_new_symbol_from_method(maker: &SymbolMaker, parent_obj_key: &StructureKey, method_ref: &Arc<DMLMethodRef>, errors: &mut Vec<DMLError>, storage: &mut SymbolStorage, method_structure: &mut HashMap<ZeroSpan, RangeEntry>) {
+    let (bases, definitions, declarations) = (
+        method_ref.get_bases().iter().map(|b|*b.location()).collect(),
+        vec![*method_ref.get_decl().location()],
+        vec![*method_ref.get_decl().location()],
+    );
+    debug!("Made symbol for method {:?}", method_ref);
+    let new_sym = symbol_ref!(
+        maker,
+        *method_ref.location(),
+        DMLSymbolKind::Method,
+        SymbolSource::Method(*parent_obj_key, Arc::clone(method_ref)),
+        bases = bases,
+        definitions = definitions,
+        declarations = declarations);
+    let insert_at = storage.method_symbols.entry(*method_ref.location())
+        .or_default();
+    if !log_non_same_insert(insert_at, *parent_obj_key, new_sym) {
+        for arg in method_ref.args() {
+            let new_argsymbol = new_symbol_from_arg(maker, method_ref, arg);
+            log_non_same_insert(&mut storage.variable_symbols, *arg.loc_span(), new_argsymbol);
+        }
+        add_method_scope_symbols(maker, method_ref, method_structure, storage, errors);
+        if let Some(defaults) = method_ref.get_default() {
+            for default in defaults.flat_refs() {
+                add_new_symbol_from_method(maker, parent_obj_key, default, errors, storage, method_structure);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod symbol_storage_tests {
+    use super::*;
+
+    fn symbol(maker: &SymbolMaker) -> SymbolRef {
+        let location = ZeroSpan::invalid("symbol-storage-test.dml");
+        maker.new_symbol(location, DMLSymbolKind::Extern,
+                         SymbolSource::Type(DMLResolvedType::Dummy(location)))
+    }
+
+    #[test]
+    fn inserting_the_same_symbol_does_not_lock_it_again() {
+        let symbol = symbol(&SymbolMaker::new());
+        let mut map = HashMap::new();
+        assert!(!log_non_same_insert(&mut map, 0, Arc::clone(&symbol)));
+        let _guard = symbol.lock().unwrap();
+        assert!(!log_non_same_insert(&mut map, 0, Arc::clone(&symbol)));
+        assert_eq!(map.len(), 1);
+        assert!(Arc::ptr_eq(&map[&0], &symbol));
+    }
+
+    #[test]
+    fn inserting_equivalent_symbols_preserves_replacement_behavior() {
+        let maker = SymbolMaker::new();
+        let first = symbol(&maker);
+        let second = symbol(&maker);
+        let mut map = HashMap::new();
+        assert!(!log_non_same_insert(&mut map, 0, first));
+        assert!(!log_non_same_insert(&mut map, 0, Arc::clone(&second)));
+        assert!(Arc::ptr_eq(&map[&0], &second));
+    }
+
+    #[test]
+    fn inserting_different_symbols_reports_the_replacement() {
+        let maker = SymbolMaker::new();
+        let first = symbol(&maker);
+        let second = symbol(&maker);
+        second.lock().unwrap().kind = DMLSymbolKind::Constant;
+        let mut map = HashMap::new();
+        assert!(!log_non_same_insert(&mut map, 0, first));
+        assert!(log_non_same_insert(&mut map, 0, Arc::clone(&second)));
+        assert!(Arc::ptr_eq(&map[&0], &second));
+    }
+
 }
