@@ -7,6 +7,7 @@
 ## 0.9.23
 - Fixed a case where the DLS would repeatedly cancel its own in-flight analysis when no import paths could be resolved
 - Fixed a parser crash when using utf-16 wide characters in documentation strings
+- Improved server handling of invalid character literals
 
 ## 0.9.22
 - Fixed an issue in server logging where the large allocations could be made by debug prints even at lower debug levels

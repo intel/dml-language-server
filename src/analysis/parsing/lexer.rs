@@ -410,7 +410,7 @@ pub enum TokenKind {
     #[regex(r#""([^\x00-\x1f\x7f"\\]|(\\([abefnrstv\\'"]|(x[0-9a-fA-F][0-9a-fA-F])|([0-7][0-7]?[0-7]?))))*""#,
             string_constant)]
     StringConstant,
-    #[regex(r"'([^\x00-\x1f\x7f-\xff'\\]|\\.)[^']*'", char_constant)]
+    #[regex(r"'([^\x00-\x1f\x7f-\xff'\\]|\\[^\r\n])[^'\r\n]*'", char_constant)]
     CharConstant,
     #[regex(r"\n")]
     Newline,
@@ -639,6 +639,18 @@ mod test {
             assert_eq!(lexer.span(), 0..input.len());
             assert_eq!(lexer.slice(), input);
             assert_eq!(lexer.next(), None);
+        }
+    }
+
+    #[test]
+    fn character_constants() {
+        check_lexer_stream!("'a' '\\n' '\\''", CharConstant, Whitespace,
+                            CharConstant, Whitespace, CharConstant);
+        for input in ["'a\n'", "'a\r\n'", "'\\\r'"] {
+            let mut lexer = TokenKind::lexer(input);
+            while let Some(token) = lexer.next() {
+                assert_ne!(token, Ok(CharConstant), "{:?}", input);
+            }
         }
     }
 
