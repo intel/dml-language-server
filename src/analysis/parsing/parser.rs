@@ -580,6 +580,23 @@ mod test {
                 prefixrange: ZeroRange::from_u32(0, 0, 0, 9),
                 kind: TokenKind::DML,
             });
+        check_parser_stream!(
+            "bank \"🏧\" {",
+            Token {
+                range: ZeroRange::from_u32(0, 0, 0, 4),
+                prefixrange: ZeroRange::from_u32(0, 0, 0, 0),
+                kind: TokenKind::Bank,
+            },
+            Token {
+                range: ZeroRange::from_u32(0, 0, 5, 9),
+                prefixrange: ZeroRange::from_u32(0, 0, 4, 5),
+                kind: TokenKind::StringConstant,
+            },
+            Token {
+                range: ZeroRange::from_u32(0, 0, 10, 11),
+                prefixrange: ZeroRange::from_u32(0, 0, 9, 10),
+                kind: TokenKind::LBrace,
+            });
     }
 
     #[test]

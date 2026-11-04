@@ -808,23 +808,21 @@ impl TextFile {
         }
     }
 
+    /// Read a range whose columns are measured in UTF-16 code units.
     pub fn load_range(&self, range: crate::span::Range<crate::span::ZeroIndexed>) -> Result<&str, Error> {
         let line_start = range.row_start.0 as usize;
-        let mut line_end = range.row_end.0 as usize;
-        if line_end >= self.line_indices.len() {
-            line_end = self.line_indices.len() - 1;
-        }
+        let line_end = range.row_end.0 as usize;
 
         let start = (*try_opt_loc!(self.line_indices.get(line_start))) as usize;
-        let start = start + range.col_start.0 as usize;
+        let start = start + byte_in_str_utf16(self.load_line(range.row_start)?,
+                                            range.col_start)
+            .map_err(|_| Error::BadLocation)?;
         let end = (*try_opt_loc!(self.line_indices.get(line_end))) as usize;
-        let end = end + range.col_end.0 as usize;
+        let end = end + byte_in_str_utf16(self.load_line(range.row_end)?,
+                                        range.col_end)
+            .map_err(|_| Error::BadLocation)?;
 
-        if (end) <= self.text.len() && start <= end {
-            Ok(&self.text[start..end])
-        } else {
-            Err(Error::BadLocation)
-        }
+        self.text.get(start..end).ok_or(Error::BadLocation)
     }
 
     fn for_each_line<F>(&self, mut f: F) -> Result<(), Error>
@@ -954,6 +952,38 @@ impl FileLoader for RealFileLoader {
 #[cfg(test)]
 mod tests {
     use crate::span::Column;
+    use super::{Error, TextFile};
+
+    type Range = crate::span::Range<crate::span::ZeroIndexed>;
+
+    #[test]
+    fn load_range_utf16() {
+        let file: TextFile = "bank b \"\u{1f3e7}\" {}\n\u{e9}\u{4e2d} end".parse().unwrap();
+        for (range, expected) in [
+            (Range::from_u32(0, 0, 7, 11), "\"\u{1f3e7}\""),
+            (Range::from_u32(0, 0, 12, 14), "{}"),
+            (Range::from_u32(1, 1, 0, 2), "\u{e9}\u{4e2d}"),
+            (Range::from_u32(0, 1, 8, 2), "\u{1f3e7}\" {}\n\u{e9}\u{4e2d}"),
+            (Range::from_u32(1, 1, 3, 6), "end"),
+            (Range::from_u32(1, 1, 6, 6), ""),
+        ] {
+            assert_eq!(file.load_range(range).unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn load_range_invalid_utf16() {
+        let file: TextFile = "\u{1f3e7}\nx".parse().unwrap();
+        for range in [
+            Range::from_u32(0, 0, 0, 1),
+            Range::from_u32(0, 0, 1, 2),
+            Range::from_u32(0, 0, 0, 4),
+            Range::from_u32(1, 1, 0, 2),
+            Range::from_u32(4, 4, 0, 0),
+        ] {
+            assert_eq!(file.load_range(range), Err(Error::BadLocation));
+        }
+    }
 
     #[test]
     fn byte_in_str_utf16() {

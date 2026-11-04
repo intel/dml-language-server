@@ -632,6 +632,17 @@ mod test {
     }
 
     #[test]
+    fn unicode_string_constants() {
+        for input in ["\"\u{e9}\"", "\"\u{4e2d}\"", "\"\u{1f3e7}\""] {
+            let mut lexer = TokenKind::lexer(input);
+            assert_eq!(lexer.next(), Some(Ok(StringConstant)));
+            assert_eq!(lexer.span(), 0..input.len());
+            assert_eq!(lexer.slice(), input);
+            assert_eq!(lexer.next(), None);
+        }
+    }
+
+    #[test]
     fn whitespace_sanity() {
         check_lexer_stream!(
             "method foo()   {\n\treturn 5;\n}",
