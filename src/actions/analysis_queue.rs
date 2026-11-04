@@ -422,6 +422,8 @@ pub struct IsolatedAnalysisJob {
     token: JobToken,
 }
 
+const ISOLATED_ANALYSIS_MARKER: u32 = 0;
+
 impl IsolatedAnalysisJob {
     fn new(token: JobToken,
            analysis: &mut AnalysisStorage,
@@ -436,6 +438,7 @@ impl IsolatedAnalysisJob {
         // We make a hash from the device path
         let mut hasher = DefaultHasher::new();
         Hash::hash(&path, &mut hasher);
+        Hash::hash(&ISOLATED_ANALYSIS_MARKER, &mut hasher);
         let hash = hasher.finish();
         // TODO: error handling
         let content = vfs.snapshot_file(&path)?;
@@ -498,6 +501,8 @@ pub struct DeviceAnalysisJob {
     device_analysis_options: DeviceAnalysisJobOptions,
 }
 
+const DEVICE_ANALYSIS_MARKER: u32 = 1;
+
 impl DeviceAnalysisJob {
     fn new(token: JobToken,
            analysis: &mut AnalysisStorage,
@@ -518,6 +523,7 @@ impl DeviceAnalysisJob {
         for path in &sorted_paths {
             Hash::hash(path, &mut hasher);
         }
+        Hash::hash(&DEVICE_ANALYSIS_MARKER, &mut hasher);
         let hash = hasher.finish();
 
         trace!("Bases are {:?}", bases.iter().collect::<Vec<&CanonPath>>());
@@ -603,6 +609,8 @@ pub struct LinterJob {
     token: JobToken,
 }
 
+const LINT_ANALYSIS_MARKER: u32 = 2;
+
 impl LinterJob {
     fn new(token: JobToken,
            analysis: &mut AnalysisStorage,
@@ -615,6 +623,7 @@ impl LinterJob {
         let timestamp = SystemTime::now();
         let mut hasher = DefaultHasher::new();
         Hash::hash(&file, &mut hasher);
+        Hash::hash(&LINT_ANALYSIS_MARKER, &mut hasher);
         let hash = hasher.finish();
         if let Ok(isolated_analysis) = analysis.get_isolated_analysis(&file) {
             Ok(LinterJob {
