@@ -5,7 +5,7 @@
 # Change Log
 
 ## 0.9.23
-
+- Fixed a case where the DLS would repeatedly cancel its own in-flight analysis when no import paths could be resolved
 
 ## 0.9.22
 - Fixed an issue in server logging where the large allocations could be made by debug prints even at lower debug levels
