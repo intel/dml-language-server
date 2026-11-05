@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use crate::span::{self as span, Column, Position, Row};
 
 use super::{
-    make_line_indices, make_unicode_offsets, Change, Error, File, FileContents, FileKind,
+    make_line_indices, Change, Error, File, FileContents, FileKind,
     FileLoader, TextFile, VfsInternal, VfsSpan,
 };
 
@@ -18,7 +18,6 @@ impl FileLoader for MockFileLoader {
         let text = format!("{}\nHello\nWorld\nHello, World!\n", file_name.display());
         let text_file = TextFile {
             line_indices: make_line_indices(&text),
-            unicode_offsets: make_unicode_offsets(&text),
             text,
             changed: false,
         };

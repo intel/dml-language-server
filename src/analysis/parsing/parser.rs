@@ -20,22 +20,27 @@ pub struct Token {
     // this + first position of range. But this is more handy
     pub prefixrange: Range<ZeroIndexed>,
     pub range: Range<ZeroIndexed>,
+    // Half-open lexer offsets into the original UTF-8 source snapshot.
+    pub byte_range: (usize, usize),
 }
 
 impl Token {
     fn new(kind: TokenKind,
            prefixstart: Position<ZeroIndexed>,
            start: Position<ZeroIndexed>,
-           end: Position<ZeroIndexed>) -> Self {
+           end: Position<ZeroIndexed>,
+           byte_range: std::ops::Range<usize>) -> Self {
         Token {
             kind,
             prefixrange: Range::from_positions(prefixstart, start),
             range: Range::from_positions(start, end),
+            byte_range: (byte_range.start, byte_range.end),
         }
     }
     pub fn read_token(&self, file: &TextFile) -> String {
-        // For now, assume this read works
-        file.load_range(self.range).unwrap().to_string()
+        file.text.get(self.byte_range.0..self.byte_range.1)
+            .expect("Token byte range must belong to its source file")
+            .to_string()
     }
 }
 
@@ -424,7 +429,8 @@ impl <'a> FileParser<'a> {
                                                           self.current_column),
                         Position::<ZeroIndexed>::from_u32(self.current_line
                                                           + lines,
-                                                          end_column)));
+                                                          end_column),
+                        self.lexer.span()));
                     self.previous_line = self.current_line + lines;
                     self.current_line = self.previous_line;
                     self.previous_column = end_column;
@@ -449,7 +455,8 @@ impl <'a> FileParser<'a> {
                                               self.current_column),
             Position::<ZeroIndexed>::from_u32(
                 self.current_line,
-                self.current_column + slice_len)));
+                self.current_column + slice_len),
+            self.lexer.span()));
         self.previous_line = self.current_line;
         self.previous_column = self.current_column + slice_len;
         self.current_column = self.previous_column;
@@ -545,32 +552,35 @@ mod test {
                 range: ZeroRange::from_u32(0, 0, 0, 3),
                 prefixrange: ZeroRange::from_u32(0, 0, 0, 0),
                 kind: TokenKind::New,
+                byte_range: (0, 3),
             },
             Token {
                 range: ZeroRange::from_u32(0, 0, 4, 7),
                 prefixrange: ZeroRange::from_u32(0, 0, 3, 4),
                 kind: TokenKind::IntConstant,
+                byte_range: (4, 7),
             },
             Token {
                 range: ZeroRange::from_u32(0, 0, 8, 10),
                 prefixrange: ZeroRange::from_u32(0, 0, 7, 8),
                 kind: TokenKind::PlusPlus,
+                byte_range: (8, 10),
             },
             Token {
                 range: ZeroRange::from_u32(0, 0, 13, 14),
                 prefixrange: ZeroRange::from_u32(0, 0, 10, 13),
                 kind: TokenKind::LBrace,
+                byte_range: (13, 14),
             }
         );
     }
 
     // NOTE: The server currently only supports UTF-16
     // position encoding (which is the default, and required)
-    // Meaning larger-than-utf8 characters must be broken into
-    // utf-16 pieces
+    // Supplementary Unicode characters occupy two UTF-16 code units.
     #[test]
     fn unicode_column_numbering() {
-        // Here the 3-byte unicode char becomes 2 utf-16 chars,
+        // Here the 4-byte Unicode character becomes 2 UTF-16 code units,
         // meaning what would normally be a 8-char prefix is actually
         // 9
         check_parser_stream!(
@@ -579,6 +589,7 @@ mod test {
                 range: ZeroRange::from_u32(0, 0, 9, 12),
                 prefixrange: ZeroRange::from_u32(0, 0, 0, 9),
                 kind: TokenKind::DML,
+                byte_range: (11, 14),
             });
         check_parser_stream!(
             "bank \"🏧\" {",
@@ -586,17 +597,64 @@ mod test {
                 range: ZeroRange::from_u32(0, 0, 0, 4),
                 prefixrange: ZeroRange::from_u32(0, 0, 0, 0),
                 kind: TokenKind::Bank,
+                byte_range: (0, 4),
             },
             Token {
                 range: ZeroRange::from_u32(0, 0, 5, 9),
                 prefixrange: ZeroRange::from_u32(0, 0, 4, 5),
                 kind: TokenKind::StringConstant,
+                byte_range: (5, 11),
             },
             Token {
                 range: ZeroRange::from_u32(0, 0, 10, 11),
                 prefixrange: ZeroRange::from_u32(0, 0, 9, 10),
                 kind: TokenKind::LBrace,
+                byte_range: (12, 13),
             });
+    }
+
+    #[test]
+    fn token_text_uses_lexer_byte_ranges() {
+        let input = concat!(
+            "/* \u{1f3e7} */ bank b \"\u{e9}\u{4e2d}\u{1f3e7}\" {\n",
+            "%{ \u{4e2d}\n\u{1f3e7} %} 'a' \u{1f3e7} }\n",
+        );
+        let file: TextFile = input.parse().unwrap();
+        let mut parser = FileParser::new(TokenKind::lexer(input));
+        for (kind, text) in [
+            (TokenKind::Bank, "bank"),
+            (TokenKind::Identifier, "b"),
+            (TokenKind::StringConstant, "\"\u{e9}\u{4e2d}\u{1f3e7}\""),
+            (TokenKind::LBrace, "{"),
+            (TokenKind::CBlock, "%{ \u{4e2d}\n\u{1f3e7} %}"),
+            (TokenKind::CharConstant, "'a'"),
+            (TokenKind::LexerError, "\u{1f3e7}"),
+            (TokenKind::RBrace, "}"),
+        ] {
+            let token = parser.next_tok().unwrap();
+            assert_eq!(token.kind, kind);
+            assert_eq!(token.read_token(&file), text);
+            assert_eq!(token.byte_range.1 - token.byte_range.0, text.len());
+        }
+        assert_eq!(parser.next_tok(), None);
+    }
+
+    #[test]
+    fn long_line_token_reads() {
+        for prefix in ["", "/* \u{1f3e7} */ "] {
+            let input = format!("{}{}", prefix, "name ".repeat(10_000));
+            let file: TextFile = input.parse().unwrap();
+            let mut parser = FileParser::new(TokenKind::lexer(&input));
+            for index in 0..10_000 {
+                let token = parser.next_tok().unwrap();
+                let byte_start = prefix.len() + index * 5;
+                let column = prefix.encode_utf16().count() as u32 + index as u32 * 5;
+                assert_eq!(token.byte_range, (byte_start, byte_start + 4));
+                assert_eq!(token.range, ZeroRange::from_u32(0, 0, column, column + 4));
+                assert_eq!(token.read_token(&file), "name");
+            }
+            assert_eq!(parser.next_tok(), None);
+        }
     }
 
     #[test]
@@ -607,11 +665,13 @@ mod test {
                 range: ZeroRange::from_u32(0, 0, 0, 8),
                 prefixrange: ZeroRange::from_u32(0, 0, 0, 0),
                 kind: TokenKind::StringConstant,
+                byte_range: (0, 8),
             },
             Token {
                 range: ZeroRange::from_u32(0, 0, 9, 18),
                 prefixrange: ZeroRange::from_u32(0, 0, 8, 9),
                 kind: TokenKind::StringConstant,
+                byte_range: (9, 18),
             }
         );
     }
@@ -624,11 +684,13 @@ mod test {
                 range: ZeroRange::from_u32(0, 0, 0, 3),
                 prefixrange: ZeroRange::from_u32(0, 0, 0, 0),
                 kind: TokenKind::Identifier,
+                byte_range: (0, 3),
             },
             Token {
                 range: ZeroRange::from_u32(1, 1, 1, 4),
                 prefixrange: ZeroRange::from_u32(0, 1, 3, 1),
                 kind: TokenKind::Identifier,
+                byte_range: (15, 18),
             }
         );
         check_parser_stream!(
@@ -637,11 +699,13 @@ mod test {
                 range: ZeroRange::from_u32(0, 0, 0, 3),
                 prefixrange: ZeroRange::from_u32(0, 0, 0, 0),
                 kind: TokenKind::Identifier,
+                byte_range: (0, 3),
             },
             Token {
                 range: ZeroRange::from_u32(0, 0, 16, 19),
                 prefixrange: ZeroRange::from_u32(0, 0, 3, 16),
                 kind: TokenKind::Identifier,
+                byte_range: (16, 19),
             }
         );
         check_parser_stream!(
@@ -650,11 +714,13 @@ mod test {
                 range: ZeroRange::from_u32(0, 0, 0, 3),
                 prefixrange: ZeroRange::from_u32(0, 0, 0, 0),
                 kind: TokenKind::Identifier,
+                byte_range: (0, 3),
             },
             Token {
                 range: ZeroRange::from_u32(1, 1, 3, 6),
                 prefixrange: ZeroRange::from_u32(0, 1, 3, 3),
                 kind: TokenKind::Identifier,
+                byte_range: (17, 20),
             }
         );
     }
@@ -667,21 +733,25 @@ mod test {
             range: ZeroRange::from_u32(0, 0, 0, 1),
             prefixrange: ZeroRange::from_u32(0, 0, 0, 0),
             kind: TokenKind::IntConstant,
+            byte_range: (0, 1),
         }));
         assert_eq!(fileparse.next_tok(), Some(Token {
             range: ZeroRange::from_u32(0, 0, 0, 1),
             prefixrange: ZeroRange::from_u32(0, 0, 0, 0),
             kind: TokenKind::IntConstant,
+            byte_range: (0, 1),
         }));
         assert_eq!(fileparse.peek(),  Some(Token {
             range: ZeroRange::from_u32(0, 0, 1, 2),
             prefixrange: ZeroRange::from_u32(0, 0, 1, 1),
             kind: TokenKind::Plus,
+            byte_range: (1, 2),
         }));
         assert_eq!(fileparse.next_tok(), Some(Token {
             range: ZeroRange::from_u32(0, 0, 1, 2),
             prefixrange: ZeroRange::from_u32(0, 0, 1, 1),
             kind: TokenKind::Plus,
+            byte_range: (1, 2),
         }));
         assert_eq!(fileparse.peek(), None);
     }
@@ -694,21 +764,25 @@ mod test {
                 range: ZeroRange::from_u32(0, 0, 0, 3),
                 prefixrange: ZeroRange::from_u32(0, 0, 0, 0),
                 kind: TokenKind::Identifier,
+                byte_range: (0, 3),
             },
             Token {
                 range: ZeroRange::from_u32(1, 1, 0, 1),
                 prefixrange: ZeroRange::from_u32(0, 1, 3, 0),
                 kind: TokenKind::LParen,
+                byte_range: (4, 5),
             },
             Token {
                 range: ZeroRange::from_u32(2, 2, 1, 2),
                 prefixrange: ZeroRange::from_u32(1, 2, 1, 1),
                 kind: TokenKind::IntConstant,
+                byte_range: (7, 8),
             },
             Token {
                 range: ZeroRange::from_u32(3, 3, 0, 1),
                 prefixrange: ZeroRange::from_u32(2, 3, 2, 0),
                 kind: TokenKind::RParen,
+                byte_range: (9, 10),
             }
         );
     }
@@ -727,6 +801,7 @@ mod test {
                            range: ZeroRange::from_u32(0, 0, 0, 1),
                            prefixrange: ZeroRange::from_u32(0, 0, 0, 0),
                            kind: TokenKind::LBrace,
+                           byte_range: (0, 1),
                        }));
         let mut context2 = context1.enter_context(doesnt_understand_tokens);
         assert_eq!(context2.expect_next_kind(
@@ -736,6 +811,7 @@ mod test {
                            range: ZeroRange::from_u32(0, 0, 2, 5),
                            prefixrange: ZeroRange::from_u32(0, 0, 1, 2),
                            kind: TokenKind::Identifier,
+                           byte_range: (2, 5),
                        }));
         // The first unknown token will be transparently skipped,
         // since context1 does not understand it
@@ -746,6 +822,7 @@ mod test {
                            range: ZeroRange::from_u32(0, 0, 8, 9),
                            prefixrange: ZeroRange::from_u32(0, 0, 7, 8),
                            kind: TokenKind::IntConstant,
+                           byte_range: (8, 9),
                        }));
         // The second unknown token will end the context because context1
         // understands it
@@ -759,6 +836,7 @@ mod test {
                                range: ZeroRange::from_u32(0, 0, 10, 11),
                                prefixrange: ZeroRange::from_u32(0, 0, 9, 10),
                                kind: TokenKind::RBrace,
+                               byte_range: (10, 11),
                            }),
                        }));
         assert_eq!(context2.next(&mut fileparse), None);
@@ -768,12 +846,14 @@ mod test {
                        range: ZeroRange::from_u32(0, 0, 10, 11),
                        prefixrange: ZeroRange::from_u32(0, 0, 9, 10),
                        kind: TokenKind::RBrace,
+                       byte_range: (10, 11),
                    }));
         // Verify that skipped token is tracked
         assert_eq!(fileparse.skipped_tokens, vec![(Token {
             range: ZeroRange::from_u32(0, 0, 6, 7),
             prefixrange: ZeroRange::from_u32(0, 0, 5, 6),
             kind: TokenKind::CondOp,
+            byte_range: (6, 7),
         }, TokenKind::IntConstant.description())]);
     }
 

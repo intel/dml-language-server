@@ -175,7 +175,7 @@ type ResolvedAnnotation = Annotation<ResolvedTarget>;
 fn token_at_position(
     analysis: &Arc<Mutex<AnalysisStorage>>,
     canon_path: &CanonPath,
-    lines: &[&str],
+    file: &TextFile,
     pos: Position<ZeroIndexed>,
 ) -> String {
     let analysis_lock = analysis.lock().unwrap();
@@ -187,19 +187,7 @@ fn token_at_position(
         Some(LeafToken::Actual(tok)) => tok,
         _ => return "<no-token>".to_string(),
     };
-    let range = leaf.range;
-    if range.row_start != range.row_end {
-        return "<multi-line-token>".to_string();
-    }
-    let Some(line) = lines.get(range.row_start.0 as usize).copied() else {
-        return "<bad-range>".to_string();
-    };
-    let start = range.col_start.0 as usize;
-    let end = range.col_end.0 as usize;
-    if end > line.len() {
-        return "<bad-range>".to_string();
-    }
-    line[start..end].to_string()
+    leaf.read_token(file)
 }
 
 /// Regex for `@loc[col]=name`
@@ -227,7 +215,8 @@ static RE_UNKNOWN_OP: LazyLock<Regex> = LazyLock::new(|| {
 /// Parse annotations from a DML test file
 ///
 /// Annotation format:
-/// - @loc[col]=name - Declares a named location at the specified column (1-indexed)
+/// Columns are 1-indexed UTF-16 code units, matching LSP positions.
+/// - @loc[col]=name - Declares a named location at the specified column
 /// - @goto-def[col]->name - Tests goto-definition at column, expecting it to resolve to 'name'
 /// - @goto-decl[col]->name - Tests goto-declaration at column, expecting it to resolve to 'name'
 /// - @goto-def-decl[col]->name - Shorthand: expands to both goto-def and goto-decl with same target
@@ -589,9 +578,9 @@ fn collect_file_annotations(
     // Resolve display tokens against the AST now that the file has been
     // analyzed in isolation. This lets cursors land in the middle of an
     // identifier and still get the full identifier text in test output.
-    let lines: Vec<&str> = content.lines().collect();
+    let file: TextFile = content.parse().expect("failed to parse fixture text");
     for op in &mut operations {
-        op.token = token_at_position(analysis, canon_path, &lines, op.location.position);
+        op.token = token_at_position(analysis, canon_path, &file, op.location.position);
     }
 
     (locations, operations)
@@ -1074,13 +1063,13 @@ mod tests {
         let setup = setup_test(&["basic_lookup.dml"]);
         let content = std::fs::read_to_string(&setup.main_file)
             .expect("failed to read fixture");
-        let lines: Vec<&str> = content.lines().collect();
+        let file: TextFile = content.parse().expect("failed to parse fixture text");
         let row = 9; // 0-indexed line 10
 
         let at = |col: u32| token_at_position(
             &setup.analysis,
             &setup.main_canon_path,
-            &lines,
+            &file,
             ZeroPosition::from_u32(row, col),
         );
 
@@ -1106,6 +1095,16 @@ mod tests {
     fn test_basic_lookup_annotations() {
         init_logging();
         let setup = setup_test(&["basic_lookup.dml"]);
+        run_annotation_tests(&setup.ctx, &setup.main_file, setup.annotations);
+    }
+
+    #[test]
+    fn test_unicode_lookup_annotations() {
+        init_logging();
+        let setup = setup_test(&["unicode_lookup.dml"]);
+        assert!(setup.annotations.iter().all(|annotation|
+            matches!(annotation.token.as_str(), "container" | "value" | "read")),
+            "unexpected token text: {:?}", setup.annotations);
         run_annotation_tests(&setup.ctx, &setup.main_file, setup.annotations);
     }
 

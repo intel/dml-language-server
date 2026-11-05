@@ -383,7 +383,6 @@ impl<T: FileLoader, U> VfsInternal<T, U> {
             kind: FileKind::Text(TextFile {
                 text: text.to_owned(),
                 line_indices: make_line_indices(text),
-                unicode_offsets: make_unicode_offsets(text),
                 changed: true,
             }),
             user_data: None,
@@ -654,41 +653,10 @@ impl FileContents {
 }
 
 #[derive(Clone, Debug)]
-struct UnicodeOffset {
-    column: usize,
-    byte: usize,
-    character: char,
-}
-
-fn make_unicode_offsets(text: &str) -> HashMap<usize, Vec<UnicodeOffset>> {
-    let mut offsets = HashMap::<usize, Vec<UnicodeOffset>>::new();
-    let (mut row, mut column, mut line_start) = (0, 0, 0);
-    for (byte, character) in text.char_indices() {
-        if !character.is_ascii() {
-            offsets.entry(row).or_default().push(UnicodeOffset {
-                column,
-                byte: byte - line_start,
-                character,
-            });
-        }
-        if character == '\n' {
-            row += 1;
-            column = 0;
-            line_start = byte + 1;
-        } else {
-            column += character.len_utf16();
-        }
-    }
-    offsets
-}
-
-#[derive(Clone, Debug)]
 pub struct TextFile {
     // FIXME(https://github.com/jonathandturner/rustls/issues/21) should use a rope.
     pub text: String,
     line_indices: Vec<u32>,
-    // Only non-ASCII characters need UTF-16-to-byte offset corrections.
-    unicode_offsets: HashMap<usize, Vec<UnicodeOffset>>,
     changed: bool,
 }
 
@@ -802,7 +770,6 @@ impl TextFile {
 
             self.text = new_text;
             self.line_indices = make_line_indices(&self.text);
-            self.unicode_offsets = make_unicode_offsets(&self.text);
         }
 
         self.changed = true;
@@ -847,33 +814,15 @@ impl TextFile {
         let line_end = range.row_end.0 as usize;
 
         let start = (*try_opt_loc!(self.line_indices.get(line_start))) as usize;
-        let start = start + self.byte_in_line(line_start, range.col_start.0 as usize)?;
+        let start = start + byte_in_str_utf16(self.load_line(range.row_start)?,
+                                            range.col_start)
+            .map_err(|_| Error::BadLocation)?;
         let end = (*try_opt_loc!(self.line_indices.get(line_end))) as usize;
-        let end = end + self.byte_in_line(line_end, range.col_end.0 as usize)?;
+        let end = end + byte_in_str_utf16(self.load_line(range.row_end)?,
+                                        range.col_end)
+            .map_err(|_| Error::BadLocation)?;
 
         self.text.get(start..end).ok_or(Error::BadLocation)
-    }
-
-    fn byte_in_line(&self, row: usize, column: usize) -> Result<usize, Error> {
-        let start = *try_opt_loc!(self.line_indices.get(row)) as usize;
-        let end = *try_opt_loc!(self.line_indices.get(row + 1)) as usize;
-        let mut byte = column;
-        if let Some(offsets) = self.unicode_offsets.get(&row) {
-            let index = offsets.partition_point(|offset| offset.column < column);
-            if let Some(offset) = index.checked_sub(1).map(|i| &offsets[i]) {
-                let distance = column - offset.column;
-                if distance < offset.character.len_utf16() {
-                    return Err(Error::BadLocation);
-                }
-                byte = offset.byte + offset.character.len_utf8()
-                    + (distance - offset.character.len_utf16());
-            }
-        }
-        if byte <= end - start {
-            Ok(byte)
-        } else {
-            Err(Error::BadLocation)
-        }
     }
 
     fn for_each_line<F>(&self, mut f: F) -> Result<(), Error>
@@ -902,7 +851,6 @@ impl FromStr for TextFile {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok( TextFile {
                 line_indices: make_line_indices(s),
-                unicode_offsets: make_unicode_offsets(s),
                 text: s.to_string(),
                 changed: false,
             }
@@ -972,7 +920,6 @@ impl FileLoader for RealFileLoader {
             Ok(s) => Ok(File {
                 kind: FileKind::Text(TextFile {
                     line_indices: make_line_indices(&s),
-                    unicode_offsets: make_unicode_offsets(&s),
                     text: s,
                     changed: false,
                 }),
@@ -1009,30 +956,8 @@ mod tests {
 
     type Range = crate::span::Range<crate::span::ZeroIndexed>;
 
-    fn check_cached_offsets(file: &TextFile) {
-        for row in 0..file.line_indices.len() - 1 {
-            let line = file.load_line(crate::span::Row::new_zero_indexed(row as u32))
-                .unwrap();
-            for column in 0..=line.encode_utf16().count() + 1 {
-                let expected = super::byte_in_str_utf16(
-                    line, Column::new_zero_indexed(column as u32))
-                    .map_err(|_| Error::BadLocation);
-                assert_eq!(file.byte_in_line(row, column), expected,
-                           "row {}, column {}", row, column);
-            }
-        }
-    }
-
     #[test]
-    fn cached_utf16_offsets() {
-        for input in ["", "ascii\n", "\u{1f3e7}a\u{e9}\u{4e2d}\u{1f608}\r\nend",
-                      "a\u{e9}b\n\u{1f3e7}\u{1f3e7}\n"] {
-            check_cached_offsets(&input.parse().unwrap());
-        }
-    }
-
-    #[test]
-    fn cached_utf16_offsets_after_changes() {
+    fn load_range_utf16_after_changes() {
         use super::{Change, VfsSpan};
         use crate::span::Span;
 
@@ -1043,29 +968,14 @@ mod tests {
             text: "new\n\u{e9}\u{4e2d}".to_string(),
         }]).unwrap();
         assert_eq!(file.text, "new\n\u{e9}\u{4e2d}\nold");
-        check_cached_offsets(&file);
+        assert_eq!(file.load_range(Range::from_u32(1, 1, 0, 2)).unwrap(),
+                   "\u{e9}\u{4e2d}");
+        assert_eq!(file.load_range(Range::from_u32(2, 2, 0, 3)).unwrap(), "old");
         file.make_change(&[&Change::AddFile {
             file: "test.dml".into(),
             text: "ascii".to_string(),
         }]).unwrap();
-        assert!(file.unicode_offsets.is_empty());
-        check_cached_offsets(&file);
-    }
-
-    #[test]
-    fn long_line_token_reads() {
-        for prefix in ["", "\u{1f3e7} "] {
-            let input = format!("{}{}", prefix, "name ".repeat(10_000));
-            let file: TextFile = input.parse().unwrap();
-            assert_eq!(file.unicode_offsets.values().map(Vec::len).sum::<usize>(),
-                       if prefix.is_empty() { 0 } else { 1 });
-            let start = prefix.encode_utf16().count() as u32;
-            for index in 0..10_000 {
-                let column = start + index * 5;
-                assert_eq!(file.load_range(
-                    Range::from_u32(0, 0, column, column + 4)).unwrap(), "name");
-            }
-        }
+        assert_eq!(file.load_range(Range::from_u32(0, 0, 0, 5)).unwrap(), "ascii");
     }
 
     #[test]

@@ -647,8 +647,7 @@ mod test {
         check_lexer_stream!("'a' '\\n' '\\''", CharConstant, Whitespace,
                             CharConstant, Whitespace, CharConstant);
         for input in ["'a\n'", "'a\r\n'", "'\\\r'"] {
-            let mut lexer = TokenKind::lexer(input);
-            while let Some(token) = lexer.next() {
+            for token in TokenKind::lexer(input) {
                 assert_ne!(token, Ok(CharConstant), "{:?}", input);
             }
         }

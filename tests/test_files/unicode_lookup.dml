@@ -1,0 +1,26 @@
+//  © 2026 Intel Corporation
+//  SPDX-License-Identifier: Apache-2.0 and MIT
+dml 1.4;
+
+device unicode_lookup;
+
+// Wide characters before any declarations: 🏧😈é中
+/*
+ * Multiline comment with 🏧 and 中.
+ */
+// @loc[18]=container_def
+/* 🏧é中 */ group container "Documentation 🏧😈é中" { // @goto-ref[18]->container_ref
+    // @loc[22]=value_def
+    /* 🏧é中 */ param value = 42; // @goto-ref[22]->value_ref
+    // @loc[22]=read_def
+    /* 😈中 */ method read() -> (uint64) { // @goto-ref[22]->read_ref
+        // @loc[44]=value_ref
+        log info: "Literal 🏧😈é中"; return value; // @goto-def-decl[44]->value_def
+    }
+}
+
+method caller() {
+    // @loc[40]=container_ref
+    // @loc[50]=read_ref
+    log info: "Before reference 🏧é中"; container.read(); // @goto-def-decl[40]->container_def @goto-def-decl[50]->read_def
+}
