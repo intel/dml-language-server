@@ -247,10 +247,6 @@ impl<U> Vfs<U> {
         self.0.load_lines(path, line_start, line_end)
     }
 
-    pub fn load_span(&self, span: crate::span::Span<crate::span::ZeroIndexed>) -> Result<String, Error> {
-        self.0.load_span(span)
-    }
-
     pub fn for_each_line<F>(&self, path: &Path, f: F) -> Result<(), Error>
     where
         F: FnMut(&str, usize) -> Result<(), Error>,
@@ -439,12 +435,6 @@ impl<T: FileLoader, U> VfsInternal<T, U> {
         line_end: crate::span::Row<crate::span::ZeroIndexed>,
     ) -> Result<String, Error> {
         self.ensure_file(path, |f| f.load_lines(line_start, line_end).map(|s| s.to_owned()))
-    }
-
-    fn load_span(&self, span: crate::span::Span<crate::span::ZeroIndexed>)
-                 -> Result<String, Error> {
-        self.ensure_file(&span.path(),
-                         |f| f.load_range(span.range).map(|s| s.to_owned()))
     }
 
     fn for_each_line<F>(&self, path: &Path, f: F) -> Result<(), Error>
@@ -701,15 +691,6 @@ impl<U> File<U> {
         }
     }
 
-    pub fn load_range(&self,
-                      range: crate::span::Range<crate::span::ZeroIndexed>)
-                      -> Result<&str, Error> {
-        match self.kind {
-            FileKind::Text(ref t) => t.load_range(range),
-            FileKind::Binary(_) => Err(Error::BadFileKind),
-        }
-    }
-
     fn for_each_line<F>(&self, f: F) -> Result<(), Error>
     where
         F: FnMut(&str, usize) -> Result<(), Error>,
@@ -809,7 +790,8 @@ impl TextFile {
     }
 
     /// Read a range whose columns are measured in UTF-16 code units.
-    pub fn load_range(&self, range: crate::span::Range<crate::span::ZeroIndexed>) -> Result<&str, Error> {
+    #[cfg(test)]
+    fn load_range(&self, range: crate::span::Range<crate::span::ZeroIndexed>) -> Result<&str, Error> {
         let line_start = range.row_start.0 as usize;
         let line_end = range.row_end.0 as usize;
 
