@@ -332,10 +332,10 @@ fn parse_method(modifier: Option<LeafToken>,
     let default = pre_statements_context.next_if_kind(
         stream, TokenKind::Default);
     let statements = Statement::parse(&outer, stream, file_info);
-    DMLObjectContent::Method(MethodContent {
+    DMLObjectContent::Method(Box::new(MethodContent {
         modifier, independent, startup, memoized, method, name, lparen,
         arguments, rparen, returns, throws, colon, default, statements
-    }).into()
+    })).into()
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1914,7 +1914,7 @@ pub enum DMLObjectContent {
     Instantiation(InstantiationContent),
     Interface(CompositeObjectContent),
     Loggroup(LoggroupContent),
-    Method(MethodContent),
+    Method(Box<MethodContent>),
     Parameter(ParameterContent),
     Port(CompositeObjectContent),
     Provisional(ProvisionalContent),
@@ -1990,7 +1990,7 @@ impl TreeElement for DMLObjectContent {
             Self::Instantiation(content) => create_subs![content],
             Self::Interface(content) => create_subs![content],
             Self::Loggroup(content) => create_subs![content],
-            Self::Method(content) => create_subs![content],
+            Self::Method(content) => create_subs![content.as_ref()],
             Self::Parameter(content) => create_subs![content],
             Self::Port(content) => create_subs![content],
             Self::Provisional(content) => create_subs![content],
