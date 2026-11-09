@@ -978,8 +978,8 @@ fn parse_composite_object_name(context: &ParseContext,
             understands_ellipsis);
         let mut lessthan_context = ellipsis_context.enter_context(
             understands_lessthan);
-        let indexvar = lessthan_context.expect_next_kind(
-            stream, TokenKind::Identifier);
+        let indexvar = lessthan_context.expect_next_filter(
+            stream, ident_filter, "identifier");
         let lessthan = ellipsis_context.expect_next_kind(
             stream, TokenKind::LessThan);
         let size = match bracket_context.peek_kind(stream) {
@@ -1361,8 +1361,8 @@ fn bitorder_parse(context: &ParseContext,
                   -> BitorderContent {
     let (mut outer, mut inner) = object_contexts(context);
     let bitorder = inner.expect_next_kind(stream, TokenKind::Bitorder);
-    let bitorderdesc = inner.expect_next_kind(
-        stream, TokenKind::Identifier);
+    let bitorderdesc = inner.expect_next_filter(
+        stream, ident_filter, "identifier");
     let semi = outer.expect_next_kind(stream, TokenKind::SemiColon);
     BitorderContent {
         bitorder, bitorderdesc, semi
@@ -1596,8 +1596,8 @@ fn parse_hook(shared: Option<LeafToken>,
     let hook = outer.next_leaf(stream);
     let lparen = outer.expect_next_kind(stream, TokenKind::LParen);
     let arg_types = CDeclList::parse(context, stream, file_info);
-        let rparen = outer.expect_next_kind(stream, TokenKind::RParen);
-    let ident = outer.expect_next_kind(stream, TokenKind::Identifier);
+    let rparen = outer.expect_next_kind(stream, TokenKind::RParen);
+    let ident = outer.expect_next_filter(stream, ident_filter, "identifier");
     let semi = outer.expect_next_kind(stream, TokenKind::SemiColon);
     DMLObjectContent::Hook(HookContent {
         shared,
@@ -1632,7 +1632,7 @@ impl Parse<DMLObjectContent> for LoggroupContent {
              -> DMLObject {
         let (mut outer, mut inner) = object_contexts(context);
         let loggroup = inner.expect_next_kind(stream, TokenKind::Loggroup);
-        let ident = inner.expect_next_kind(stream, TokenKind::Identifier);
+        let ident = inner.expect_next_filter(stream, ident_filter, "identifier");
         let semi = outer.expect_next_kind(stream, TokenKind::SemiColon);
         DMLObjectContent::Loggroup(LoggroupContent {
             loggroup, ident, semi
@@ -1834,7 +1834,8 @@ fn device_parse(context: &ParseContext,
                 _file_info: &FileInfo) -> DeviceContent {
     let (mut outer, mut inner) = object_contexts(context);
     let device = inner.expect_next_kind(stream, TokenKind::Device);
-    let name = inner.expect_next_kind(stream, TokenKind::Identifier);
+    let name = inner.expect_next_filter(
+        stream, objident_filter, "device name");
     let semi = outer.expect_next_kind(stream, TokenKind::SemiColon);
     DeviceContent {
         device, name, semi
@@ -2199,7 +2200,8 @@ fn provisionals_parse(context: &ParseContext,
     let mut activations = vec![];
     while cont {
         cont = false;
-        let activate = inner.expect_next_kind(stream, TokenKind::Identifier);
+        let activate = inner.expect_next_filter(
+            stream, ident_filter, "identifier");
         let comma = if inner.peek_kind(stream) == Some(TokenKind::Comma) {
             cont = true;
             Some(inner.next_leaf(stream))
@@ -2497,5 +2499,50 @@ mod test {
             "in group g {}",
             &expected,
             &vec![]);
+    }
+
+    #[test]
+    fn test_device_keyword_name() {
+        let expected = make_ast(
+            zero_range(0, 0, 0, 16),
+            DMLObjectContent::Device(DeviceContent {
+                device: make_leaf(zero_range(0, 0, 0, 0),
+                                  zero_range(0, 0, 0, 6),
+                                  TokenKind::Device),
+                name: make_leaf(zero_range(0, 0, 6, 7),
+                                zero_range(0, 0, 7, 15),
+                                TokenKind::Constant),
+                semi: make_leaf(zero_range(0, 0, 15, 15),
+                                zero_range(0, 0, 15, 16),
+                                TokenKind::SemiColon),
+            }));
+        test_ast_tree::<DMLObjectContent, DMLObject>(
+            "device constant;",
+            &expected,
+            &vec![]);
+    }
+
+    #[test]
+    fn test_keyword_idents() {
+        use logos::Logos;
+        for source in ["hook() constant;",
+                       "shared hook(int) param;",
+                       "loggroup device;",
+                       "provisional constant, param;",
+                       "bitorder then;",
+                       "group g[param < 2][provisional < 3] {}",
+                       "method m() { after h -> (constant, param): x(); }",
+                       "method m() { after h -> constant: x(); }"] {
+            let lexer = TokenKind::lexer(source);
+            let mut stream = FileParser::new(lexer);
+            let context = ParseContext::new_context(doesnt_understand_tokens);
+            let obj = DMLObject::parse(&context, &mut stream,
+                                       &FileInfo::default());
+            assert!(stream.skipped_tokens.is_empty(),
+                    "{}: {:?}", source, stream.skipped_tokens);
+            assert!(obj.report_missing().is_empty(),
+                    "{}: {:?}", source, obj.report_missing());
+            assert!(stream.peek().is_none(), "{}", source);
+        }
     }
 }

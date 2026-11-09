@@ -19,6 +19,7 @@
 - The DLS will now report an error if you declare multiple index variables of the same non-'_' name in a declaration
 - The DLS will now report `error` objects using their error message, mimicking DMLC reports more closely
 - Fixed the lookup of various symbols in nested scopes, including in method, switch, `#if`, and `after` scopes
+- Reserved keywords are now correctly allowed as identifiers for several declarations
 
 ## 0.9.22
 - Fixed an issue in server logging where the large allocations could be made by debug prints even at lower debug levels
