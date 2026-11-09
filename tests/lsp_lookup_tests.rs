@@ -908,6 +908,29 @@ mod tests {
     }
 
     #[test]
+    fn duplicate_templates_keep_earliest_span() {
+        init_logging();
+        for _ in 0..8 {
+            let setup = setup_test(&["duplicate_template_device.dml",
+                                     "duplicate_template_import.dml"]);
+            let analysis = setup.analysis.lock().unwrap();
+            let device = analysis.get_device_analysis(&setup.main_canon_path)
+                .expect("device analysis should exist");
+            let duplicates: Vec<_> = device.errors.values().flatten()
+                .filter(|error|error.description.starts_with(
+                    "Duplicate template name")).collect();
+            assert_eq!(duplicates.len(), 1, "{:#?}", duplicates);
+            assert!(duplicates[0].span.path()
+                    .ends_with("duplicate_template_import.dml"));
+            use dls::analysis::templating::objects::DMLNamedMember;
+            let bank = device.objects.values().find(|object|
+                object.identity() == "b").expect("bank b should exist");
+            assert!(bank.get_object("g1").is_some());
+            assert!(bank.get_object("g2").is_none());
+        }
+    }
+
+    #[test]
     fn test_can_load_and_parse_dml_file() {
         init_logging();
         let setup = setup_test(&["basic_lookup.dml"]);

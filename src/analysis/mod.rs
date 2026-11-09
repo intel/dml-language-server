@@ -934,6 +934,10 @@ impl DeviceAnalysis {
             },
             ContextKey::Template(sym) =>
                 if let Some(templ) = self.templates.templates.get(sym.name_ref()) {
+                    // A discarded duplicate declaration has no instances
+                    if templ.location.as_ref() != Some(sym.loc_span()) {
+                        return Ok(vec![]);
+                    }
                     if let Some(templ_impls) =
                         templ.location.as_ref().and_then(
                             |loc|self
@@ -3171,7 +3175,9 @@ impl DeviceAnalysis {
             }
         }
 
-        let base_templates = templates_from_device_and_bases(&root, &bases);
+        let mut base_templates = templates_from_device_and_bases(&root, &bases);
+        // Bases arrive in arbitrary order; earliest span wins among duplicates
+        base_templates.sort_by_key(|template|*template.obj.object.loc_span());
 
         trace!("base template names: {:?}", base_templates.iter()
                .fold("".to_string(),
