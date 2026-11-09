@@ -15,6 +15,7 @@ use crate::analysis::reference::{CodeReference, Reference, ReferenceKind,
 use crate::analysis::FileSpec;
 use crate::analysis::structure::expressions::DMLString;
 use crate::analysis::{DeclarationSpan, LocalDMLError};
+use crate::vfs::TextFile;
 
 
 use crate::lint::{DMLStyleError,
@@ -732,6 +733,36 @@ pub enum ExpressionContent {
 }
 
 impl TreeElement for ExpressionContent {
+    fn post_parse_sanity(&self, file: &TextFile) -> Vec<LocalDMLError> {
+        let Self::Literal(leaf) = self else {
+            return vec![];
+        };
+        let Some(token) = leaf.get_token() else {
+            return vec![];
+        };
+        if token.kind != TokenKind::CharConstant {
+            return vec![];
+        }
+        let text = token.read_token(file);
+        let bytes = text.as_bytes();
+        let description = if bytes.get(1) == Some(&b'\\') {
+            match bytes {
+                [b'\'', b'\\', b'\\' | b'\'' | b'n' | b'r' | b't' | b'b', b'\''] =>
+                    return vec![],
+                _ => "unrecognised character escape sequence",
+            }
+        } else {
+            match bytes {
+                [b'\'', 0x20..=0x7e, b'\''] => return vec![],
+                _ => "character constants must be a single ASCII char",
+            }
+        };
+        vec![LocalDMLError {
+            range: token.range,
+            description: description.to_string(),
+        }]
+    }
+
     fn range(&self) -> ZeroRange {
         match self {
             Self::Identifier(token) => token.range(),

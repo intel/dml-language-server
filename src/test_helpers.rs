@@ -20,7 +20,13 @@ pub fn make_ast<T: PartialEq + Clone>(range: ZeroRange, t: T) -> AstObject<T> {
 pub fn make_token(prefixrange: ZeroRange,
                   range: ZeroRange,
                   kind: TokenKind) -> Token {
-    Token { kind, prefixrange, range }
+    // These synthetic AST fixtures use single-line ASCII source.
+    assert_eq!(range.row_start.0, 0);
+    assert_eq!(range.row_end.0, 0);
+    Token {
+        kind, prefixrange, range,
+        byte_range: (range.col_start.0 as usize, range.col_end.0 as usize),
+    }
 }
 
 pub fn make_leaf(prefixrange: ZeroRange,
