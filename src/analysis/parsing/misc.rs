@@ -648,6 +648,7 @@ impl CDecl {
 pub fn ident_filter(token: TokenKind) -> bool {
     matches!(token,
              TokenKind::Identifier | TokenKind::Attribute | TokenKind::Bank |
+             TokenKind::Bitorder | TokenKind::Provisional | TokenKind::Then |
              TokenKind::Connect | TokenKind::Constant | TokenKind::Data |
              TokenKind::Device | TokenKind:: Event | TokenKind::Field |
              TokenKind::Footer | TokenKind::Group | TokenKind::Header |
