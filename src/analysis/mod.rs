@@ -401,6 +401,8 @@ pub struct DeviceAnalysis {
     pub reference_info: ReferenceStorage,
     pub template_object_implementation_map: HashMap<ZeroSpan,
                                                     Vec<StructureKey>>,
+    // Name spans of object and method declarations guarded by '#if'
+    pub conditional_declarations: HashSet<ZeroSpan>,
     pub path: CanonPath,
     pub dependant_files: Vec<CanonPath>,
     pub clientpath: PathBuf,
@@ -903,12 +905,21 @@ impl DeviceAnalysis {
         let (first, rest) = context_chain.split_first().unwrap();
         let next_objs = match first {
             ContextKey::Structure(sym) => {
-                let res: Vec<_> = curr_obj.get_object(sym.name_ref()).cloned()
-                    .into_iter().collect();
-                if res.is_empty() {
-                    return Err(format!("Failed to find structural object corresponding to {:?} at {:?}", first, curr_obj.identity()));
+                match curr_obj.get_object(sym.name_ref()) {
+                    Some(found_obj) => if found_obj.resolve(&self.objects)
+                        .as_comp().is_some() {
+                            vec![found_obj.clone()]
+                        } else {
+                            // A higher-precedence non-composite declaration
+                            // won the name collision
+                            return Ok(vec![]);
+                        },
+                    None if self.conditional_declarations
+                        .contains(sym.loc_span()) => return Ok(vec![]),
+                    None => return Err(format!(
+                        "Failed to find structural object corresponding to \
+                         {:?} at {:?}", first, curr_obj.identity())),
                 }
-                res
             },
             ContextKey::Method(sym) => {
                 if let Some(found_obj)
@@ -926,16 +937,20 @@ impl DeviceAnalysis {
                             return Ok(vec![]);
                         }
                     }
-                else {
-                    // If it is an error to not find an result, handle
-                    // it higher up in stack
-                    return Err(format!("Failed to find method object corresponding to {:?} at {:?}", first, curr_obj.identity()));
+                else if self.conditional_declarations
+                    .contains(sym.loc_span()) {
+                    return Ok(vec![]);
+                } else {
+                    return Err(format!(
+                        "Failed to find method object corresponding to \
+                         {:?} at {:?}", first, curr_obj.identity()));
                 }
             },
             ContextKey::Template(sym) =>
                 if let Some(templ) = self.templates.templates.get(sym.name_ref()) {
                     // A discarded duplicate declaration has no instances
-                    if templ.location.as_ref() != Some(sym.loc_span()) {
+                    if templ.location.as_ref().is_some_and(
+                        |location|location != sym.loc_span()) {
                         return Ok(vec![]);
                     }
                     if let Some(templ_impls) =
@@ -3327,6 +3342,7 @@ impl DeviceAnalysis {
             symbol_info,
             reference_info: ReferenceStorage::default(),
             template_object_implementation_map,
+            conditional_declarations: conditional_declarations(&bases),
             path: root.path.clone(),
             clientpath: root.path.clone().into(),
             dependant_files: bases.iter().map(|b|&b.path).cloned().collect(),
@@ -3538,6 +3554,33 @@ fn report_unknown_declared_types(spec: &StatementSpec,
     }
 }
 
+fn conditional_declarations(bases: &[IsolatedAnalysis]) -> HashSet<ZeroSpan> {
+    fn gather(spec: &StatementSpec, found: &mut HashSet<ZeroSpan>) {
+        for object in &spec.objects {
+            if !matches!(object.cond, ExistCondition::Always) {
+                found.insert(*object.loc_span());
+            }
+            gather(&object.spec, found);
+        }
+        for method in &spec.methods {
+            if !matches!(method.cond, ExistCondition::Always) {
+                found.insert(*method.loc_span());
+            }
+        }
+        for ineach in &spec.ineachs {
+            gather(&ineach.spec, found);
+        }
+        for template in &spec.templates {
+            gather(&template.spec, found);
+        }
+    }
+    let mut found = HashSet::default();
+    for base in bases {
+        gather(&base.toplevel.spec, &mut found);
+    }
+    found
+}
+
 // The same name clash can be found both when processing a template and when
 // constructing an object, keep one report per set of clashing declarations
 fn drop_repeated_collisions(errors: Vec<DMLError>) -> Vec<DMLError> {
@@ -3571,6 +3614,7 @@ fn drop_repeated_collisions(errors: Vec<DMLError>) -> Vec<DMLError> {
         kept.push(error);
     }
     kept
+
 }
 
 pub fn templates_from_device_and_bases<'a>(_device: &'a IsolatedAnalysis,
