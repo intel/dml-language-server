@@ -3062,16 +3062,25 @@ pub fn check_method_body_types_for_objects(
     types: &TypeDatabase,
     report: &mut Vec<DMLError>,
 ) {
+    // 'live' is false once the chain passes a method that never calls default
     fn collect_method_chain(method: &Arc<DMLMethodRef>,
-                            seen: &mut HashSet<ZeroSpan>,
-                            methods: &mut Vec<Arc<DMLMethodRef>>) {
-        if !seen.insert(*method.location()) {
-            return;
+                            live: bool,
+                            seen: &mut HashMap<ZeroSpan, usize>,
+                            methods: &mut Vec<(Arc<DMLMethodRef>, bool)>) {
+        if let Some(index) = seen.get(method.location()) {
+            if live && !methods[*index].1 {
+                methods[*index].1 = true;
+            } else {
+                return;
+            }
+        } else {
+            seen.insert(*method.location(), methods.len());
+            methods.push((Arc::clone(method), live));
         }
-        methods.push(Arc::clone(method));
         if let Some(default) = method.get_default() {
+            let live = live && method.get_decl().calls_default;
             for method in default.flat_refs() {
-                collect_method_chain(method, seen, methods);
+                collect_method_chain(method, live, seen, methods);
             }
         }
     }
@@ -3086,13 +3095,13 @@ pub fn check_method_body_types_for_objects(
                 }))
             .collect();
         let mut methods_to_check = vec![];
-        let mut seen_methods = HashSet::default();
+        let mut seen_methods = HashMap::default();
         for method in &effective_methods {
             collect_method_chain(
-                method, &mut seen_methods, &mut methods_to_check);
+                method, true, &mut seen_methods, &mut methods_to_check);
         }
-        for method in methods_to_check {
-            check_method_body_types(&method, object, types, report);
+        for (method, live) in methods_to_check {
+            check_method_body_types(&method, object, types, live, report);
         }
     }
 }

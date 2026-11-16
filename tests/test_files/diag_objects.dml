@@ -273,6 +273,61 @@ method errors() {
     }
 }
 
+// '#if' branches are only checked when the condition is known
+param unknown_condition default true;
+method hashif_errors() {
+    #if (true) {
+        // @diag-error: taken branch
+        error "taken branch";
+    } #else {
+        error "untaken else";
+    }
+    #if (!dml_1_4) {
+        error "untaken if";
+    } #else {
+        // @diag-error: taken else
+        error "taken else";
+    }
+    #if (unknown_condition) {
+        error "unknown condition";
+    }
+    switch (1) {
+    case 1:
+        #if (true && !false) {
+            // @diag-error: taken switch branch
+            error "taken switch branch";
+        } #else {
+            error "untaken switch branch";
+        }
+    }
+}
+
+// Overridden bodies are dead unless reached through 'default()'
+template must_override {
+    method dead() default {
+        error "Must be overridden";
+    }
+    method reached() default {
+        // @diag-error: reached through default
+        error "reached through default";
+    }
+    method dead_behind_reached() default {
+        error "behind an override that is itself dead";
+    }
+}
+template middle is must_override {
+    method dead_behind_reached() default {
+        default();
+    }
+}
+group overrides is middle {
+    method dead() {}
+    method reached() {
+        default();
+    }
+    method dead_behind_reached() {}
+}
+
 // @diag-error: unconditional error object
 error "unconditional error object";
 

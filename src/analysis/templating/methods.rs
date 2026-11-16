@@ -17,6 +17,7 @@ use crate::analysis::structure::objects::{MaybeAbstract, MethodArgument,
 use crate::analysis::structure::statements::{Assigner, ForPre, Statement,
                                              StatementKind, SwitchCase};
 use crate::analysis::{DeclarationSpan, DMLNamed, DMLError};
+use crate::analysis::reference::{NodeRef, Reference};
 use crate::analysis::templating::Declaration;
 use crate::analysis::templating::evaluation::{Evaluatable, EvaluatedValue,
                                               EvaluationContext,
@@ -1189,17 +1190,42 @@ fn check_local_variable_types(statement: &Statement,
 pub fn check_method_body_types(method: &DMLMethodRef,
                                object: &DMLCompositeObject,
                                types: &TypeDatabase,
+                               live: bool,
                                report: &mut Vec<DMLError>) {
     let declaration = method.get_decl();
-    report_error_statements(&declaration.body, report);
+    if live {
+        report_error_statements(&declaration.body, report);
+    }
     check_local_variable_types(
         &declaration.body, &declaration.method_args,
         method, object, types, report);
 }
 
-// Mirrors DMLC's EERRSTMT; only '#if' (not 'if') can exclude an error
+// Mirrors DMLC's EERRSTMT; only '#if' (not 'if') can exclude an error, and
+// '#if' branches are only checked when the condition is provably known
 fn report_error_statements(statement: &Statement,
                            report: &mut Vec<DMLError>) {
+    fn known_condition(condition: &ExpressionKind) -> Option<bool> {
+        condition.evaluate(&mut EvaluationContext::new(), &mut vec![])
+            .as_bool()
+    }
+    fn case_statements<'s>(cases: &'s [SwitchCase],
+                           statements: &mut Vec<&'s Statement>) {
+        for case in cases {
+            match case {
+                SwitchCase::Statement(statement) => statements.push(statement),
+                SwitchCase::HashIf(hashif) =>
+                    match known_condition(&hashif.condition) {
+                        Some(true) =>
+                            case_statements(&hashif.truecases, statements),
+                        Some(false) =>
+                            case_statements(&hashif.falsecases, statements),
+                        None => (),
+                    },
+                SwitchCase::Case(_) | SwitchCase::Default(_) => (),
+            }
+        }
+    }
     let children: Vec<&Statement> = match statement.as_ref() {
         StatementKind::Error(error) => {
             report.push(DMLError {
@@ -1219,6 +1245,12 @@ fn report_error_statements(statement: &Statement,
             compound.statements.iter().collect(),
         StatementKind::If(statement) => std::iter::once(&statement.ifbody)
             .chain(statement.elsebody.as_ref()).collect(),
+        StatementKind::HashIf(statement) =>
+            match known_condition(&statement.condition) {
+                Some(true) => vec![&statement.ifbody],
+                Some(false) => statement.elsebody.iter().collect(),
+                None => vec![],
+            },
         StatementKind::While(statement) => vec![&statement.body],
         StatementKind::DoWhile(statement) => vec![&statement.body],
         StatementKind::For(statement) => vec![&statement.body],
@@ -1227,11 +1259,11 @@ fn report_error_statements(statement: &Statement,
             vec![&statement.tryblock, &statement.catchblock],
         StatementKind::HashSelect(statement) =>
             vec![&statement.selectbranch, &statement.elsebranch],
-        StatementKind::Switch(statement) => statement.cases.iter()
-            .filter_map(|case|match case {
-                SwitchCase::Statement(statement) => Some(statement),
-                _ => None,
-            }).collect(),
+        StatementKind::Switch(statement) => {
+            let mut statements = vec![];
+            case_statements(&statement.cases, &mut statements);
+            statements
+        },
         _ => vec![],
     };
     for child in children {
@@ -1251,6 +1283,8 @@ pub struct MethodDecl {
     pub method_args: Vec<DMLMethodArg>,
     pub return_types: Vec<DMLResolvedType>,
     pub body: Statement,
+    // Whether the body references 'default', i.e. may run the overridden method
+    pub calls_default: bool,
     pub span: ZeroSpan,
 }
 
@@ -1452,6 +1486,12 @@ impl MethodDecl {
             memoized: content.memoized,
             default: content.default,
             body: content.body.clone(),
+            calls_default: content.references.iter()
+                .filter_map(Reference::as_code_ref)
+                .filter_map(|reference|reference.as_variable_ref())
+                .any(|variable|matches!(&variable.reference,
+                                        NodeRef::Simple(name)
+                                        if name.val == "default")),
             throws: content.throws,
             method_args: eval_method_args(&content.arguments, types, report),
             return_types: eval_method_returns(&content.returns, types, report),
