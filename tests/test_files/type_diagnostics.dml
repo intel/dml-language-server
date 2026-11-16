@@ -1,0 +1,339 @@
+//  © 2026 Intel Corporation
+//  SPDX-License-Identifier: Apache-2.0 and MIT
+
+dml 1.4;
+device type_diagnostics;
+
+typedef struct {
+    int value;
+} diagnostic_inner_t;
+
+typedef struct {
+    int value;
+    int *pointer;
+    int array[2];
+    diagnostic_inner_t nested;
+} diagnostic_outer_t;
+
+template typed_base {
+    method update(int value) default { // @loc[23]=base_update_arg
+    }
+
+    method update_narrow(uint64 value) default { // @loc[33]=base_narrow_arg
+    }
+}
+
+template typed_override is typed_base {
+    // @diag-error: Mismatching argument type in method override | related->base_update_arg: Corresponding argument declared here
+    // @diag-error: Mismatching argument type in method override | related->base_update_arg: Corresponding argument declared here
+    // @diag-error: Mismatching argument type in method override | related->base_update_arg: Corresponding argument declared here
+    // @diag-error: Mismatching argument type in method override | related->base_update_arg: Corresponding argument declared here
+    method update(uint8 *value) {
+    }
+
+    // @diag-error: Mismatching argument type in method override | related->base_narrow_arg: Corresponding argument declared here
+    // @diag-error: Mismatching argument type in method override | related->base_narrow_arg: Corresponding argument declared here
+    // @diag-error: Mismatching argument type in method override | related->base_narrow_arg: Corresponding argument declared here
+    // @diag-error: Mismatching argument type in method override | related->base_narrow_arg: Corresponding argument declared here
+    method update_narrow(uint8 value) {
+    }
+}
+
+template assignment_base {
+    method checked_without_default_call() default {
+        // @diag-error: base_without_default_assignment | related->base_without_default_decl: declared as 'int' here
+        local int base_without_default_assignment = "base without default"; // @loc[19]=base_without_default_decl
+    }
+
+    method checked_with_default_call(int default_argument) -> (int, bool) // @loc[12]=checked_default_method @loc[42]=checked_default_arg
+            default {
+        // @diag-error: base_with_default_assignment | related->base_with_default_decl: declared as 'int' here
+        local int base_with_default_assignment = "base with default"; // @loc[19]=base_with_default_decl
+        return (default_argument, false);
+    }
+}
+
+template assignment_override is assignment_base {
+    method checked_without_default_call() {
+        // @diag-error: override_without_default_assignment | related->override_without_default_decl: declared as 'int' here
+        local int override_without_default_assignment = false; // @loc[19]=override_without_default_decl
+    }
+
+    method checked_with_default_call(int default_argument) -> (int, bool) {
+        local (int default_int, bool default_bool) = default(default_argument);
+        local (bool bad_default_bool, int bad_default_int) = // @loc[21]=bad_default_bool_decl @loc[43]=bad_default_int_decl
+            // @diag-error: bad_default_bool | related->bad_default_bool_decl: declared here
+            // @diag-error: bad_default_int | related->bad_default_int_decl: declared here
+            // @diag-error: Cannot pass value of type 'const char *' | related->checked_default_arg: Argument declared here
+            default("default argument");
+        local (int missing_default_arg_int, bool missing_default_arg_bool) =
+            // @diag-error: expects 1 arguments but call provides 0 | related->checked_default_method: Method declared here
+            default();
+        // @diag-error: returns 2 values but declaration binds 1 | related->checked_default_method: Method declared here
+        local int short_default_binding = default(default_argument);
+        // @diag-error: override_with_default_assignment | related->override_with_default_decl: declared as 'int' here
+        local int override_with_default_assignment = false; // @loc[19]=override_with_default_decl
+        return default(default_argument);
+    }
+}
+
+template shared_return_source {
+    shared method shared_text() -> (const char *) {
+        return "shared";
+    }
+}
+
+template shared_return_calls is shared_return_source {
+    shared method invalid_shared_forward() -> (int) { // @loc[48]=shared_forward_return
+        // @diag-error: Cannot return value of type 'const char *' | related->shared_forward_return: Return type declared here
+        return shared_text();
+    }
+}
+
+bank override_diagnostics is assignment_override {
+}
+
+bank shared_return_diagnostics is shared_return_calls {
+}
+
+group typed_object {
+    method object_pair(int argument, bool flag) -> (int, bool) { // @loc[12]=object_pair_method @loc[28]=object_pair_argument @loc[43]=object_pair_flag
+        return (argument, flag);
+    }
+}
+
+bank diagnostics is typed_override {
+    method typed_pair(int argument, bool flag) -> (int, bool) { // @loc[12]=typed_pair_method @loc[27]=typed_pair_argument @loc[42]=typed_pair_flag
+        return (argument, flag);
+    }
+
+    method typed_text() -> (const char *) {
+        return "nested";
+    }
+
+    method accepts_int(int value) { // @loc[28]=accepts_int_arg
+    }
+
+    method nested_call_argument() {
+        // @diag-error: Cannot pass value of type 'const char *' | related->accepts_int_arg: Argument declared here
+        accepts_int(typed_text());
+    }
+
+    method invalid_return() -> (int, bool) { // @loc[33]=invalid_return_int @loc[38]=invalid_return_bool
+        // @diag-error: return value of type 'const char *' | related->invalid_return_int: Return type declared here
+        // @diag-error: return value of type 'uint64' | related->invalid_return_bool: Return type declared here
+        return ("return", 4);
+    }
+
+    method valid_scalar_return() -> (int) { // @loc[12]=valid_scalar_method
+        return 1;
+    }
+
+    method invalid_scalar_return() -> (int) { // @loc[40]=invalid_scalar_return_type
+        // @diag-error: return value of type 'const char *' | related->invalid_scalar_return_type: Return type declared here
+        return "scalar return";
+    }
+
+    method unresolved_call_return() -> (int) {
+        return unknown_get();
+    }
+
+    method unknown_tuple_return() -> (int) { // @loc[12]=unknown_tuple_method
+        // @diag-error: declares 1 return values but return statement provides 2 | related->unknown_tuple_method: Method declared here
+        return (null, 1);
+    }
+
+    method known_tuple_return() -> (int) { // @loc[12]=known_tuple_method
+        // @diag-error: declares 1 return values but return statement provides 2 | related->known_tuple_method: Method declared here
+        return (2, 1);
+    }
+
+    method short_return() -> (int, bool) { // @loc[12]=short_return_method
+        // @diag-error: declares 2 return values but return statement provides 1 | related->short_return_method: Method declared here
+        return 4;
+    }
+
+    method forwarded_return() -> (int, bool) {
+        return typed_pair(4, false);
+    }
+
+    inline method argument_assignment(inline selector, uint8 value) { // @loc[46]=selector_arg @loc[62]=value_arg
+        // @diag-error: Cannot assign to inline method argument 'selector' | related->selector_arg: Inline argument declared here
+        selector = 1;
+        // @diag-error: Cannot assign value of type 'const char *' | related->value_arg: declared as 'uint8' here
+        value = "argument assignment";
+    }
+
+    method struct_fields(diagnostic_outer_t value,
+                         diagnostic_outer_t *pointer) {
+        local int scalar_field = value.value;
+        local int *pointer_field = value.pointer;
+        local int *array_field = value.array;
+        local int array_element = value.array[0];
+        local int nested_field = value.nested.value;
+        local int indirect_field = pointer->value;
+
+        // @diag-error: bad_scalar_field | related->bad_scalar_field_decl: declared as 'bool' here
+        local bool bad_scalar_field = value.value; // @loc[20]=bad_scalar_field_decl
+        // @diag-error: bad_pointer_field | related->bad_pointer_field_decl: declared as 'int' here
+        local int bad_pointer_field = value.pointer; // @loc[19]=bad_pointer_field_decl
+        // @diag-error: bad_array_field | related->bad_array_field_decl: declared as 'bool' here
+        local bool bad_array_field = value.array; // @loc[20]=bad_array_field_decl
+        // @diag-error: bad_array_element | related->bad_array_element_decl: declared as 'bool' here
+        local bool bad_array_element = pointer->array[0]; // @loc[20]=bad_array_element_decl
+        // @diag-error: bad_nested_field | related->bad_nested_field_decl: declared as 'bool' here
+        local bool bad_nested_field = value.nested.value; // @loc[20]=bad_nested_field_decl
+        // @diag-error: bad_indirect_field | related->bad_indirect_field_decl: declared as 'bool' here
+        local bool bad_indirect_field = pointer->value; // @loc[20]=bad_indirect_field_decl
+        // @diag-error: Struct type has no field named 'missing'
+        local int missing_field = value.missing;
+    }
+
+    method switch_scope(int selector) {
+        switch (selector) {
+        case 0:
+            local int switched; // @loc[23]=switched_decl
+            break;
+        case 1:
+            // @diag-error: Cannot assign value of type 'const char *' | related->switched_decl: declared as 'int' here
+            switched = "switch assignment";
+            break;
+        }
+        // @diag-error: Cannot assign value of type 'const char *' | related->switched_decl: declared as 'int' here
+        switched = "post-switch assignment";
+    }
+
+    method test_method_types() {
+        local (int call_int, bool call_bool) = typed_pair(4, false);
+        local int assigned_call_int;
+        local bool assigned_call_bool;
+        (assigned_call_int, assigned_call_bool) = typed_pair(4, false);
+        // @diag-error: returns 2 values but assignment has 1 targets | related->typed_pair_method: Method declared here
+        assigned_call_int = typed_pair(4, false);
+        // @diag-error: returns 1 values but assignment has 2 targets | related->valid_scalar_method: Method declared here
+        (assigned_call_int, assigned_call_bool) = valid_scalar_return();
+        local (int bad_arg_int, bool bad_arg_bool) =
+            // @diag-error: argument 'argument' of method 'typed_pair' | related->typed_pair_argument: Argument declared here
+            // @diag-error: argument 'flag' of method 'typed_pair' | related->typed_pair_flag: Argument declared here
+            typed_pair("argument", 4);
+        // @diag-error: expects 2 arguments but call provides 1 | related->typed_pair_method: Method declared here
+        local (int missing_arg_int, bool missing_arg_bool) = typed_pair(4);
+        // @diag-error: returns 2 values but declaration binds 1 | related->typed_pair_method: Method declared here
+        local int short_binding = typed_pair(4, false);
+        // @diag-error: bad_bind_bool | related->bad_bind_bool_decl: declared here
+        // @diag-error: bad_bind_int | related->bad_bind_int_decl: declared here
+        local (bool bad_bind_bool, int bad_bind_int) = typed_pair(4, false); // @loc[21]=bad_bind_bool_decl @loc[40]=bad_bind_int_decl
+        local bool bad_assigned_call_bool; // @loc[20]=bad_assigned_bool_decl
+        local int bad_assigned_call_int; // @loc[19]=bad_assigned_int_decl
+        // @diag-error: bad_assigned_call_int | related->bad_assigned_int_decl: declared here
+        // @diag-error: bad_assigned_call_bool | related->bad_assigned_bool_decl: declared here
+        (bad_assigned_call_bool, bad_assigned_call_int) = typed_pair(4, false);
+
+        local (int object_arg_int, bool object_arg_bool) =
+            // @diag-error: argument 'argument' of method 'object_pair' | related->object_pair_argument: Argument declared here
+            // @diag-error: argument 'flag' of method 'object_pair' | related->object_pair_flag: Argument declared here
+            typed_object.object_pair("object argument", 4);
+        local (int object_short_int, bool object_short_bool) =
+            // @diag-error: expects 2 arguments but call provides 1 | related->object_pair_method: Method declared here
+            typed_object.object_pair(4);
+        local (bool bad_object_bind_bool, int bad_object_bind_int) = // @loc[21]=bad_object_bind_bool_decl @loc[47]=bad_object_bind_int_decl
+            // @diag-error: bad_object_bind_bool | related->bad_object_bind_bool_decl: declared here
+            // @diag-error: bad_object_bind_int | related->bad_object_bind_int_decl: declared here
+            typed_object.object_pair(4, false);
+    }
+
+    method test_local_initializer() {
+        local int valid = 123;
+        local int copied = valid;
+        // @diag-error: bad_typeof_local | related->bad_typeof_local_decl: declared as 'int' here
+        local typeof(valid) bad_typeof_local = "typeof local"; // @loc[29]=bad_typeof_local_decl
+        // @diag-error: bad_typeof_literal | related->bad_typeof_literal_decl: declared as 'bool' here
+        local typeof(false) bad_typeof_literal = 1; // @loc[29]=bad_typeof_literal_decl
+        // @diag-error: bad_typeof_call | related->bad_typeof_call_decl: declared as 'int' here
+        local typeof(valid_scalar_return()) bad_typeof_call = "typeof call"; // @loc[45]=bad_typeof_call_decl
+        local typeof(unknown_type_source) unresolved_typeof = "unknown";
+        // @diag-error: bad_typeof_cast | related->bad_typeof_cast_decl: declared as 'bool' here
+        local bool bad_typeof_cast = cast(1, typeof(valid)); // @loc[20]=bad_typeof_cast_decl
+        // @diag-error: Cannot initialize local variable 'test' | related->test_decl: declared as 'int' here
+        local int test = "123"; // @loc[19]=test_decl
+        // @diag-error: boolean_test | related->boolean_test_decl: declared as 'int' here
+        local int boolean_test = false; // @loc[19]=boolean_test_decl
+        local int object_test = some_random_object;
+        local uint64 wide = valid;
+        local uint8 fitting_literal = 255;
+        // @diag-warning: truncated_literal | related->truncated_literal_decl: declared as 'uint8' here
+        local uint8 truncated_literal = 256; // @loc[21]=truncated_literal_decl
+        // @diag-warning: narrowed | related->narrowed_decl: declared as 'uint8' here
+        local uint8 narrowed = wide; // @loc[21]=narrowed_decl
+        // @diag-warning: platform_narrowed | related->platform_narrowed_decl: declared as 'long' here
+        local long platform_narrowed = wide; // @loc[20]=platform_narrowed_decl
+        local uint8 fitting_assignment;
+        fitting_assignment = 255;
+        local uint8 narrowed_assignment; // @loc[21]=narrowed_assignment_decl
+        // @diag-warning: narrowed_assignment | related->narrowed_assignment_decl: declared as 'uint8' here
+        narrowed_assignment = wide;
+        local uint8 truncated_assignment; // @loc[21]=truncated_assignment_decl
+        // @diag-warning: truncated_assignment | related->truncated_assignment_decl: declared as 'uint8' here
+        truncated_assignment = 256;
+        local long platform_assignment; // @loc[20]=platform_assignment_decl
+        // @diag-warning: platform_assignment | related->platform_assignment_decl: declared as 'long' here
+        platform_assignment = wide;
+        local int incompatible_assignment; // @loc[19]=incompatible_assignment_decl
+        // @diag-error: incompatible_assignment | related->incompatible_assignment_decl: declared as 'int' here
+        incompatible_assignment = "123";
+
+        local (int tuple_int, bool tuple_bool) = (4, false);
+        // @diag-error: bad_tuple_int | related->bad_tuple_int_decl: declared as 'int' here
+        // @diag-error: bad_tuple_bool | related->bad_tuple_bool_decl: declared as 'bool' here
+        local (int bad_tuple_int, bool bad_tuple_bool) = ("tuple", 4); // @loc[20]=bad_tuple_int_decl @loc[40]=bad_tuple_bool_decl
+        local (bool const_tuple_bool, const int const_tuple_int) = (false, 4);
+        local (bool bad_const_tuple_bool, const int bad_const_tuple_int) = // @loc[53]=bad_const_tuple_int_decl
+            // @diag-error: bad_const_tuple_int | related->bad_const_tuple_int_decl: declared as 'const int' here
+            (false, "const tuple");
+
+        local int simultaneous_int;
+        local bool simultaneous_bool;
+        (simultaneous_int, simultaneous_bool) = (4, false);
+        local int bad_simultaneous_int; // @loc[19]=bad_simultaneous_int_decl
+        local bool bad_simultaneous_bool; // @loc[20]=bad_simultaneous_bool_decl
+        // @diag-error: bad_simultaneous_int | related->bad_simultaneous_int_decl: declared as 'int' here
+        // @diag-error: bad_simultaneous_bool | related->bad_simultaneous_bool_decl: declared as 'bool' here
+        (bad_simultaneous_int, bad_simultaneous_bool) = ("simultaneous", 4);
+        local int short_simultaneous_int;
+        local bool short_simultaneous_bool;
+        local int short_simultaneous_extra;
+        // @diag-error: has 3 targets but initializer provides 2 values
+        (short_simultaneous_int, short_simultaneous_bool,
+         short_simultaneous_extra) = (4, false);
+        local int long_simultaneous_int;
+        local bool long_simultaneous_bool;
+        // @diag-error: has 2 targets but initializer provides 3 values
+        (long_simultaneous_int, long_simultaneous_bool) = (4, false, 8);
+        // @diag-error: has 2 targets but initializer provides 1 value
+        (long_simultaneous_int, long_simultaneous_bool) = 4;
+        (long_simultaneous_int, long_simultaneous_bool) = unknown_pair();
+
+        local int chain_int; // @loc[19]=chain_int_decl
+        local bool chain_bool;
+        // @diag-error: Cannot assign value of type 'bool' | related->chain_int_decl: declared as 'int' here
+        chain_int = chain_bool = false;
+
+        local int swap_i = 1;
+        local int swap_j = 0;
+        (swap_i, swap_j) = (swap_j, swap_i);
+
+        local int8 chain_byte; // @loc[20]=chain_byte_decl
+        local float chain_float;
+        local int chain_integer; // @loc[19]=chain_integer_decl
+        // @diag-warning: chain_byte | related->chain_byte_decl: declared as 'int8' here
+        // @diag-warning: chain_integer | related->chain_integer_decl: declared as 'int' here
+        chain_float = chain_byte = chain_integer = 255.1;
+
+        local int valid_array[3] = {0, 1, 2};
+        // @diag-error: initialize element 1 of local array 'invalid_array' | related->invalid_array_decl: declared as 'int[3]' here
+        // @diag-error: initialize element 2 of local array 'invalid_array' | related->invalid_array_decl: declared as 'int[3]' here
+        local int invalid_array[3] = {0, false, "array"}; // @loc[19]=invalid_array_decl
+        // @diag-error: Local array 'short_array' has length 3 | related->short_array_decl: Local array 'short_array' declared here
+        local int short_array[3] = {0, 1}; // @loc[19]=short_array_decl
+    }
+}

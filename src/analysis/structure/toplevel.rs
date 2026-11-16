@@ -124,7 +124,7 @@ impl ExistCondition {
                     // TODO/NOTE: For now this will only report for provably non-constant
                     // expressions, which there are none. As evaluation improves we can
                     // eventually flip this to report for non-provably constant expressions
-                    if evaluated.constant == Some(false) {
+                    if evaluated.constant() == Some(false) {
                         // TODO: This can be improved to find the range of the nearest
                         // sub-expression that is non-constant without blaming the whole expression
                         // (probably as a related span)
@@ -786,7 +786,13 @@ impl Scope for TopLevel {
         self.spec.scopes()
     }
     fn defined_symbols(&self) -> Vec<&dyn StructureSymbol> {
-        self.spec.symbols()
+        let mut symbols = self.spec.symbols();
+        symbols.extend(self.typedefs.to_symbols());
+        symbols.extend(self.typedefs.iter().flat_map(|typedef|
+            typedef.typed.declaration_members().into_iter()
+                .filter(|member|member.name.is_some())
+                .map(|member|member as &dyn StructureSymbol)));
+        symbols
     }
 }
 

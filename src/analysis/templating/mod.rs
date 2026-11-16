@@ -10,11 +10,13 @@ pub mod evaluation;
 use crate::analysis::templating::types::DMLResolvedType;
 use crate::analysis::structure::expressions::DMLString;
 use crate::analysis::structure::objects::MaybeAbstract;
+use crate::analysis::structure::types::DMLType;
 use crate::analysis::DMLNamed;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Declaration {
     pub type_ref: DMLResolvedType,
+    pub type_syntax: DMLType,
     pub name: DMLString,
 }
 

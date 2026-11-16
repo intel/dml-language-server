@@ -25,6 +25,7 @@ use crate::analysis::templating::objects::{create_objectspec};
 use crate::analysis::templating::traits::{TemplateTraitInfo,
                                           DMLTemplate,
                                           DMLTrait};
+use crate::analysis::templating::types::TypeDatabase;
 use crate::file_management::CanonPath;
 
 lazy_static! {
@@ -173,6 +174,7 @@ pub fn create_templates_traits<'t>(
     imp_map: &'t HashMap<Import, CanonPath>,
     rank_struct: HashMap<&'t str, InEachStruct<'t>>,
     eval_context: &mut EvaluationContext,
+    types: &TypeDatabase,
     report: &mut Vec<DMLError>)
     -> TemplateTraitInfo {
     let mut templates = HashMap::default();
@@ -201,7 +203,7 @@ pub fn create_templates_traits<'t>(
         // also creating traits in any case, just with nothing
         // in them
         let traitspec = DMLTrait::process(templname, templ.get_def_loc(),
-                                          &spec, &traits, report);
+                                          &spec, &traits, types, report);
         traits.insert(templname.to_string(), Arc::clone(&traitspec));
         let template = DMLTemplate::make(
             templname,
