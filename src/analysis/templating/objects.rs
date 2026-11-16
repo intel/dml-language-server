@@ -1305,7 +1305,8 @@ fn gather_parameters<'t>(obj_loc: &ZeroSpan,
     let mut index_names = HashSet::new();
     for arraydim in index_info {
         // A repeated index variable is reported as a collision on its own
-        if !index_names.insert(arraydim.indexvar.val.as_str()) {
+        if arraydim.indexvar.val == "_"
+            || !index_names.insert(arraydim.indexvar.val.as_str()) {
             continue;
         }
         let new_decl = (make_objectdecl_auto_param(
@@ -2337,7 +2338,10 @@ fn merge_composite_subobj<'c>(name: String,
         }
         for ((auth_decl, mismatches), other_decl) in
             array_info.iter_mut().zip(decl.obj.dims.iter()) {
-                if auth_decl.indexvar.val != other_decl.indexvar.val {
+                if auth_decl.indexvar.val == "_" {
+                    auth_decl.indexvar = other_decl.indexvar.clone();
+                } else if other_decl.indexvar.val != "_"
+                    && auth_decl.indexvar.val != other_decl.indexvar.val {
                     mismatches.push(&other_decl.indexvar.span)
                 }
                 if auth_decl.size.is_none() {
@@ -2883,10 +2887,13 @@ fn make_auto_params(identity: &DMLString,
 
         let mut indices = vec![];
         for arraydim in index_info {
-            let new_decl = make_objectdecl_auto_param(
-                &arraydim.indexvar.val, &arraydim.indexvar.span,
-                arraydim.size.as_ref().map(|e|ParamValue::Set(e.clone())));
-            auto_parameters.insert(arraydim.indexvar.val.to_string(), new_decl);
+            if arraydim.indexvar.val != "_" {
+                let new_decl = make_objectdecl_auto_param(
+                    &arraydim.indexvar.val, &arraydim.indexvar.span,
+                    arraydim.size.as_ref().map(|e|ParamValue::Set(e.clone())));
+                auto_parameters.insert(arraydim.indexvar.val.to_string(),
+                                       new_decl);
+            }
             // Note: the location of this identifier is fake and will point to
             // the index declaration (this is probably fine)
             indices.push(Box::new(ExpressionKind::Identifier(Identifier {

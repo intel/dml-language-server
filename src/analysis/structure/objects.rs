@@ -950,7 +950,9 @@ impl Scope for CompositeObject {
         self.statements.scopes()
     }
     fn defined_symbols(&self) -> Vec<&dyn StructureSymbol> {
-        let mut symbols = self.dims.to_symbols();
+        let mut symbols: Vec<&dyn StructureSymbol> = self.dims.iter()
+            .filter(|dim|dim.indexvar.val != "_")
+            .map(|dim|dim as &dyn StructureSymbol).collect();
         symbols.append(&mut self.statements.symbols());
         symbols
     }
