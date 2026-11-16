@@ -80,6 +80,13 @@ group dims_change[i < 2] { // @loc[18]=dims_change_array
 // @diag-error: Name collision on index variable 'i' | related->ga_first_index: Previously defined here
 group ga[i < 4][i < 4]; // @loc[10]=ga_first_index
 
+// Discarded index variables neither collide nor mismatch named ones
+group discard_dims[_ < 2][_ < 3];
+group discard_named[_ < 2] {
+    param p = j; // @goto-def[15]->discard_named_j
+}
+group discard_named[j < 2]; // @loc[21]=discard_named_j
+
 template clashing_shared_methods {
     shared method m() default {} // @loc[19]=shared_m_first
     // @diag-error: Name collision on 'm' | related->shared_m_first: Previously defined here
