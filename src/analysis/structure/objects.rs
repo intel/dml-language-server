@@ -1193,6 +1193,22 @@ impl DeclarationSpan for Initializer {
     }
 }
 
+impl Initializer {
+    pub fn expression(&self) -> Option<&Expression> {
+        match &self.kind {
+            InitializerKind::One(expression) => Some(expression),
+            _ => None,
+        }
+    }
+
+    pub fn list(&self) -> Option<&[Box<Initializer>]> {
+        match &self.kind {
+            InitializerKind::List(initializers) => Some(initializers),
+            _ => None,
+        }
+    }
+}
+
 impl From<InitializerKind> for Initializer {
     fn from(from: InitializerKind) -> Initializer {
         let span = match &from {
@@ -1536,6 +1552,12 @@ impl DeclarationSpan for Typedef {
 impl DMLNamed for Typedef {
     fn name(&self) -> &DMLString {
         self.object.name()
+    }
+}
+
+impl StructureSymbol for Typedef {
+    fn kind(&self) -> DMLSymbolKind {
+        DMLSymbolKind::Typedef
     }
 }
 

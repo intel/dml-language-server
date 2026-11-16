@@ -132,6 +132,10 @@ impl <'t> SemanticLookup<'t> {
                 match reference {
                     Reference::CodeReference(code_ref) => {
                         stored_symbols = get_symbols_of_ref(&code_ref, &analysis_info, &mut recognized_limitations);
+                        if code_ref.reference_kind() == ReferenceKind::Type &&
+                            stored_symbols.iter().all(|(_, symbols)|symbols.is_empty()) {
+                            recognized_limitations.insert(type_semantic_limitation());
+                        }
                     },
                     Reference::FileReference(file_ref) => {
                         targeted_files = get_import_target_of(&file_ref, analysis_lock)
@@ -202,11 +206,6 @@ fn get_refs_and_syms_at_fp<'t>(
             &fp, ref_at_pos);
         }
         return Ok(SymbolsOrReference::Symbols(syms));
-    }
-    if let Some(refr) = ref_at_pos.and_then(|r|r.as_code_ref()) {
-        if refr.reference_kind() == ReferenceKind::Type {
-            relevant_limitations.insert(type_semantic_limitation());
-        }
     }
     if let Some(refr) = ref_at_pos {
         Ok(SymbolsOrReference::Reference(refr.clone()))
@@ -458,4 +457,31 @@ pub fn references_at_fp(context: &InitActionContext<impl Output>,
        .into_iter()
        .flat_map(|s|s.lock().unwrap().references.clone())
        .collect())
+}
+
+pub fn type_definitions_at_fp(
+    context: &InitActionContext<impl Output>,
+    fp: &ZeroFilePosition,
+    relevant_limitations: &mut HashSet<DLSLimitation>)
+    -> Result<Vec<ZeroSpan>, AnalysisLookupError> {
+    let analysis_lock = context.analysis.lock().unwrap();
+    let mut semantic_lookup = SemanticLookup::create_lookup(
+        fp,
+        &analysis_lock,
+        context)?;
+    mem::swap(relevant_limitations, &mut semantic_lookup.recognized_limitations);
+
+    let mut locations = HashSet::new();
+    for (device, symbols) in &semantic_lookup.stored_symbols {
+        for symbol in symbols {
+            let symbol = symbol.lock().unwrap();
+            locations.extend(symbol.type_definitions.iter().copied());
+            let type_use = symbol.typed;
+            if let Some(declaration) = type_use.and_then(|typed|
+                device.types.declaration(typed.type_id)) {
+                locations.insert(declaration.name.span);
+            }
+        }
+    }
+    Ok(locations.into_iter().collect())
 }

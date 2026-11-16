@@ -98,6 +98,7 @@ macro_rules! define_dispatch_request_enum {
 define_dispatch_request_enum!(
     Completion,
     GotoDefinition,
+    GotoTypeDefinition,
     References,
     DocumentSymbolRequest,
     WorkspaceSymbolRequest,

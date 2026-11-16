@@ -41,6 +41,7 @@ use lsp_types::{
     TextDocumentSyncOptions,
     TextDocumentSyncKind,
     TextDocumentSyncSaveOptions,
+    TypeDefinitionProviderCapability,
     WorkspaceServerCapabilities,
     WorkspaceFoldersServerCapabilities,
 };
@@ -597,6 +598,7 @@ impl<O: Output> LsService<O> {
                 requests::DocumentSymbolRequest,
                 requests::HoverRequest,
                 requests::GotoDefinition,
+                requests::GotoTypeDefinition,
                 requests::GotoDeclaration,
                 requests::References,
                 requests::Completion,
@@ -709,7 +711,8 @@ fn server_caps<O: Output>(_ctx: &ActionContext<O>) -> ServerCapabilities {
         hover_provider: Some(HoverProviderCapability::Simple(true)),
         completion_provider: None,
         definition_provider: Some(OneOf::Left(true)),
-        type_definition_provider: None,
+        type_definition_provider: Some(
+            TypeDefinitionProviderCapability::Simple(true)),
         implementation_provider: Some(
             ImplementationProviderCapability::Simple(true)),
         references_provider: None,

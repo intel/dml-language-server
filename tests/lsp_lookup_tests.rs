@@ -11,6 +11,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
 use regex::Regex;
+use lsp_types::DiagnosticSeverity;
 
 use dls::actions::analysis_storage::{AnalysisStorage, TimestampedStorage, AnalysisLookupError};
 use dls::actions::{InitActionContext, DeviceAnalysisJobOptions};
@@ -23,7 +24,8 @@ use dls::span::{Position, ZeroIndexed};
 use dls::file_management::{CanonPath, PathResolver};
 use dls::server::io::Output;
 use dls::actions::semantic_lookup::{definitions_at_fp, declarations_at_fp,
-                                       implementations_at_fp, references_at_fp, DLSLimitation};
+                                       implementations_at_fp, references_at_fp,
+                                       type_definitions_at_fp, DLSLimitation};
 
 // Mock output for testing
 #[derive(Clone, Debug)]
@@ -173,6 +175,23 @@ struct Annotation<T> {
 type UnresolvedAnnotation = Annotation<TargetSpec>;
 type ResolvedAnnotation = Annotation<ResolvedTarget>;
 
+#[derive(Debug, Clone)]
+struct DiagnosticRelated<T> {
+    target: T,
+    description: String,
+}
+
+#[derive(Debug, Clone)]
+struct DiagnosticAnnotation<T> {
+    location: SourceLocation,
+    severity: DiagnosticSeverity,
+    description: String,
+    related: Vec<DiagnosticRelated<T>>,
+}
+
+type UnresolvedDiagnosticAnnotation = DiagnosticAnnotation<TargetSpec>;
+type ResolvedDiagnosticAnnotation = DiagnosticAnnotation<ResolvedTarget>;
+
 /// Look up the source token at a position by walking the parse tree.
 fn token_at_position(
     analysis: &Arc<Mutex<AnalysisStorage>>,
@@ -214,6 +233,18 @@ static RE_UNKNOWN_OP: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"@([a-zA-Z][-a-zA-Z0-9]*)(\[[^\]]*\])?->").unwrap()
 });
 
+/// Regex for `@diag-error: description | related->location: description, ...`.
+static RE_DIAGNOSTIC: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"@diag-(error|warning|information|hint):\s*(.+)$").unwrap()
+});
+
+/// Regex for a related-information clause within an `@diag` annotation.
+static RE_DIAGNOSTIC_RELATED: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"^related->([A-Za-z0-9_.-]+(?::[A-Za-z_][A-Za-z0-9_]*)?):\s*(.+)$"
+    ).unwrap()
+});
+
 /// Parse annotations from a DML test file
 ///
 /// Annotation format:
@@ -225,6 +256,12 @@ static RE_UNKNOWN_OP: LazyLock<Regex> = LazyLock::new(|| {
 /// - @goto-impl[col]->name - Tests goto-implementation at column, expecting it to resolve to 'name'
 /// - @goto-ref[col]->name1,name2 - Tests find-references at column, expecting multiple results
 /// - @goto-def[col]-> - Tests that lookup returns no results (empty target list)
+/// - @diag-error: text - Expects an error on the next code line containing `text`
+/// - @diag-warning: text - Expects a warning on the next code line containing `text`
+/// - @diag-information: text - Expects an information diagnostic on the next code line
+/// - @diag-hint: text - Expects a hint diagnostic on the next code line
+/// - @diag-error: text | related->name: related text, ... - Also expects exact related
+///   information whose spans contain the named locations and messages contain the texts
 ///
 /// Negated targets:
 /// - ..., !name, ... - Asserts that the location specified by name is NOT in the lookup results,
@@ -240,9 +277,12 @@ static RE_UNKNOWN_OP: LazyLock<Regex> = LazyLock::new(|| {
 /// Cross-file references:
 /// - @goto-def[col]->file.dml:name - References a location in another file
 #[track_caller]
-fn parse_annotations(content: &str, file_path: Option<PathBuf>) -> (Vec<LocationDeclaration>, Vec<UnresolvedAnnotation>) {
+fn parse_annotations(content: &str, file_path: Option<PathBuf>)
+    -> (Vec<LocationDeclaration>, Vec<UnresolvedAnnotation>,
+        Vec<UnresolvedDiagnosticAnnotation>) {
     let mut locations = Vec::new();
     let mut operations = Vec::new();
+    let mut diagnostics: Vec<UnresolvedDiagnosticAnnotation> = Vec::new();
     let lines: Vec<&str> = content.lines().collect();
 
     // Build a map to find the next non-annotated code line for any given line, used
@@ -314,11 +354,52 @@ fn parse_annotations(content: &str, file_path: Option<PathBuf>) -> (Vec<Location
             }
         }
 
+        for cap in RE_DIAGNOSTIC.captures_iter(line) {
+            let severity = match &cap[1] {
+                "error" => DiagnosticSeverity::ERROR,
+                "warning" => DiagnosticSeverity::WARNING,
+                "information" => DiagnosticSeverity::INFORMATION,
+                "hint" => DiagnosticSeverity::HINT,
+                other => unreachable!("regex does not match '{}'", other),
+            };
+            let mut parts = cap[2].splitn(2, '|');
+            let description = parts.next().unwrap().trim();
+            assert!(!description.is_empty(),
+                    "@diag description must not be empty on line {}", line_num + 1);
+            let related = parts.next().map(|clauses|clauses.split(',').map(|clause| {
+                let clause = clause.trim();
+                let related = RE_DIAGNOSTIC_RELATED.captures(clause)
+                    .unwrap_or_else(||panic!(
+                        "invalid @diag related clause '{}' on line {}; expected related->loc_tag: message",
+                        clause, line_num + 1));
+                let targets = parse_target_list(&related[1], line_num + 1, line);
+                let [target] = targets.as_slice() else {
+                    panic!("@diag related clause requires exactly one @loc target on line {}: {}",
+                           line_num + 1, line.trim());
+                };
+                assert_eq!(target.kind, TargetKind::Positive,
+                           "@diag related target must not be negated or questionable on line {}",
+                           line_num + 1);
+                DiagnosticRelated {
+                    target: target.clone(),
+                    description: related[2].trim().to_string(),
+                }
+            }).collect()).unwrap_or_default();
+            diagnostics.push(DiagnosticAnnotation {
+                location: SourceLocation::new(
+                    effective_line, 0, file_path.clone()),
+                severity,
+                description: description.to_string(),
+                related,
+            });
+        }
+
         // Check for any unrecognized @...-> patterns (likely typos)
         for cap in RE_UNKNOWN_OP.captures_iter(line) {
             let tag = &cap[1];
             let known = matches!(tag,
-                "goto-def" | "goto-decl" | "goto-def-decl" | "goto-impl" | "goto-ref" | "goto-type-def");
+                "goto-def" | "goto-decl" | "goto-def-decl" | "goto-impl" |
+                "goto-ref" | "goto-type-def");
             if !known {
                 panic!(
                     "unrecognized annotation '@{}' on line {}, \
@@ -330,7 +411,7 @@ fn parse_annotations(content: &str, file_path: Option<PathBuf>) -> (Vec<Location
         }
     }
 
-    (locations, operations)
+    (locations, operations, diagnostics)
 }
 
 /// Build a mapping from symbolic names to actual locations.
@@ -383,6 +464,31 @@ fn resolve_annotations(
             let &position = name_map.get(&spec.key())
                 .expect("BUG: validated in first pass");
             ResolvedTarget { spec, position }
+        }).collect(),
+    }).collect()
+}
+
+#[track_caller]
+fn resolve_diagnostic_annotations(
+    unresolved: Vec<UnresolvedDiagnosticAnnotation>,
+    name_map: &HashMap<String, Position<ZeroIndexed>>,
+) -> Vec<ResolvedDiagnosticAnnotation> {
+    unresolved.into_iter().map(|annotation|DiagnosticAnnotation {
+        location: annotation.location,
+        severity: annotation.severity,
+        description: annotation.description,
+        related: annotation.related.into_iter().map(|related| {
+            let key = related.target.key();
+            let &position = name_map.get(&key).unwrap_or_else(||panic!(
+                "Diagnostic annotation references unknown @loc target '{}'",
+                key));
+            DiagnosticRelated {
+                target: ResolvedTarget {
+                    spec: related.target,
+                    position,
+                },
+                description: related.description,
+            }
         }).collect(),
     }).collect()
 }
@@ -524,6 +630,8 @@ struct TestSetup {
     main_file: PathBuf,
     main_canon_path: CanonPath,
     annotations: Vec<ResolvedAnnotation>,
+    diagnostics: Vec<ResolvedDiagnosticAnnotation>,
+    fixture_paths: Vec<PathBuf>,
 }
 
 impl std::fmt::Debug for TestSetup {
@@ -532,6 +640,8 @@ impl std::fmt::Debug for TestSetup {
             .field("main_file", &self.main_file)
             .field("main_canon_path", &self.main_canon_path.as_path())
             .field("annotations", &self.annotations.len())
+            .field("diagnostics", &self.diagnostics.len())
+            .field("fixture_paths", &self.fixture_paths)
             .finish_non_exhaustive()
     }
 }
@@ -542,6 +652,7 @@ struct LoadedFile {
     filename: String,
     locations: Vec<LocationDeclaration>,
     operations: Vec<UnresolvedAnnotation>,
+    diagnostics: Vec<UnresolvedDiagnosticAnnotation>,
     is_device: bool,
 }
 
@@ -557,11 +668,13 @@ fn collect_file_annotations(
     filename: &str,
     canon_path: &CanonPath,
     analysis: &Arc<Mutex<AnalysisStorage>>,
-) -> (Vec<LocationDeclaration>, Vec<UnresolvedAnnotation>) {
+) -> (Vec<LocationDeclaration>, Vec<UnresolvedAnnotation>,
+            Vec<UnresolvedDiagnosticAnnotation>) {
     let content = std::fs::read_to_string(file_path)
         .unwrap_or_else(|e| panic!("Failed to read {}: {}", filename, e));
 
-    let (mut locations, mut operations) = parse_annotations(&content, Some(canon_path.to_path_buf()));
+    let (mut locations, mut operations, mut diagnostics) =
+        parse_annotations(&content, Some(canon_path.to_path_buf()));
 
     // Prefix @loc names with the declaring filename.
     for loc in &mut locations {
@@ -578,6 +691,14 @@ fn collect_file_annotations(
         }
     }
 
+    for diagnostic in &mut diagnostics {
+        for related in &mut diagnostic.related {
+            if related.target.filename.is_none() {
+                related.target.filename = Some(filename.to_string());
+            }
+        }
+    }
+
     // Resolve display tokens against the AST now that the file has been
     // analyzed in isolation. This lets cursors land in the middle of an
     // identifier and still get the full identifier text in test output.
@@ -586,7 +707,7 @@ fn collect_file_annotations(
         op.token = token_at_position(analysis, canon_path, &file, op.location.position);
     }
 
-    (locations, operations)
+    (locations, operations, diagnostics)
 }
 
 // Helper function to build a device analysis based on isolated analysis available within a storage
@@ -653,7 +774,7 @@ fn setup_test_with_imports(
         let file_path = base_dir.join(filename);
         let canon = load_isolated_analysis(&analysis, &vfs, &file_path);
         verify_no_parse_errors(&analysis, &canon, filename);
-        let (locations, operations) =
+        let (locations, operations, diagnostics) =
             collect_file_annotations(&file_path, filename, &canon, &analysis);
         let is_device = analysis.lock().unwrap()
             .get_isolated_analysis(&canon)
@@ -664,6 +785,7 @@ fn setup_test_with_imports(
             filename: filename.to_string(),
             locations,
             operations,
+            diagnostics,
             is_device,
         }
     }).collect();
@@ -694,25 +816,40 @@ fn setup_test_with_imports(
 
     let main_file = base_dir.join(filenames[0]);
     let main_canon = loaded_files[0].canon_path.clone();
+    let fixture_paths = loaded_files.iter()
+        .map(|file|file.canon_path.to_path_buf())
+        .collect();
 
     let all_locations: Vec<_> = loaded_files.iter()
         .flat_map(|f| &f.locations)
         .cloned()
         .collect();
-    let all_operations: Vec<_> = loaded_files.into_iter()
-        .flat_map(|f| f.operations)
+    let all_operations: Vec<_> = loaded_files.iter()
+        .flat_map(|f| f.operations.iter().cloned())
+        .collect();
+    let all_diagnostics: Vec<_> = loaded_files.iter()
+        .flat_map(|f| f.diagnostics.iter().cloned())
         .collect();
 
     let name_map = build_name_mapping(&all_locations);
     let annotations = resolve_annotations(all_operations, &name_map);
-    assert_all_locs_used(&all_locations, &annotations);
+    let diagnostics = resolve_diagnostic_annotations(all_diagnostics, &name_map);
+    assert_all_locs_used(&all_locations, &annotations, &diagnostics);
 
     let ctx: InitActionContext<MockOutput> = create_test_init_context(
         Arc::clone(&analysis),
         Arc::clone(&vfs),
     );
 
-    TestSetup { ctx, analysis, main_file, main_canon_path: main_canon, annotations }
+    TestSetup {
+        ctx,
+        analysis,
+        main_file,
+        main_canon_path: main_canon,
+        annotations,
+        diagnostics,
+        fixture_paths,
+    }
 }
 
 /// Verify every `@loc` declaration is referenced by at least one annotation
@@ -722,10 +859,13 @@ fn setup_test_with_imports(
 fn assert_all_locs_used(
     locations: &[LocationDeclaration],
     annotations: &[ResolvedAnnotation],
+    diagnostics: &[ResolvedDiagnosticAnnotation],
 ) {
-    let used: HashSet<String> = annotations.iter()
+    let mut used: HashSet<String> = annotations.iter()
         .flat_map(|ann| ann.targets.iter().map(|t| t.spec.key()))
         .collect();
+    used.extend(diagnostics.iter().flat_map(|diagnostic|diagnostic.related.iter())
+        .map(|related|related.target.spec.key()));
     let mut unused: Vec<&LocationDeclaration> = locations.iter()
         .filter(|loc| !used.contains(&loc.name))
         .collect();
@@ -759,18 +899,6 @@ mod tests {
                       &ZeroFilePosition,
                       &mut HashSet<DLSLimitation>)
                       -> Result<Vec<ZeroSpan>, AnalysisLookupError>;
-
-    /// Stub for `textDocument/typeDefinition` support. The production
-    /// `type_definitions_at_fp` does not exist yet — see analysis notes on
-    /// the type-lookup system. Once implemented, replace this with an import
-    /// from `dls::actions::semantic_lookup`.
-    fn type_definitions_at_fp(
-        _ctx: &InitActionContext<MockOutput>,
-        _fp: &ZeroFilePosition,
-        _limitations: &mut HashSet<DLSLimitation>,
-    ) -> Result<Vec<ZeroSpan>, AnalysisLookupError> {
-        Ok(vec![])
-    }
 
     fn init_logging() {
         let _ = env_logger::try_init();
@@ -951,6 +1079,13 @@ mod tests {
     }
 
     #[test]
+    fn incompatible_types_produce_device_diagnostics() {
+        init_logging();
+        let setup = setup_test(&["type_diagnostics.dml"]);
+        run_fixture_annotations(&setup);
+    }
+
+    #[test]
     fn test_toplevel_structure_parsed() {
         init_logging();
         let setup = setup_test(&["basic_lookup.dml"]);
@@ -997,10 +1132,11 @@ mod tests {
             "}\n",
         );
 
-        let (locations, operations) = parse_annotations(content, None);
+        let (locations, operations, diagnostics) = parse_annotations(content, None);
 
         assert_eq!(locations.len(), 2, "expected 2 @loc declarations");
         assert_eq!(operations.len(), 2, "expected 2 operation annotations");
+        assert!(diagnostics.is_empty());
 
         assert!(locations.iter().any(|l| l.name == "t_def"), "missing t_def");
         assert!(locations.iter().any(|l| l.name == "p_def"), "missing p_def");
@@ -1022,7 +1158,7 @@ mod tests {
             "code_here(); // @loc[1]=on_code\n",
         );
 
-        let (locations, _) = parse_annotations(content, None);
+        let (locations, _, _) = parse_annotations(content, None);
 
         let upper  = locations.iter().find(|l| l.name == "upper")
             .expect("missing upper");
@@ -1043,6 +1179,50 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_diagnostic_annotations() {
+        init_logging();
+        let content = concat!(
+            "method m(int argument) { // @loc[14]=argument_decl @loc[8]=method_decl\n",
+            "// @diag-error: first failure | related->argument_decl: declared here, related->method_decl: method here\n",
+            "// @diag-warning: second failure\n",
+            "call(); // @goto-def[1]->argument_decl\n",
+            "}\n",
+        );
+
+        let (locations, operations, diagnostics) = parse_annotations(content, None);
+        assert_eq!(locations.len(), 2);
+        assert_eq!(operations.len(), 1);
+        assert_eq!(diagnostics.len(), 2);
+        assert_eq!(diagnostics[0].location.line(), 3);
+        assert_eq!(diagnostics[0].severity, DiagnosticSeverity::ERROR);
+        assert_eq!(diagnostics[0].description, "first failure");
+        assert_eq!(diagnostics[0].related.len(), 2);
+        assert_eq!(diagnostics[0].related[0].target.name, "argument_decl");
+        assert_eq!(diagnostics[0].related[0].description, "declared here");
+        assert_eq!(diagnostics[0].related[1].target.name, "method_decl");
+        assert_eq!(diagnostics[0].related[1].description, "method here");
+        assert_eq!(diagnostics[1].location.line(), 3);
+        assert_eq!(diagnostics[1].severity, DiagnosticSeverity::WARNING);
+        assert_eq!(diagnostics[1].description, "second failure");
+        assert!(diagnostics[1].related.is_empty());
+    }
+
+    #[test]
+    fn test_parse_cross_file_diagnostic_related_target() {
+        init_logging();
+        let content = concat!(
+            "// @diag-error: bad argument | related->imported_file.dml:argument_decl: declared here\n",
+            "call();\n",
+        );
+
+        let (_, _, diagnostics) = parse_annotations(content, None);
+        let related = &diagnostics[0].related[0];
+        assert_eq!(related.target.filename.as_deref(), Some("imported_file.dml"));
+        assert_eq!(related.target.name, "argument_decl");
+        assert_eq!(related.description, "declared here");
+    }
+
+    #[test]
     fn test_negated_target_parsing() {
         init_logging();
         let content = concat!(
@@ -1055,7 +1235,7 @@ mod tests {
             "}\n",
         );
 
-        let (locations, operations) = parse_annotations(content, None);
+        let (locations, operations, _) = parse_annotations(content, None);
         assert_eq!(locations.len(), 3);
         assert_eq!(operations.len(), 1);
 
@@ -1110,7 +1290,7 @@ mod tests {
     fn test_basic_lookup_annotations() {
         init_logging();
         let setup = setup_test(&["basic_lookup.dml"]);
-        run_annotation_tests(&setup.ctx, &setup.main_file, setup.annotations);
+        run_fixture_annotations(&setup);
     }
 
     #[test]
@@ -1128,7 +1308,7 @@ mod tests {
         init_logging();
         let setup = setup_test(&["multi_level.dml"]);
 
-        run_annotation_tests(&setup.ctx, &setup.main_file, setup.annotations);
+        run_fixture_annotations(&setup);
     }
 
     #[test]
@@ -1137,7 +1317,7 @@ mod tests {
         // Load both files - imported file first, then main file with annotations
         let setup = setup_test(&["cross_file_main.dml", "imported_file.dml"]);
 
-        run_annotation_tests(&setup.ctx, &setup.main_file, setup.annotations);
+        run_fixture_annotations(&setup);
     }
 
     #[test]
@@ -1145,7 +1325,15 @@ mod tests {
         init_logging();
         let setup = setup_test(&["simple_symbolic.dml"]);
 
-        run_annotation_tests(&setup.ctx, &setup.main_file, setup.annotations);
+        run_fixture_annotations(&setup);
+    }
+
+    #[test]
+    fn test_type_name_lookup() {
+        init_logging();
+        let setup = setup_test(&["type_name_lookup.dml"]);
+
+        run_fixture_annotations(&setup);
     }
 
     #[test]
@@ -1156,34 +1344,24 @@ mod tests {
         // - Templates: find all instantiation sites
         let setup = setup_test(&["goto_impl_test.dml"]);
 
-        run_annotation_tests(&setup.ctx, &setup.main_file, setup.annotations);
+        run_fixture_annotations(&setup);
     }
 
-    /// Aspirational tests for the type-lookup system.
+    /// End-to-end tests for the first type-lookup vertical slice.
     ///
     /// Exercises goto-def, goto-ref, and goto-type-def on:
     ///   - a `typedef` of a primitive type,
     ///   - a `typedef` of a struct with fields,
     ///   - method arguments (including one with a struct-typed argument),
+    ///   - method-local variables,
     ///   - `saved` variables (one primitive, one struct-typed).
     ///
-    /// Marked `#[ignore]` because the required plumbing does not exist yet:
-    ///   - `DMLSymbolKind::Typedef` global lookup returns `Ok(vec![])`
-    ///     ([`analysis::mod`](../../src/analysis/mod.rs)),
-    ///   - `ReferenceKind::Type` global lookup is a no-op,
-    ///   - `Symbol::typed` is never populated (`eval_type` returns a dummy),
-    ///   - no `textDocument/typeDefinition` handler exists; the harness
-    ///     stubs `type_definitions_at_fp` to return an empty vec.
-    ///
-    /// Once the type-lookup work lands, drop the `#[ignore]` and swap the
-    /// stub for `dls::actions::semantic_lookup::type_definitions_at_fp`.
     #[test]
-    #[ignore]
     fn test_type_lookup() {
         init_logging();
         let setup = setup_test(&["type_lookup.dml"]);
 
-        run_annotation_tests(&setup.ctx, &setup.main_file, setup.annotations);
+        run_fixture_annotations(&setup);
     }
 
     /// Helper function to run annotation tests.
@@ -1191,7 +1369,7 @@ mod tests {
     fn run_annotation_tests(
         ctx: &InitActionContext<MockOutput>,
         test_file: &Path,
-        annotations: Vec<ResolvedAnnotation>,
+        annotations: &[ResolvedAnnotation],
     ) {
         let mut goto_def = Vec::new();
         let mut goto_decl = Vec::new();
@@ -1199,7 +1377,7 @@ mod tests {
         let mut find_refs = Vec::new();
         let mut goto_type_def = Vec::new();
 
-        for ann in &annotations {
+        for ann in annotations {
             match ann.operation_type {
                 OperationType::GotoDefinition => goto_def.push(ann),
                 OperationType::GotoDeclaration => goto_decl.push(ann),
@@ -1238,6 +1416,126 @@ mod tests {
             "{} annotation failure(s):\n\n{}",
             total_failures,
             all_sections.join("\n\n"));
+    }
+
+    #[track_caller]
+    fn run_fixture_annotations(setup: &TestSetup) {
+        run_annotation_tests(&setup.ctx, &setup.main_file, &setup.annotations);
+        if !setup.diagnostics.is_empty() {
+            run_diagnostic_annotations(setup);
+        }
+    }
+
+    fn related_matches(
+        expected: &DiagnosticRelated<ResolvedTarget>,
+        span: &ZeroSpan,
+        description: &str,
+    ) -> bool {
+        rel_to_test_files(&span.path()) == expected.target.filename()
+            && span.range.contains_pos(expected.target.position)
+            && description.contains(&expected.description)
+    }
+
+    fn diagnostic_matches(
+        expected: &ResolvedDiagnosticAnnotation,
+        actual: &dls::analysis::DMLError,
+    ) -> bool {
+        let expected_file = expected.location.file_path.as_deref()
+            .map(rel_to_test_files)
+            .unwrap_or_default();
+        if rel_to_test_files(&actual.span.path()) != expected_file
+            || actual.span.range.row_start.0 != expected.location.line()
+            || !actual.description.contains(&expected.description)
+            || actual.severity.unwrap_or(DiagnosticSeverity::ERROR) != expected.severity
+            || actual.related.len() != expected.related.len()
+        {
+            return false;
+        }
+
+        let mut matched = vec![false; actual.related.len()];
+        expected.related.iter().all(|related| {
+            actual.related.iter().enumerate().find(|(index, (span, description))|
+                !matched[*index] && related_matches(related, span, description))
+                .map(|(index, _)| matched[index] = true)
+                .is_some()
+        })
+    }
+
+    fn format_diagnostic(
+        file: &Path,
+        error: &dls::analysis::DMLError,
+    ) -> String {
+        let related = error.related.iter().map(|(span, description)|format!(
+            "{}:{}:{}: {}",
+            rel_to_test_files(&span.path()),
+            span.range.row_start.0 + 1,
+            span.range.col_start.0 + 1,
+            description,
+        )).collect::<Vec<_>>();
+        format!(
+            "{}:{}:{} [{:?}]: {}{}",
+            rel_to_test_files(file),
+            error.span.range.row_start.0 + 1,
+            error.span.range.col_start.0 + 1,
+            error.severity.unwrap_or(DiagnosticSeverity::ERROR),
+            error.description,
+            if related.is_empty() { String::new() }
+            else { format!("\n    related: {}", related.join("\n             ")) },
+        )
+    }
+
+    #[track_caller]
+    fn run_diagnostic_annotations(setup: &TestSetup) {
+        let analysis = setup.analysis.lock().unwrap();
+        let device = analysis.get_device_analysis(&setup.main_canon_path)
+            .expect("device analysis should exist");
+        let fixture_paths: HashSet<_> = setup.fixture_paths.iter()
+            .map(|path|rel_to_test_files(path))
+            .collect();
+        let mut actual: Vec<_> = device.errors.iter()
+            .filter(|(path, _)| fixture_paths.contains(&rel_to_test_files(path)))
+            .flat_map(|(path, errors)|errors.iter().map(move |error|(path.as_path(), error)))
+            .filter(|(_, error)|!error.description.starts_with("Could not find file;"))
+            .collect();
+        actual.sort_by_key(|(path, error)|(
+            rel_to_test_files(path),
+            error.span.range.row_start.0,
+            error.span.range.col_start.0,
+            error.description.clone(),
+        ));
+
+        let mut consumed = vec![false; actual.len()];
+        let mut missing = Vec::new();
+        for expected in &setup.diagnostics {
+            let matched = actual.iter().enumerate().find(|(index, (_, error))|
+                !consumed[*index] && diagnostic_matches(expected, error));
+            if let Some((index, _)) = matched {
+                consumed[index] = true;
+            } else {
+                let file = expected.location.file_path.as_deref()
+                    .map(rel_to_test_files)
+                    .unwrap_or_else(||"<unknown>".to_string());
+                missing.push(format!(
+                    "{}:{} [{:?}]: {} ({} related)",
+                    file,
+                    expected.location.line() + 1,
+                    expected.severity,
+                    expected.description,
+                    expected.related.len(),
+                ));
+            }
+        }
+
+        let unexpected: Vec<_> = actual.iter().enumerate()
+            .filter(|(index, _)|!consumed[*index])
+            .map(|(_, (path, error))|format_diagnostic(path, error))
+            .collect();
+        assert!(missing.is_empty() && unexpected.is_empty(),
+            "diagnostic annotation mismatch:\n  missing:\n    {}\n  unexpected:\n    {}",
+            if missing.is_empty() { "<none>".to_string() }
+            else { missing.join("\n    ") },
+            if unexpected.is_empty() { "<none>".to_string() }
+            else { unexpected.join("\n    ") });
     }
 
     /// Path of `p` relative to `tests/test_files/`, or the full path
@@ -1463,7 +1761,7 @@ mod tests {
         let setup = setup_test(
             &["imports/test1_device.dml", "imports/test1_common.dml"],
         );
-        run_annotation_tests(&setup.ctx, &setup.main_file, setup.annotations);
+        run_fixture_annotations(&setup);
     }
 
     /// Goto-def on an import in a commoncode file should also resolve, so
@@ -1478,7 +1776,7 @@ mod tests {
                 "imports/test2_common_b.dml",
             ],
         );
-        run_annotation_tests(&setup.ctx, &setup.main_file, setup.annotations);
+        run_fixture_annotations(&setup);
     }
 
     /// When the same commoncode file is imported by two devices that

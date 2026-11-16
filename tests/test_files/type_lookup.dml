@@ -6,7 +6,7 @@ dml 1.4;
 device type_test_device;
 
 // @loc[16]=register_addr_t_def
-typedef uint32 register_addr_t; // @goto-ref[16]->register_addr_t_use_saved,register_addr_t_use_arg
+typedef uint32 register_addr_t; // @goto-ref[16]->register_addr_t_use_saved,register_addr_t_use_arg,register_addr_t_use_local
 
 typedef struct {
     // @loc[12]=packet_addr_field_def
@@ -17,6 +17,8 @@ typedef struct {
 // @loc[3]=packet_t_def
 } packet_t; // @goto-ref[3]->packet_t_use_arg,packet_t_use_saved
 
+// @loc[7]=register_addr_t_use_saved
+// @loc[23]=current_addr_def
 saved register_addr_t current_addr; // @goto-def-decl[7]->register_addr_t_def @goto-type-def[23]->register_addr_t_def @goto-ref[23]->current_addr_use_1,current_addr_use_2
 
 // @loc[7]=packet_t_use_saved
@@ -32,6 +34,12 @@ method process( // @goto-ref[8]->process_method_use
     // @loc[21]=base_addr_arg_def
     register_addr_t base_addr // @goto-ref[21]->base_addr_arg_use_1,base_addr_arg_use_2
 ) {
+    // @loc[11]=register_addr_t_use_local
+    // @loc[27]=local_addr_def
+    local register_addr_t local_addr; // @goto-def-decl[11]->register_addr_t_def @goto-type-def[27]->register_addr_t_def @goto-ref[27]->local_addr_use
+    // @loc[5]=local_addr_use
+    local_addr = 0; // @goto-def-decl[5]->local_addr_def
+
     // @loc[5]=current_addr_use_1
     // @loc[20]=base_addr_arg_use_1
     current_addr = base_addr; // @goto-def-decl[5]->current_addr_def @goto-def-decl[20]->base_addr_arg_def
@@ -58,3 +66,42 @@ method kickoff() {
     // @loc[13]=last_packet_use_2
     process(last_packet, 0); // @goto-def-decl[5]->process_method_def @goto-def-decl[13]->last_packet_def
 }
+
+extern typedef struct {
+    // @loc[12]=some_interface_method_def
+    // @goto-impl[12]->some_interface_method_impl
+    void (*interface_method)(conf_object_t *obj);
+// @loc[3]=some_interface_t_def
+// @goto-ref[3]->some_interface_t_ref
+// @goto-impl[3]->some_interface_t_ref
+} some_interface_t;
+
+// @loc[11]=some_interface_t_ref
+// @goto-def-decl[11]->some_interface_t_def
+// @goto-type-def[11]->some_interface_t_def
+implement some {
+    // @loc[12]=some_interface_method_impl
+    // @goto-decl[12]->some_interface_method_def
+    // @goto-def[12]->some_interface_method_impl
+    method interface_method() {}
+}
+
+// @loc[10]=template_as_type_def
+// @goto-ref[10]->template_as_type_instantiation,template_as_type_type_ref1,template_as_type_type_ref2
+// @goto-impl[10]->template_as_type_instantiation
+template template_as_type {}
+
+// @loc[7]=template_user_def
+// @loc[24]=template_as_type_instantiation
+// @goto-def-decl[24]->template_as_type_def
+// @goto-ref[7]->template_user_cast_ref
+group template_user is template_as_type {}
+
+// @loc[9]=template_as_type_type_ref1
+// @loc[51]=template_user_cast_ref
+// @loc[66]=template_as_type_type_ref2
+// @goto-def-decl[9]->template_as_type_def
+// @goto-type-def[26]->template_as_type_def
+// @goto-def-decl[51]->template_user_def
+// @goto-def-decl[66]->template_as_type_def
+session template_as_type template_user_ref = cast(template_user, template_as_type);

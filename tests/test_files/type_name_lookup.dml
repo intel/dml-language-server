@@ -1,0 +1,18 @@
+//  © 2026 Intel Corporation
+//  SPDX-License-Identifier: Apache-2.0 and MIT
+
+dml 1.4;
+
+device type_name_lookup_device;
+
+// @loc[16]=address_t_def
+typedef uint32 address_t; // @goto-ref[16]->address_t_saved_use,address_t_arg_use
+
+// @loc[7]=address_t_saved_use
+saved address_t current_address; // @goto-def-decl[7]->address_t_def @goto-type-def[17]->address_t_def
+
+method use_address(
+    // @loc[5]=address_t_arg_use
+    address_t address // @goto-type-def[15]->address_t_def
+) {
+}

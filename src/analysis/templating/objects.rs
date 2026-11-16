@@ -20,8 +20,11 @@ use crate::analysis::structure::toplevel::{ExistCondition, ObjectDecl,
                                            StatementSpec, TopLevel};
 use crate::analysis::symbols::{DMLSymbolKind};
 use crate::analysis::templating::Declaration;
-use crate::analysis::templating::types::eval_type;
-use crate::analysis::templating::methods::{DMLConcreteMethod, DMLMethodRef, DefaultCallReference, MethodDecl, MethodDeclaration};
+use crate::analysis::templating::types::{eval_type, TypeDatabase};
+use crate::analysis::templating::methods::{check_method_body_types,
+                                          DMLConcreteMethod, DMLMethodRef,
+                                          DefaultCallReference, MethodDecl,
+                                          MethodDeclaration};
 use crate::analysis::templating::topology::{InEachStruct, InferiorVariant,
                                             Rank, RankDesc, RankDescKind,
                                             RankMaker, topsort};
@@ -345,6 +348,7 @@ pub fn make_device<'t>(path: &CanonPath,
                        container: &'t mut StructureContainer,
                        rankmaker: &mut RankMaker,
                        eval_context: &mut EvaluationContext,
+                       types: &TypeDatabase,
                        report: &mut Vec<DMLError>) -> &'t DMLCompositeObject {
     debug!("Creating a device for {:?}", path);
     // create the faux spec for the device toplevel, importing the device file
@@ -400,6 +404,7 @@ pub fn make_device<'t>(path: &CanonPath,
         None,
         container,
         eval_context,
+        types,
         report);
     let device_obj = container.get(obj_key).unwrap();
     trace!("Device components are: {:?}", device_obj.components);
@@ -957,6 +962,7 @@ pub struct DMLCompositeObject {
     pub components: HashMap<String, DMLObject>,
     // Used for goto-implementation on composite objects
     pub used_ineach_locs: Vec<ZeroSpan>,
+    pub resolved_method_calls: HashMap<ZeroSpan, Arc<DMLMethodRef>>,
 }
 
 impl DMLCompositeObject {
@@ -1229,21 +1235,23 @@ enum VariableKind {
 }
 
 fn add_sessions(obj: &mut DMLCompositeObject,
-                sessions: SessionMapping) {
+                sessions: SessionMapping,
+                types: &TypeDatabase) {
     for (_, (used, mut cond_decls)) in sessions {
         if used {
            let (_, _, (s, i)) = cond_decls.swap_remove(0);
-            handle_variable(obj, s, i, VariableKind::Session)
+            handle_variable(obj, s, i, VariableKind::Session, types)
         }
     }
 }
 
 fn add_saveds(obj: &mut DMLCompositeObject,
-              saveds: SavedMapping) {
+              saveds: SavedMapping,
+              types: &TypeDatabase) {
     for (_, (used, mut cond_decls)) in saveds {
         if used {
             let (_, _, (s, i)) = cond_decls.swap_remove(0);
-            handle_variable(obj, s, i, VariableKind::Saved)
+            handle_variable(obj, s, i, VariableKind::Saved, types)
         }
     }
 }
@@ -1552,6 +1560,7 @@ fn create_object_instance(loc: Option<ZeroSpan>,
         parent: None,
         arraydimvars: array_info.to_vec(),
         components: HashMap::default(),
+        resolved_method_calls: HashMap::default(),
     };
     let key = container.insert(obj);
     container.get_mut(key).unwrap().key = key;
@@ -1561,13 +1570,15 @@ fn create_object_instance(loc: Option<ZeroSpan>,
 fn handle_variable(obj: &mut DMLCompositeObject,
                    vardecl: VariableDecl,
                    init: Option<Initializer>,
-                   kind: VariableKind) {
-    let (_, typed) = eval_type(&vardecl.typed, (), (),
+                   kind: VariableKind,
+                   types: &TypeDatabase) {
+    let (_, typed) = eval_type(&vardecl.typed, types,
                                false, None, false);
     let var = DMLVariable {
         declaration: Declaration {
             name: vardecl.object.name,
             type_ref: typed.into(),
+            type_syntax: vardecl.typed,
         },
         init,
     };
@@ -1855,6 +1866,7 @@ fn report_dimensionality_conflicts(
 fn collect_symbols(parameters: &[DMLParameter],
                    obj_specs: &[AppliedObjectSpec],
                    eval_context: &mut EvaluationContext,
+                   types: &TypeDatabase,
                    report: &mut Vec<DMLError>) -> CollectedSymbols
 {
     // Iterate over specs to collect object-decls for each separate kind and collect
@@ -2018,7 +2030,7 @@ fn collect_symbols(parameters: &[DMLParameter],
     for (rank, method) in method_decls {
         let to_insert = (rank.clone(),
                          method.cond.clone(),
-                         MethodDecl::from_content(&method.obj, report));
+                         MethodDecl::from_content(&method.obj, types, report));
         let name = method.obj.object.name.val.clone();
         if let Some((_, e)) = methods.get_mut(&name) {
             e.push(to_insert);
@@ -2231,6 +2243,7 @@ fn merge_composite_subobj<'c>(name: String,
                               parent_key: Option<StructureKey>,
                               container: &'c mut StructureContainer,
                               eval_context: &mut EvaluationContext,
+                              types: &TypeDatabase,
                               report: &mut Vec<DMLError>) -> StructureKey {
     debug!("Merging a composite subobj for {}", name);
     let (auth_obj, _) = &specs.first().unwrap();
@@ -2311,6 +2324,7 @@ fn merge_composite_subobj<'c>(name: String,
                 parent_key,
                 container,
                 eval_context,
+                types,
                 report)
 }
 
@@ -2319,6 +2333,7 @@ fn merge_composite_subobjs<'c>(parent_each_stmts: &AppliedInEachSpec,
                                parent_key: Option<StructureKey>,
                                container: &'c mut StructureContainer,
                                eval_context: &mut EvaluationContext,
+                               types: &TypeDatabase,
                                report: &mut Vec<DMLError>)
                                -> Vec<StructureKey> {
     debug!("Merging composite subobjects");
@@ -2334,6 +2349,7 @@ fn merge_composite_subobjs<'c>(parent_each_stmts: &AppliedInEachSpec,
                                         parent_key,
                                         container,
                                         eval_context,
+                                        types,
                                         report))
         } else {
             None
@@ -2854,6 +2870,7 @@ fn make_object(loc: ZeroSpan,
                    parent_key: Option<StructureKey>,
                    container: &mut StructureContainer,
                    eval_context: &mut EvaluationContext,
+                   types: &TypeDatabase,
                    report: &mut Vec<DMLError>) -> StructureKey {
     debug!("Making object {}", identity.val);
 
@@ -2889,7 +2906,7 @@ fn make_object(loc: ZeroSpan,
         hooks,
         subobjs,
         externs,
-    } = collect_symbols(&parameters, &obj_specs, eval_context, report);
+    } = collect_symbols(&parameters, &obj_specs, eval_context, types, report);
     trace!("All local symbols are: {:?}",
            symbols.keys().map(|k|k.as_str()).collect::<Vec<&str>>());
 
@@ -2901,7 +2918,7 @@ fn make_object(loc: ZeroSpan,
     let subobj_keys =
         merge_composite_subobjs(&each_stmts, subobjs,
                                 Some(new_obj_key), container,
-                                eval_context, report);
+                                eval_context, types, report);
 
     {
         let new_obj = container.get_mut(new_obj_key).unwrap();
@@ -2911,8 +2928,8 @@ fn make_object(loc: ZeroSpan,
         add_constants(new_obj, constants);
         add_parameters(new_obj, parameters);
         add_hooks(new_obj, hooks);
-        add_saveds(new_obj, saveds);
-        add_sessions(new_obj, sessions);
+        add_saveds(new_obj, saveds, types);
+        add_sessions(new_obj, sessions, types);
     }
     // We need to drop the new_obj reference here, so that we can
     // access multiple keys simultaneously from the storage
@@ -2932,6 +2949,46 @@ fn make_object(loc: ZeroSpan,
                           &symbols, &member_conditions, report);
     obj_invariants(container.get_mut(new_obj_key).unwrap(), report);
     new_obj_key
+}
+
+pub fn check_method_body_types_for_objects(
+    container: &StructureContainer,
+    types: &TypeDatabase,
+    report: &mut Vec<DMLError>,
+) {
+    fn collect_method_chain(method: &Arc<DMLMethodRef>,
+                            seen: &mut HashSet<ZeroSpan>,
+                            methods: &mut Vec<Arc<DMLMethodRef>>) {
+        if !seen.insert(*method.location()) {
+            return;
+        }
+        methods.push(Arc::clone(method));
+        if let Some(default) = method.get_default() {
+            for method in default.flat_refs() {
+                collect_method_chain(method, seen, methods);
+            }
+        }
+    }
+
+    for object in container.values() {
+        let effective_methods: Vec<_> = object.components.values()
+            .filter_map(|component|component.as_shallow()
+                .and_then(|shallow|match &shallow.variant {
+                    DMLShallowObjectVariant::Method(method) =>
+                        Some(Arc::clone(method)),
+                    _ => None,
+                }))
+            .collect();
+        let mut methods_to_check = vec![];
+        let mut seen_methods = HashSet::default();
+        for method in &effective_methods {
+            collect_method_chain(
+                method, &mut seen_methods, &mut methods_to_check);
+        }
+        for method in methods_to_check {
+            check_method_body_types(&method, object, types, report);
+        }
+    }
 }
 
 #[cfg(test)]
