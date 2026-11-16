@@ -1000,8 +1000,7 @@ pub struct Method {
     pub returns: Vec<DMLType>,
     pub modifier: MethodModifier,
     pub independent: bool,
-    // TODO: we could track startup here, but is there any
-    // reason to?
+    pub startup: bool,
     pub memoized: bool,
     pub default: bool,
     pub throws: bool,
@@ -1090,6 +1089,7 @@ impl ToStructure<structure::MethodContent> for Method {
         let throws = content.throws.is_some();
         let default = content.default.is_some();
         let independent = content.independent.is_some();
+        let startup = content.startup.is_some();
         let memoized = content.memoized.is_some();
         let modifier = if let Some(tok) = &content.modifier {
             // This token shouldnt actually be able to be missing
@@ -1108,7 +1108,7 @@ impl ToStructure<structure::MethodContent> for Method {
         content.statements.collect_references(&mut references, file);
         Some(Method {
             object, arguments, returns,
-            independent, memoized,
+            independent, startup, memoized,
             modifier, default, throws, body,
             references,
         })
@@ -1452,7 +1452,16 @@ pub fn to_variable_structure<'a>(decls: &structure::VarDecl,
                     expr.as_ref(), ExpressionKind::FunctionCall(_));
             }
         }
-        if !is_single_fun && vars.len() != values.len(){
+        // Count from the AST, so that unconvertible items do not cascade
+        let declared = match decls {
+            structure::VarDecl::One(_) => 1,
+            structure::VarDecl::Many(_, decls, _) => decls.iter().count(),
+        };
+        let initialized = init.with_content(|content|match content {
+            misc::InitializerContent::Single(_) => 1,
+            misc::InitializerContent::Tuple(_, list, _) => list.len(),
+        }, declared);
+        if !is_single_fun && declared != initialized {
             report.push(LocalDMLError {
                 range: init.range(),
                 description: "Wrong number of \

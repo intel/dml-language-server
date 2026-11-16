@@ -14,9 +14,9 @@ extern typedef struct {
 } some_interface_t;
 
 // @loc[11]=some_interface_t_ref
-// @goto-def-decl[11]->some_interface_t_def
+// @goto-def-decl[11]->some_impl_def
 // @goto-type-def[11]->some_interface_t_def
-implement some {
+implement some { // @loc[11]=some_impl_def
     // @loc[12]=some_interface_method_impl
     // @goto-decl[12]->some_interface_method_def
     // @goto-def[12]->some_interface_method_impl

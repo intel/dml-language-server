@@ -1,0 +1,204 @@
+//  © 2026 Intel Corporation
+//  SPDX-License-Identifier: Apache-2.0 and MIT
+
+dml 1.4;
+device type_member_access;
+
+typedef uint32 uint32_alias; // @loc[16]=uint32_alias_def
+
+typedef struct {
+    // @loc[12]=x_field_def
+    uint32 x;
+// @loc[3]=point_t_def
+} point_t;
+
+typedef struct {
+    point_t named;
+    struct {
+        // @loc[16]=y_field_def
+        uint32 y;
+    } anonymous;
+// @loc[3]=line_t_def
+} line_t;
+
+// @loc[16]=sess_line_decl @goto-def-decl[16]->sess_line_decl @goto-type-def[16]->line_t_def
+session line_t sess_line;
+
+method use_nested() -> (uint32) {
+    return sess_line.named.x + sess_line.anonymous.y; // @goto-def-decl[28]->x_field_def @goto-def-decl[52]->y_field_def
+}
+
+session struct { // @loc[9]=sess_inline_struct
+    // @loc[12]=z_field_def
+    uint32 z;
+    struct {
+        // @loc[16]=w_field_def
+        uint32 w;
+    } inner;
+} sess_inline; // @loc[3]=sess_inline_decl @goto-def-decl[3]->sess_inline_decl @goto-type-def[3]->sess_inline_struct
+
+method use_inline() -> (uint32) {
+    local struct { // @loc[11]=loc_inline_struct
+        // @loc[16]=v_field_def
+        uint32 v;
+    } loc_inline; // @loc[7]=loc_inline_decl @goto-def-decl[7]->loc_inline_decl @goto-type-def[7]->loc_inline_struct
+    return sess_inline.z + sess_inline.inner.w + loc_inline.v; // @goto-def-decl[24]->z_field_def @goto-def-decl[46]->w_field_def @goto-def-decl[61]->v_field_def
+}
+
+extern point_t ext_point;
+// @loc[17]=sess_point_decl @goto-def-decl[17]->sess_point_decl @goto-type-def[17]->point_t_def
+session point_t sess_point;
+// @loc[15]=saved_point_decl @goto-def-decl[15]->saved_point_decl @goto-type-def[15]->point_t_def
+saved point_t saved_point;
+
+template has_point {
+    param tpoint : point_t;
+    shared method read_tpoint() -> (uint32) {
+        return tpoint.x; // @goto-def-decl[23]->x_field_def
+    }
+}
+
+group g is has_point {
+    param tpoint = saved_point;
+    method read_param() -> (uint32) {
+        return tpoint.x; // @goto-def-decl[23]->x_field_def
+    }
+}
+
+// @loc[28]=arg_decl @goto-def-decl[28]->arg_decl @goto-type-def[28]->point_t_def
+method use_members(point_t arg) -> (uint32) {
+    // @loc[19]=loc_decl @goto-def-decl[19]->loc_decl @goto-type-def[19]->point_t_def
+    local point_t loc;
+    loc.x = arg.x + ext_point.x + sess_point.x + saved_point.x; // @goto-def-decl[9]->x_field_def @goto-def-decl[17]->x_field_def @goto-def-decl[31]->x_field_def @goto-def-decl[46]->x_field_def @goto-def-decl[62]->x_field_def
+    return loc.x;
+}
+
+// Chains through pointers, an anonymous struct and several typedefs
+
+typedef struct {
+    // @loc[12]=chain_e_def
+    uint32 e;
+// @loc[3]=chain_leaf_t_def
+} chain_leaf_t;
+
+typedef struct {
+    struct {
+        // @loc[23]=chain_d_def
+        chain_leaf_t *d;
+    // @loc[7]=chain_c_def
+    } c;
+} chain_middle_t;
+
+typedef struct {
+    // @loc[21]=chain_b_def
+    chain_middle_t *b;
+// @loc[3]=chain_outer_t_def
+} chain_outer_t;
+
+typedef chain_middle_t *chain_middle_ptr_t;
+typedef chain_leaf_t chain_leaf_alias_t;
+
+typedef struct {
+    // @loc[24]=via_ptr_typedef_def
+    chain_middle_ptr_t via_ptr_typedef;
+    // @loc[24]=via_alias_def
+    chain_leaf_alias_t via_alias;
+// @loc[3]=chain_indirect_t_def
+} chain_indirect_t;
+
+// @loc[26]=indirect_decl @goto-def-decl[26]->indirect_decl @goto-type-def[26]->chain_indirect_t_def
+session chain_indirect_t indirect;
+
+// @loc[37]=a_decl @goto-def-decl[37]->a_decl @goto-type-def[37]->chain_outer_t_def
+method chain_by_value(chain_outer_t a) -> (uint32) {
+    return a.b->c.d->e; // @goto-def-decl[14]->chain_b_def @goto-def-decl[17]->chain_c_def @goto-def-decl[19]->chain_d_def @goto-def-decl[22]->chain_e_def
+}
+
+// @loc[40]=ap_decl @goto-def-decl[40]->ap_decl @goto-type-def[40]->chain_outer_t_def
+method chain_by_pointer(chain_outer_t *ap) -> (uint32) {
+    return ap->b->c.d->e; // @goto-def-decl[16]->chain_b_def @goto-def-decl[19]->chain_c_def @goto-def-decl[21]->chain_d_def @goto-def-decl[24]->chain_e_def
+}
+
+method chain_through_typedefs() -> (uint32) {
+    return indirect.via_ptr_typedef->c.d->e + indirect.via_alias.e; // @goto-def-decl[21]->via_ptr_typedef_def @goto-def-decl[38]->chain_c_def @goto-def-decl[40]->chain_d_def @goto-def-decl[43]->chain_e_def @goto-def-decl[56]->via_alias_def @goto-def-decl[66]->chain_e_def
+}
+
+typedef struct {
+    // @loc[19]=entries_def
+    chain_outer_t entries[2];
+    struct {
+        // @loc[16]=slot_value_def
+        uint32 value;
+    // @loc[7]=slots_def
+    } slots[4];
+// @loc[3]=chain_table_t_def
+} chain_table_t;
+
+// @loc[36]=tables_decl @goto-def-decl[36]->tables_decl @goto-type-def[36]->chain_table_t_def
+method chain_arrays(chain_table_t *tables) -> (uint32) {
+    // @loc[24]=leaves_decl @goto-def-decl[24]->leaves_decl @goto-type-def[24]->chain_leaf_t_def
+    local chain_leaf_t leaves[4];
+    // @loc[24]=sum_def
+    // @goto-def-decl[24]->sum_def @goto-type-def[24]->uint32_alias_def
+    local uint32_alias sum = leaves[1].e; // @goto-def-decl[40]->chain_e_def
+    sum = leaves[sum].e; // @goto-def-decl[18]->sum_def @goto-def-decl[23]->chain_e_def
+    sum = tables[0].entries[1].b->c.d[0].e; // @goto-def-decl[21]->entries_def @goto-def-decl[32]->chain_b_def @goto-def-decl[35]->chain_c_def @goto-def-decl[37]->chain_d_def @goto-def-decl[42]->chain_e_def
+    sum = tables->slots[2].value; // @goto-def-decl[19]->slots_def @goto-def-decl[28]->slot_value_def
+    return sum;
+}
+
+// Member access must match the pointer/array layers of the value
+method chain_access_checks() -> (uint32) {
+    // @loc[26]=ptrs_decl @goto-def-decl[26]->ptrs_decl @goto-type-def[26]->chain_outer_t_def
+    local chain_outer_t *ptrs[2];
+    // @loc[24]=leaves_decl_2 @goto-def-decl[24]->leaves_decl_2 @goto-type-def[24]->chain_leaf_t_def
+    local chain_leaf_t leaves[2];
+    // @loc[25]=leaf_ptr_decl @goto-def-decl[25]->leaf_ptr_decl @goto-type-def[25]->chain_leaf_t_def
+    local chain_leaf_t *leaf_ptr;
+    // @loc[24]=sum_decl @goto-def-decl[24]->sum_decl @goto-type-def[24]->uint32_alias_def
+    local uint32_alias sum = ptrs[0]->b->c.d->e; // @goto-def-decl[39]->chain_b_def @goto-def-decl[42]->chain_c_def @goto-def-decl[44]->chain_d_def @goto-def-decl[47]->chain_e_def
+    sum = ptrs[0][0].b->c.d[0].e; // @goto-def-decl[22]->chain_b_def
+    sum = leaves->e; // @goto-def-decl[19]->chain_e_def
+    sum = leaf_ptr[0].e; // @goto-def-decl[23]->chain_e_def
+    sum = leaves.e; // @goto-def-decl[18]->
+    sum = ptrs[0].b; // @goto-def-decl[19]->
+    sum = leaf_ptr.e; // @goto-def-decl[20]->
+    sum = leaves[0]->e; // @goto-def-decl[22]->
+    sum = indirect.via_ptr_typedef.c; // @goto-def-decl[36]->
+    return sum;
+}
+
+// Indexing into arrays of structs before member access
+
+typedef chain_leaf_t chain_leaf_array_t[4];
+
+typedef struct {
+    // @loc[18]=leaves_def
+    chain_leaf_t leaves[4];
+    // @loc[19]=leaf_ptrs_def
+    chain_leaf_t *leaf_ptrs[2];
+    struct {
+        // @loc[16]=nested_n_def
+        uint32 n;
+    // @loc[7]=nested_def
+    } nested[3];
+    // @loc[24]=typedef_array_def
+    chain_leaf_array_t typedef_array;
+// @loc[3]=chain_arrays_t_def
+} chain_arrays_t;
+
+// @loc[24]=arrays_decl @goto-def-decl[24]->arrays_decl @goto-type-def[24]->chain_arrays_t_def
+session chain_arrays_t arrays;
+// @loc[24]=array_of_arrays_decl @goto-def-decl[24]->array_of_arrays_decl @goto-type-def[24]->chain_arrays_t_def
+session chain_arrays_t array_of_arrays[2];
+
+// @loc[36]=i_decl @goto-def-decl[36]->i_decl @goto-type-def[36]->uint32_alias_def
+method chain_indexing(uint32_alias i) -> (uint32) {
+    // @loc[24]=r_decl @goto-def-decl[24]->r_decl @goto-type-def[24]->uint32_alias_def
+    local uint32_alias r = arrays.leaves[i].e; // @goto-def-decl[35]->leaves_def @goto-def-decl[45]->chain_e_def
+    r += arrays.leaf_ptrs[0]->e; // @goto-def-decl[17]->leaf_ptrs_def @goto-def-decl[31]->chain_e_def
+    r += arrays.nested[i].n; // @goto-def-decl[17]->nested_def @goto-def-decl[27]->nested_n_def
+    r += arrays.typedef_array[1].e; // @goto-def-decl[17]->typedef_array_def @goto-def-decl[34]->chain_e_def
+    r += array_of_arrays[i].leaves[0].e; // @goto-def-decl[29]->leaves_def @goto-def-decl[39]->chain_e_def
+    return r;
+}

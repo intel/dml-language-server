@@ -189,7 +189,7 @@ impl TreeElement for MethodContent {
             }
             if self.memoized.is_some() {
                 errors.push(LocalDMLError {
-                            range: self.startup.range(),
+                            range: self.memoized.range(),
                             description: "a method declared as memoized \
                                           must also be declared \
                                           independent".to_string(),
@@ -199,7 +199,7 @@ impl TreeElement for MethodContent {
 
         if self.memoized.is_some() && self.startup.is_none() {
             errors.push(LocalDMLError {
-                range: self.startup.range(),
+                range: self.memoized.range(),
                 description: "a method declared as memoized \
                               must also be declared \
                               startup".to_string(),

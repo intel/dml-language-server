@@ -7,7 +7,7 @@ use std::iter;
 use std::sync::Arc;
 
 use crate::analysis::parsing::tree::ZeroSpan;
-use crate::analysis::structure::objects::{MaybeAbstract};
+use crate::analysis::structure::objects::{MaybeAbstract, MethodModifier};
 use crate::analysis::structure::expressions::DMLString;
 use crate::analysis::structure::toplevel::{ObjectDecl, ExistCondition};
 
@@ -147,13 +147,14 @@ where T: Borrow<str> {
 
 pub fn get_impls(me: &Arc<DMLTrait>) -> HashMap<String, Arc<DMLTrait>> {
     trace!("Getting all impls of {:?}", me.name);
-    me.sessions.keys()
-        .chain(me.saveds.keys())
-        .chain(me.params.keys())
-        .chain(me.methods.keys())
-        .chain(me.abstract_methods.keys())
-        .map(|name|(name.to_string(), Arc::clone(me)))
-        .chain(me.ancestor_map.iter().map(|(n, rc)|(n.clone(), Arc::clone(rc))))
+    // Own members come last so they replace inherited ones they override
+    me.ancestor_map.iter().map(|(n, rc)|(n.clone(), Arc::clone(rc)))
+        .chain(me.sessions.keys()
+               .chain(me.saveds.keys())
+               .chain(me.params.keys())
+               .chain(me.methods.keys())
+               .chain(me.abstract_methods.keys())
+               .map(|name|(name.to_string(), Arc::clone(me))))
         .collect()
 }
 
@@ -310,7 +311,13 @@ impl DMLTrait {
                        s}));
 
         // Check that unification of ancestors implementations are sound
-        let impl_map = merge_impl_maps(name, loc, parents.values(), report);
+        let own_methods: HashSet<String> = spec.methods.iter()
+            .filter_map(discard_conditional)
+            .filter(|method|!method.is_abstract())
+            .map(|method|crate::analysis::DMLNamed::name(&method).val.clone())
+            .collect();
+        let impl_map = merge_impl_maps(name, loc, parents.values(),
+                                       &own_methods, report);
 
         // Check that our implementations do not collide
         let mut used_names = HashMap::default();
@@ -403,7 +410,12 @@ impl DMLTrait {
             .filter_map(discard_conditional)
             .filter(|method|method.is_abstract())
             .filter_map(|m| {
-                let new_m = MethodDecl::from_content(&m, types, report);
+                // Non-shared signatures are checked in instantiating objects
+                let mut discarded = vec![];
+                let new_m = MethodDecl::from_content(
+                    &m, types,
+                    if m.modifier == MethodModifier::Shared { &mut *report }
+                    else { &mut discarded });
                 if maybe_report_collision(
                     &mut used_names,
                     new_m.identity().to_string(),
@@ -419,7 +431,11 @@ impl DMLTrait {
         for method in spec.methods.iter()
             .filter_map(discard_conditional)
             .filter(|method|!method.is_abstract()) {
-            let new_m = MethodDecl::from_content(&method, types, report);
+            let mut discarded = vec![];
+            let new_m = MethodDecl::from_content(
+                &method, types,
+                if method.modifier == MethodModifier::Shared { &mut *report }
+                else { &mut discarded });
             // special case, methods are allowed to conflict 
             // with abstract methods
             // NOTE: Right now this means we'd report the collision
@@ -468,7 +484,9 @@ impl DMLTrait {
                     meth.name.val.as_str()) {
                     match coll {
                         TraitMemberKind::Method(undermeth) => {
-                            if meth.is_abstract() {
+                            // Non-shared overrides are checked per object
+                            if !meth.is_shared() {
+                            } else if meth.is_abstract() && undermeth.is_shared() {
                                 report.push(DMLError {
                                     span: meth.name.span,
                                     description:
@@ -479,8 +497,7 @@ impl DMLTrait {
                                         (*undermeth.location(),
                                          "Overridden definition here".into())],
                                 });
-                            }
-                            if !undermeth.is_default() && !undermeth.is_abstract()  {
+                            } else if !undermeth.is_default() && !undermeth.is_abstract() {
                                 report.push(DMLError {
                                     span: meth.name.span,
                                     description:
@@ -493,7 +510,9 @@ impl DMLTrait {
                                     severity: Some(DiagnosticSeverity::ERROR),
                                 });
                             }
-                            meth.check_override(undermeth, report);
+                            if meth.is_shared() {
+                                meth.check_override(undermeth, report);
+                            }
                             ancestor.get_defined_method(meth.identity())
                                 .map(|dmeth|DefaultCallReference::Valid(
                                     Arc::new(DMLMethodRef {
@@ -591,6 +610,7 @@ impl DMLTrait {
 pub fn merge_impl_maps<'t, I>(name: &str,
                               loc: &ZeroSpan,
                               parents_iter: I,
+                              own_methods: &HashSet<String>,
                               report: &mut Vec<DMLError>)
                               -> HashMap<String, Arc<DMLTrait>>
 where
@@ -645,13 +665,20 @@ where
                                     
                                 } else if !m1.is_abstract() && m2.is_abstract() {
                                     map.insert(name, implr);
+                                } else if !m1.is_abstract()
+                                    && own_methods.contains(&name) {
+                                    // Our own definition overrides both
+                                    map.insert(name, implr);
                                 } else {
                                     // Both abstract or both non-abstract
                                     // ambiguous
-                                    map.insert(name.clone(), Arc::clone(&implr));
-                                    ambiguous_defs.entry(name)
-                                        .or_default()
-                                        .push(mimplr);
+                                    let ambiguous = ambiguous_defs
+                                        .entry(name.clone()).or_default();
+                                    if ambiguous.is_empty() {
+                                        ambiguous.push(mimplr);
+                                    }
+                                    ambiguous.push(Arc::clone(&implr));
+                                    map.insert(name, implr);
                                 }
                             },
                             _ => unreachable!("should be covered by if clause"),
@@ -674,6 +701,14 @@ where
     }
     trace!("Ambiguous defs {:?}", ambiguous_defs.keys());
     for (ambiguous_name, traits) in &ambiguous_defs {
+        let mut related: Vec<_> = traits.iter().map(
+            |t|{
+                let decl = t.get_method(ambiguous_name).unwrap();
+                (*decl.location(),
+                 format!("Conflicting definition here in {}",
+                         t.name))
+            }).collect();
+        related.sort();
         // TODO: in some cases we can here report an obvious suggestion
         // example: templ A contains a default decl and templ B contains
         // a non-default one, we can then suggest B to implement A
@@ -685,18 +720,19 @@ where
                 "Conflicting definitions of method '{}' in {}. \
                  This might be due to uncertain inheritance order.",
                 ambiguous_name, name),
-            related: traits.iter().map(
-                |t|{
-                    let decl = t.get_method(ambiguous_name).unwrap();
-                    (*decl.location(),
-                     format!("Conflicting definition here in {}",
-                             t.name))
-                }).collect(),
+            related,
             severity: Some(DiagnosticSeverity::ERROR),
         });
     }
     trace!("Conflicting defs {:?}", conflicting_defs);
     for (conflict_name, traits) in &conflicting_defs {
+        let mut related: Vec<_> = traits.iter().map(|t|{
+            let decl = t.get_member(conflict_name).unwrap();
+            (*decl.location(),
+             format!("Conflicting definition here in {}",
+                     t.name))
+        }).collect();
+        related.sort();
         // TODO: in some cases we can here report an obvious suggestion
         // example: templ A contains a default decl and templ B contains
         // a non-default one, we can then suggest B to implement A
@@ -705,12 +741,7 @@ where
             description: format!(
                 "Conflicting definitions of '{}' in {}.",
                 conflict_name, name),
-            related: traits.iter().map(|t|{
-                let decl = t.get_member(conflict_name).unwrap();
-                (*decl.location(),
-                 format!("Conflicting definition here in {}",
-                         t.name))
-            }).collect(),
+            related,
             severity: Some(DiagnosticSeverity::ERROR),
         });
     }

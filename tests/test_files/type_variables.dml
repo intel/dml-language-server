@@ -4,6 +4,9 @@
 dml 1.4;
 device type_variables;
 
+typedef bool bool_alias; // @loc[14]=bool_alias_def
+typedef int int_alias; // @loc[13]=int_alias_def
+
 // @loc[16]=register_addr_t_def
 typedef uint32 register_addr_t; // @goto-ref[16]->register_addr_t_use_saved,register_addr_t_use_arg,register_addr_t_use_local
 
@@ -18,23 +21,28 @@ typedef struct {
 
 // @loc[7]=register_addr_t_use_saved
 // @loc[23]=current_addr_def
+// @goto-def-decl[23]->current_addr_def
 saved register_addr_t current_addr; // @goto-def-decl[7]->register_addr_t_def @goto-type-def[23]->register_addr_t_def @goto-ref[23]->current_addr_use_1,current_addr_use_2
 
 // @loc[7]=packet_t_use_saved
 // @loc[16]=last_packet_def
+// @goto-def-decl[16]->last_packet_def
 saved packet_t last_packet; // @goto-def-decl[7]->packet_t_def @goto-type-def[16]->packet_t_def @goto-ref[16]->last_packet_use,last_packet_use_2
 
 // @loc[8]=process_method_def
 method process( // @goto-ref[8]->process_method_use
     // @loc[5]=packet_t_use_arg
     // @loc[14]=pkt_arg_def
+    // @goto-def-decl[14]->pkt_arg_def @goto-type-def[14]->packet_t_def
     packet_t pkt, // @goto-ref[14]->pkt_arg_use_1,pkt_arg_use_2,pkt_arg_use_3,pkt_arg_use_4
     // @loc[5]=register_addr_t_use_arg
     // @loc[21]=base_addr_arg_def
+    // @goto-def-decl[21]->base_addr_arg_def @goto-type-def[21]->register_addr_t_def
     register_addr_t base_addr // @goto-ref[21]->base_addr_arg_use_1,base_addr_arg_use_2
 ) {
     // @loc[11]=register_addr_t_use_local
     // @loc[27]=local_addr_def
+    // @goto-def-decl[27]->local_addr_def
     local register_addr_t local_addr; // @goto-def-decl[11]->register_addr_t_def @goto-type-def[27]->register_addr_t_def @goto-ref[27]->local_addr_use
     // @loc[5]=local_addr_use
     local_addr = 0; // @goto-def-decl[5]->local_addr_def
@@ -71,20 +79,28 @@ method valid_scalar_return() -> (int) {
 }
 
 method bad_initializers() {
-    local int valid = 123;
-    local int copied = valid;
-    // @diag-error: bad_typeof_local | related->bad_typeof_local_decl: declared as 'int' here
-    local typeof(valid) bad_typeof_local = "typeof local"; // @loc[29]=bad_typeof_local_decl
+    // @loc[21]=valid_decl @goto-def-decl[21]->valid_decl @goto-type-def[21]->int_alias_def
+    local int_alias valid = 123;
+    // @loc[21]=copied_decl @goto-def-decl[21]->copied_decl @goto-type-def[21]->int_alias_def
+    local int_alias copied = valid;
+    // @diag-error: bad_typeof_local | related->bad_typeof_local_decl: declared as 'int_alias' here
+    // NOTE: goto-type-def through typeof(...) is not supported yet; ideally
+    // this would find int_alias_def
+    local typeof(valid) bad_typeof_local = "typeof local"; // @loc[25]=bad_typeof_local_decl @goto-def-decl[25]->bad_typeof_local_decl @goto-type-def[25]->
     // @diag-error: bad_typeof_literal | related->bad_typeof_literal_decl: declared as 'bool' here
-    local typeof(false) bad_typeof_literal = 1; // @loc[29]=bad_typeof_literal_decl
+    local typeof(false) bad_typeof_literal = 1; // @loc[25]=bad_typeof_literal_decl @goto-def-decl[25]->bad_typeof_literal_decl @goto-type-def[25]->
     // @diag-error: bad_typeof_call | related->bad_typeof_call_decl: declared as 'int' here
-    local typeof(valid_scalar_return()) bad_typeof_call = "typeof call"; // @loc[45]=bad_typeof_call_decl
-    local typeof(unknown_type_source) unresolved_typeof = "unknown";
-    // @diag-error: bad_typeof_cast | related->bad_typeof_cast_decl: declared as 'bool' here
-    local bool bad_typeof_cast = cast(1, typeof(valid)); // @loc[20]=bad_typeof_cast_decl
-    // @diag-error: Cannot initialize local variable 'test' | related->test_decl: declared as 'int' here
-    local int test = "123"; // @loc[15]=test_decl
-    // @diag-error: boolean_test | related->boolean_test_decl: declared as 'int' here
-    local int boolean_test = false; // @loc[19]=boolean_test_decl
-    local int object_test = some_random_object;
+    local typeof(valid_scalar_return()) bad_typeof_call = "typeof call"; // @loc[41]=bad_typeof_call_decl @goto-def-decl[41]->bad_typeof_call_decl @goto-type-def[41]->
+    local typeof(unknown_type_source) unresolved_typeof = "unknown"; // @loc[39]=unresolved_typeof_decl @goto-def-decl[39]->unresolved_typeof_decl @goto-type-def[39]->
+    // @diag-error: bad_typeof_cast | related->bad_typeof_cast_decl: declared as 'bool_alias' here
+    // @loc[22]=bad_typeof_cast_decl_2 @goto-def-decl[22]->bad_typeof_cast_decl_2 @goto-type-def[22]->bool_alias_def
+    local bool_alias bad_typeof_cast = cast(1, typeof(valid)); // @loc[26]=bad_typeof_cast_decl
+    // @diag-error: Cannot initialize local variable 'test' | related->test_decl: declared as 'int_alias' here
+    // @goto-def-decl[21]->test_decl @goto-type-def[21]->int_alias_def
+    local int_alias test = "123"; // @loc[21]=test_decl
+    // @diag-error: boolean_test | related->boolean_test_decl: declared as 'int_alias' here
+    // @loc[21]=boolean_test_decl_2 @goto-def-decl[21]->boolean_test_decl_2 @goto-type-def[21]->int_alias_def
+    local int_alias boolean_test = false; // @loc[25]=boolean_test_decl
+    // @loc[21]=object_test_decl @goto-def-decl[21]->object_test_decl @goto-type-def[21]->int_alias_def
+    local int_alias object_test = some_random_object;
 }

@@ -4,18 +4,22 @@
 dml 1.4;
 device type_switch_scope;
 
+typedef int int_alias; // @loc[13]=int_alias_def
+
 bank diagnostics {
-    method switch_scope(int selector) {
+    // @loc[35]=selector_decl @goto-def-decl[35]->selector_decl @goto-type-def[35]->int_alias_def
+    method switch_scope(int_alias selector) {
         switch (selector) {
         case 0:
-            local int switched; // @loc[23]=switched_decl
+            // @goto-def-decl[29]->switched_decl @goto-type-def[29]->int_alias_def
+            local int_alias switched; // @loc[29]=switched_decl
             break;
         case 1:
-            // @diag-error: Cannot assign value of type 'const char *' | related->switched_decl: declared as 'int' here
+            // @diag-error: Cannot assign value of type 'const char *' | related->switched_decl: declared as 'int_alias' here
             switched = "switch assignment";
             break;
         }
-        // @diag-error: Cannot assign value of type 'const char *' | related->switched_decl: declared as 'int' here
+        // @diag-error: Cannot assign value of type 'const char *' | related->switched_decl: declared as 'int_alias' here
         switched = "post-switch assignment";
     }
 }

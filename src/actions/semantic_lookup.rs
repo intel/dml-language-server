@@ -14,6 +14,7 @@ use crate::analysis::scope::{ContextedSymbol, ContextKey};
 use crate::analysis::structure::objects::MaybeAbstract;
 use crate::analysis::structure::expressions::DMLString;
 use crate::analysis::symbols::DMLSymbolKind;
+use crate::analysis::templating::types::TypeUse;
 use crate::analysis::{DeviceAnalysis, IsolatedAnalysis, LocationSpan, SymbolRef, ZeroRange};
 
 use crate::analysis::parsing::tree::{ZeroSpan, ZeroFilePosition};
@@ -476,10 +477,15 @@ pub fn type_definitions_at_fp(
         for symbol in symbols {
             let symbol = symbol.lock().unwrap();
             locations.extend(symbol.type_definitions.iter().copied());
-            let type_use = symbol.typed;
-            if let Some(declaration) = type_use.and_then(|typed|
-                device.types.declaration(typed.type_id)) {
-                locations.insert(declaration.name.span);
+            match symbol.typed {
+                Some(TypeUse::Declared(type_id)) => if let Some(declaration) =
+                    device.types.declaration(type_id) {
+                        locations.insert(declaration.name.span);
+                    },
+                Some(TypeUse::Anonymous(span)) => {
+                    locations.insert(span);
+                },
+                None => (),
             }
         }
     }

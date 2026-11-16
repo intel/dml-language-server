@@ -1302,7 +1302,12 @@ fn gather_parameters<'t>(obj_loc: &ZeroSpan,
     }, vec![]);
 
     // Add array index variable
+    let mut index_names = HashSet::new();
     for arraydim in index_info {
+        // A repeated index variable is reported as a collision on its own
+        if !index_names.insert(arraydim.indexvar.val.as_str()) {
+            continue;
+        }
         let new_decl = (make_objectdecl_auto_param(
             &arraydim.indexvar.val,
             &arraydim.indexvar.span,
@@ -1503,13 +1508,40 @@ fn resolve_parameter(obj_loc: &ZeroSpan,
         }
     }
 
+    // Two assignments in the same template or object clash even when a
+    // higher-ranked assignment overrides both (DMLC ENAMECOLL)
+    let mut overridden: Vec<_> = sorted_definitions.iter()
+        .filter(|def|!overriding_defs.contains(def)).collect();
+    overridden.sort_by_key(|(def, _)|*def.obj.span());
+    for (index, (first, rank)) in overridden.iter().enumerate() {
+        let mut conflicts: Vec<_> = overridden[index + 1..].iter()
+            .filter(|(other, other_rank)|other_rank.id == rank.id
+                    && other.obj != first.obj
+                    && !first.cond.guaranteed_excluded_from(&other.cond))
+            .map(|(other, _)|*other.obj.span())
+            .collect();
+        conflicts.dedup();
+        if !conflicts.is_empty() {
+            report.push(DMLError {
+                span: *first.obj.span(),
+                description: format!(
+                    "Conflicting assignments to parameter '{}'", name),
+                related: conflicts.into_iter().map(|span|
+                    (span, "Conflicting assignment here".to_string()))
+                    .collect(),
+                severity: Some(DiagnosticSeverity::ERROR),
+            });
+        }
+    }
+
     let bad_overrides: Vec<&(ObjectDecl<Parameter>, Rank)>
         = sorted_definitions.iter().filter(
             |(def, _)|!def.obj.is_default && !overriding_defs.iter().any(
                 |(def2, _)|def2 == def)).collect();
-    if !bad_overrides.is_empty() {
+    if let (Some((overriding, _)), false) =
+        (overriding_defs.first(), bad_overrides.is_empty()) {
         report.push(DMLError {
-            span: *sorted_definitions.first().unwrap().0.obj.span(),
+            span: *overriding.obj.span(),
             description: "Definition overrides non-default parameter"
                 .to_string(),
             related: bad_overrides.iter().map(
@@ -1978,8 +2010,12 @@ fn collect_symbols(parameters: &[DMLParameter],
     for error in errors {
         report.push(DMLError {
             span: *error.span(),
-            // TODO: early-evaluate the error message, somehow
-            description: "unguarded error statement".to_string(),
+            // Mirrors DMLC's EERRSTMT for object-level 'error'
+            description: match error.obj.message.as_deref() {
+                Some(ExpressionKind::StringLiteral(message)) =>
+                    message.val.clone(),
+                _ => "explicit error".to_string(),
+            },
             related: vec![],
             severity: Some(DiagnosticSeverity::ERROR),
         });
@@ -2259,12 +2295,33 @@ fn merge_composite_subobj<'c>(name: String,
         DimensionalityCandidate {
             condition: decl.cond.clone(),
             span: if decl.obj.dims.is_empty() {
-                *decl.obj.span()
+                decl.obj.object.name.span
             } else {
                 combine_vec_of_decls(&decl.obj.dims)
             },
             dimensions: decl.obj.dims.len(),
         }).collect(), report);
+
+    for (decl, _) in &specs {
+        let mut index_sites: HashMap<&str, &ZeroSpan> = HashMap::default();
+        for dim in &decl.obj.dims {
+            if dim.indexvar.val == "_" {
+                continue;
+            }
+            if let Some(previous) = index_sites.insert(
+                &dim.indexvar.val, &dim.indexvar.span) {
+                report.push(DMLError {
+                    span: dim.indexvar.span,
+                    description: format!(
+                        "Name collision on index variable '{}'",
+                        dim.indexvar.val),
+                    related: vec![(*previous,
+                                   "Previously defined here".to_string())],
+                    severity: Some(DiagnosticSeverity::ERROR),
+                });
+            }
+        }
+    }
 
     // Vec of (auth, mismatching name) array declarations
     let mut array_info: Vec<(ArrayDim, Vec<&ZeroSpan>)> =
@@ -2473,6 +2530,43 @@ fn sort_method_decls<'t>(decls: &[(&Rank, &ExistCondition,
         (method_map_defs, method_order, method_map_decls)
 }
 
+// Some definition must override all others that can coexist with it
+fn report_ambiguous_method_definitions(
+    obj: &DMLCompositeObject,
+    name: &str,
+    all_decls: &[(&Rank, &ExistCondition, &MethodDecl)],
+    default_map: &DeclMap<'_>,
+    report: &mut Vec<DMLError>) {
+    let overridden: HashSet<&MethodDecl> = default_map.values()
+        .flatten().copied().collect();
+    let condition_of = |method: &MethodDecl| all_decls.iter()
+        .find(|(_, _, decl)|*decl == method)
+        .map(|(rank, condition, _)|(*rank, *condition));
+    let mut tops: Vec<&MethodDecl> = default_map.keys().copied()
+        .filter(|method|!overridden.contains(method)).collect();
+    tops.sort_by_key(|method|*method.location());
+    // Same-rank duplicates are reported as name collisions instead
+    let coexisting = tops.iter().enumerate().any(|(index, first)|
+        tops[index + 1..].iter().any(|second|
+            match (condition_of(first), condition_of(second)) {
+                (Some((first_rank, first)), Some((second_rank, second))) =>
+                    first_rank != second_rank
+                    && !first.guaranteed_excluded_from(second),
+                _ => true,
+            }));
+    if coexisting {
+        report.push(DMLError {
+            span: obj.declloc,
+            description: format!(
+                "Conflicting definitions of method '{}' in {}",
+                name, obj.identity()),
+            related: tops.iter().map(|method|(*method.location(),
+                "Conflicting definition here".to_string())).collect(),
+            severity: Some(DiagnosticSeverity::ERROR),
+        });
+    }
+}
+
 fn add_methods(obj: &mut DMLCompositeObject,
                methods: MethodMapping,
                decl_to_trait_map: &HashMap<MethodDecl, Arc<DMLTrait>>,
@@ -2491,6 +2585,8 @@ fn add_methods(obj: &mut DMLCompositeObject,
                 (rank, condition, declaration)).collect();
 
         let (default_map, method_order, decl_map) = sort_method_decls(&all_decls);
+        report_ambiguous_method_definitions(
+            obj, &name, &all_decls, &default_map, report);
         let mut decl_to_method: HashMap<MethodDecl, Arc<DMLMethodRef>>
             = HashMap::default();
         // Create abstract methodrefs for declarations first, order does not matter
@@ -2546,11 +2642,12 @@ fn add_methods(obj: &mut DMLCompositeObject,
 
                 if !decl.default && !decl.is_abstract() {
                     report.push(DMLError {
-                        span: decl.name.span,
+                        span: method.name.span,
                         description:
                         "Cannot override non-default method".into(),
-                        related: vec![(method.name.span,
-                                       "overridden here".to_string())],
+                        related: vec![(decl.name.span,
+                                       "Non-default method declared here"
+                                       .to_string())],
                         severity: Some(DiagnosticSeverity::ERROR),
                     });
                 }
@@ -2692,7 +2789,9 @@ fn check_trait_overrides(obj: &DMLCompositeObject,
                                          *member.location(),
                                          report);
                     }
-                    if let Some(meth) = member.as_method() {
+                    // Non-shared overrides are checked when adding methods
+                    if let Some(meth) = member.as_method()
+                        .filter(|meth|meth.is_shared()) {
                         if let DMLResolvedObject::ShallowObject(
                             DMLShallowObject {
                                 variant: DMLShallowObjectVariant::Method(m),

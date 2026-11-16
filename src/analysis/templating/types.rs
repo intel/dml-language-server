@@ -3,6 +3,9 @@
 use std::collections::HashMap;
 use std::convert::TryFrom;
 
+use lsp_types::DiagnosticSeverity;
+
+use crate::analysis::DMLError;
 use crate::analysis::parsing::tree::ZeroSpan;
 use crate::analysis::structure::expressions::{DMLString, ExpressionKind};
 use crate::analysis::structure::objects::Typedef;
@@ -12,8 +15,10 @@ use crate::analysis::structure::types::{DMLType, DMLTypeKind, DMLTypeMember};
 pub struct TypeId(usize);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct TypeUse {
-    pub type_id: TypeId,
+pub enum TypeUse {
+    Declared(TypeId),
+    // Struct, layout or bitfields type without a name, identified by its span
+    Anonymous(ZeroSpan),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -32,6 +37,50 @@ pub struct TypeDatabase {
 }
 
 impl TypeDatabase {
+    pub fn report_unknown_types(&self,
+                                typed: &DMLType,
+                                report: &mut Vec<DMLError>) {
+        match &typed.kind {
+            DMLTypeKind::Named(name) =>
+                if !is_builtin_type(&name.val)
+                    && self.typedefs_named(&name.val).is_empty() {
+                    report.push(DMLError {
+                        span: name.span,
+                        description: format!("Unknown type: '{}'", name.val),
+                        related: vec![],
+                        severity: Some(DiagnosticSeverity::ERROR),
+                    });
+                },
+            DMLTypeKind::Struct(members) |
+            DMLTypeKind::Layout { fields: members, .. } =>
+                for member in members {
+                    self.report_unknown_types(&member.typed, report);
+                },
+            DMLTypeKind::Bitfields { fields, .. } =>
+                for field in fields {
+                    self.report_unknown_types(&field.member.typed, report);
+                },
+            DMLTypeKind::Hook(arguments) =>
+                for argument in arguments {
+                    self.report_unknown_types(argument, report);
+                },
+            DMLTypeKind::Const(inner) |
+            DMLTypeKind::Pointer(inner) |
+            DMLTypeKind::Vector(inner) =>
+                self.report_unknown_types(inner, report),
+            DMLTypeKind::Array { element, .. } =>
+                self.report_unknown_types(element, report),
+            DMLTypeKind::Function { returns, parameters, .. } => {
+                self.report_unknown_types(returns, report);
+                for parameter in parameters {
+                    self.report_unknown_types(parameter, report);
+                }
+            },
+            DMLTypeKind::TypeOf(_) | DMLTypeKind::Sequence(_) |
+            DMLTypeKind::Unknown => (),
+        }
+    }
+
     pub fn add_typedef(&mut self, typedef: &Typedef) -> TypeId {
         let id = TypeId(self.declarations.len());
         self.declarations.push(TypeDeclaration {
@@ -72,71 +121,66 @@ impl TypeDatabase {
     }
 
     pub fn resolve_type_use(&self, typed: &DMLType) -> Option<TypeUse> {
-        let written = match &typed.kind {
-            DMLTypeKind::Named(name) => Some(name),
-            DMLTypeKind::Const(inner) |
+        self.resolve_type_shape(typed).map(|(type_use, _)|type_use)
+    }
+
+    // The type use under 'typed', and how many pointer/array layers wrap it
+    pub fn resolve_type_shape(&self, typed: &DMLType)
+                              -> Option<(TypeUse, u32)> {
+        match &typed.kind {
+            DMLTypeKind::Named(name) => match self.typedefs_named(&name.val) {
+                [type_id] => Some((TypeUse::Declared(*type_id), 0)),
+                _ => None,
+            },
+            DMLTypeKind::Struct(_) |
+            DMLTypeKind::Layout { .. } |
+            DMLTypeKind::Bitfields { .. } =>
+                Some((TypeUse::Anonymous(typed.span), 0)),
+            DMLTypeKind::Const(inner) => self.resolve_type_shape(inner),
             DMLTypeKind::Pointer(inner) |
-            DMLTypeKind::Vector(inner) =>
-                return self.resolve_type_use(inner),
-            DMLTypeKind::Array { element, .. } =>
-                return self.resolve_type_use(element),
+            DMLTypeKind::Vector(inner) |
+            DMLTypeKind::Array { element: inner, .. } =>
+                self.resolve_type_shape(inner)
+                    .map(|(type_use, layers)|(type_use, layers + 1)),
             DMLTypeKind::Function { returns, .. } =>
-                return self.resolve_type_use(returns),
+                self.resolve_type_shape(returns),
             _ => None,
-        }?;
-        let ids = self.typedefs_named(&written.val);
-        if let [type_id] = ids {
-            Some(TypeUse { type_id: *type_id })
-        } else {
-            None
         }
     }
 
-    pub fn members_named<'a>(&'a self,
-                             type_id: TypeId,
-                             name: &str) -> Vec<&'a DMLTypeMember> {
-        fn find<'a>(database: &'a TypeDatabase,
-                    typed: &'a DMLType,
-                    name: &str,
-                    visited: &mut Vec<TypeId>,
-                    found: &mut Vec<&'a DMLTypeMember>) {
-            match &typed.kind {
-                DMLTypeKind::Struct(members) |
-                DMLTypeKind::Layout { fields: members, .. } => found.extend(
-                    members.iter().filter(|member|member.name.as_ref()
-                        .is_some_and(|member_name|member_name.val == name))),
-                DMLTypeKind::Bitfields { fields, .. } => found.extend(
-                    fields.iter().map(|field|&field.member)
-                        .filter(|member|member.name.as_ref()
-                            .is_some_and(|member_name|member_name.val == name))),
-                DMLTypeKind::Named(alias) => {
-                    for next in database.typedefs_named(&alias.val) {
-                        if !visited.contains(next) {
-                            visited.push(*next);
-                            if let Some(underlying) = database.declaration(*next)
-                                .and_then(|declaration|declaration.underlying.as_ref()) {
-                                find(database, underlying, name, visited, found);
-                            }
-                        }
-                    }
-                },
-                DMLTypeKind::Const(inner) |
-                DMLTypeKind::Pointer(inner) |
-                DMLTypeKind::Vector(inner) =>
-                    find(database, inner, name, visited, found),
-                DMLTypeKind::Array { element, .. } =>
-                    find(database, element, name, visited, found),
-                _ => (),
+    // Follows typedefs from 'type_use' to a struct-like type, counting the
+    // pointer/array layers the typedefs add on the way
+    pub fn struct_core(&self, type_use: TypeUse) -> Option<(TypeUse, u32)> {
+        let mut current = type_use;
+        let mut layers = 0;
+        let mut visited = vec![];
+        loop {
+            let TypeUse::Declared(type_id) = current else {
+                return Some((current, layers));
+            };
+            if visited.contains(&type_id) {
+                return None;
             }
+            visited.push(type_id);
+            let underlying = self.declaration(type_id)?.underlying.as_ref()?;
+            if direct_members(underlying).is_some() {
+                return Some((current, layers));
+            }
+            let (next, extra) = self.resolve_type_shape(underlying)?;
+            current = next;
+            layers += extra;
         }
+    }
+}
 
-        let mut found = vec![];
-        if let Some(underlying) = self.declaration(type_id)
-            .and_then(|declaration|declaration.underlying.as_ref()) {
-            find(self, underlying, name,
-                 &mut vec![type_id], &mut found);
-        }
-        found
+pub fn direct_members(typed: &DMLType) -> Option<Vec<&DMLTypeMember>> {
+    match &typed.kind {
+        DMLTypeKind::Struct(members) |
+        DMLTypeKind::Layout { fields: members, .. } =>
+            Some(members.iter().collect()),
+        DMLTypeKind::Bitfields { fields, .. } =>
+            Some(fields.iter().map(|field|&field.member).collect()),
+        _ => None,
     }
 }
 
@@ -258,6 +302,13 @@ pub enum StorageCompatibility {
     Incompatible,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum TypeComparisonMode {
+    Strict,
+    #[default]
+    Fuzzy,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StorageValue {
     Integer(i128),
@@ -347,22 +398,42 @@ impl DMLConcreteType {
         &self,
         source: &DMLConcreteType,
     ) -> StorageCompatibility {
+        self.storage_compatibility_with_mode(source, TypeComparisonMode::default())
+    }
+
+    pub fn storage_compatibility_with_mode(
+        &self,
+        source: &DMLConcreteType,
+        mode: TypeComparisonMode,
+    ) -> StorageCompatibility {
         use DMLConcreteTypeKind::*;
 
+        if matches!(self.kind, Unknown | TypeOf)
+            || matches!(source.kind, Unknown | TypeOf) {
+            return StorageCompatibility::Compatible;
+        }
+        if let (Some(target), Some(source)) =
+            (integer_storage_type(self), integer_storage_type(source)) {
+            return target.storage_compatibility(source);
+        }
+        if matches!(self.kind, Bitfields { .. }) {
+            return StorageCompatibility::Incompatible;
+        }
+
         match (&self.kind, &source.kind) {
-            (Unknown | TypeOf, _) | (_, Unknown | TypeOf) =>
-                StorageCompatibility::Compatible,
             (Typedef { underlying: Some(underlying), .. }, _) =>
-                underlying.storage_compatibility(source),
+                underlying.storage_compatibility_with_mode(source, mode),
             (_, Typedef { underlying: Some(underlying), .. }) =>
-                self.storage_compatibility(underlying),
-            (Const(target), _) => target.storage_compatibility(source),
-            (_, Const(source)) => self.storage_compatibility(source),
+                self.storage_compatibility_with_mode(underlying, mode),
+            (Const(target), _) =>
+                target.storage_compatibility_with_mode(source, mode),
+            (_, Const(source)) =>
+                self.storage_compatibility_with_mode(source, mode),
             (Named(target), Named(source)) =>
                 named_type_storage_compatibility(target, source),
             (Pointer(target), Pointer(source)) |
             (Pointer(target), Array { element: source, .. }) =>
-                if pointer_target_can_store(target, source) {
+                if pointer_target_can_store(target, source, mode) {
                     StorageCompatibility::Compatible
                 } else {
                     StorageCompatibility::Incompatible
@@ -374,12 +445,15 @@ impl DMLConcreteType {
 
     pub fn integer_value_truncation(&self, value: i128)
                                     -> Option<IntegerTruncation> {
-        use DMLConcreteTypeKind::{Const, Named, Typedef};
+        use DMLConcreteTypeKind::{Bitfields, Const, Named, Typedef};
 
         match &self.kind {
             Typedef { underlying: Some(underlying), .. } |
             Const(underlying) => underlying.integer_value_truncation(value),
             Named(name) => integer_type(name)
+                .and_then(|target|target.value_truncation(value)),
+            Bitfields { width, .. } => width.as_deref()
+                .and_then(bitfield_integer_type)
                 .and_then(|target|target.value_truncation(value)),
             _ => None,
         }
@@ -390,6 +464,8 @@ impl DMLConcreteType {
 
         match (&self.kind, &other.kind) {
             (Unknown | TypeOf, _) | (_, Unknown | TypeOf) => true,
+            (Typedef { id: left, .. }, Typedef { id: right, .. })
+                if left == right => true,
             (Typedef { underlying: Some(underlying), .. }, _) =>
                 underlying.equivalent(other),
             (_, Typedef { underlying: Some(underlying), .. }) =>
@@ -398,31 +474,25 @@ impl DMLConcreteType {
             (Template(left), Template(right)) => left == right,
             (Typedef { id: left, underlying: None },
              Typedef { id: right, underlying: None }) => left == right,
-            (Struct { identity: left_identity, fields: left },
-             Struct { identity: right_identity, fields: right }) =>
-                left_identity == right_identity
-                    && members_equivalent(left, right),
+            (Struct { identity: left_identity, .. },
+             Struct { identity: right_identity, .. }) =>
+                left_identity == right_identity,
             (Layout {
                 identity: left_identity,
-                byte_order: left_order,
-                fields: left,
+                ..
             }, Layout {
                 identity: right_identity,
-                byte_order: right_order,
-                fields: right,
-            }) => left_identity == right_identity
-                && left_order == right_order
-                && members_equivalent(left, right),
+                ..
+            }) => left_identity == right_identity,
             (Bitfields {
-                identity: left_identity,
                 width: left_width,
                 fields: left,
+                ..
             }, Bitfields {
-                identity: right_identity,
                 width: right_width,
                 fields: right,
-            }) => left_identity == right_identity
-                && left_width == right_width
+                ..
+            }) => left_width == right_width
                 && members_equivalent(left, right),
             (Sequence { template: left, name: left_name },
              Sequence { template: right, name: right_name }) =>
@@ -446,6 +516,51 @@ impl DMLConcreteType {
                 && left_returns.equivalent(right_returns)
                 && types_equivalent(left_parameters, right_parameters),
             _ => false,
+        }
+    }
+
+    fn equivalent_fuzzy(&self, other: &DMLConcreteType) -> bool {
+        fn unqualified(typed: &DMLConcreteType) -> &DMLConcreteType {
+            match &typed.kind {
+                DMLConcreteTypeKind::Typedef {
+                    underlying: Some(underlying), ..
+                } | DMLConcreteTypeKind::Const(underlying) =>
+                    unqualified(underlying),
+                _ => typed,
+            }
+        }
+
+        let left = unqualified(self);
+        let right = unqualified(other);
+        use DMLConcreteTypeKind::*;
+        match (&left.kind, &right.kind) {
+            (Unknown | TypeOf, _) | (_, Unknown | TypeOf) => true,
+            (Pointer(left), Pointer(right)) |
+            (Pointer(left), Array { element: right, .. }) |
+            (Array { element: left, .. }, Pointer(right)) |
+            (Array { element: left, .. }, Array { element: right, .. }) =>
+                matches!(&unqualified(left).kind, Named(name) if name == "void")
+                    || matches!(&unqualified(right).kind,
+                                Named(name) if name == "void")
+                    || left.equivalent_fuzzy(right),
+            (Vector(left), Vector(right)) => left.equivalent_fuzzy(right),
+            (Hook(left), Hook(right)) => left.len() == right.len()
+                && left.iter().zip(right).all(|(left, right)|
+                    left.equivalent_fuzzy(right)),
+            (Function {
+                returns: left_returns,
+                parameters: left_parameters,
+                variadic: left_variadic,
+            }, Function {
+                returns: right_returns,
+                parameters: right_parameters,
+                variadic: right_variadic,
+            }) => left_variadic == right_variadic
+                && left_returns.equivalent_fuzzy(right_returns)
+                && left_parameters.len() == right_parameters.len()
+                && left_parameters.iter().zip(right_parameters)
+                    .all(|(left, right)|left.equivalent_fuzzy(right)),
+            _ => left.equivalent(right),
         }
     }
 }
@@ -492,6 +607,25 @@ fn named_type_storage_compatibility(target: &str, source: &str)
 
 fn is_integer_type(name: &str) -> bool {
     integer_type(name).is_some()
+}
+
+fn bitfield_integer_type(width: &str) -> Option<IntegerType> {
+    width.parse::<u16>().ok()
+        .filter(|width|*width > 0)
+        .map(|width|IntegerType::fixed(width, false))
+}
+
+fn integer_storage_type(typed: &DMLConcreteType) -> Option<IntegerType> {
+    match &typed.kind {
+        DMLConcreteTypeKind::Named(name) => integer_type(name),
+        DMLConcreteTypeKind::Bitfields { width, .. } =>
+            width.as_deref().and_then(bitfield_integer_type),
+        DMLConcreteTypeKind::Typedef {
+            underlying: Some(underlying), ..
+        } | DMLConcreteTypeKind::Const(underlying) =>
+            integer_storage_type(underlying),
+        _ => None,
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -586,9 +720,20 @@ fn is_float_type(name: &str) -> bool {
     matches!(name, "float" | "double")
 }
 
+// Mirrors DMLC's parse_type and initial typedefs
+fn is_builtin_type(name: &str) -> bool {
+    integer_type(name).is_some() || is_float_type(name)
+        || matches!(name, "bool" | "void" | "integer_t" | "uinteger_t")
+}
+
 fn pointer_target_can_store(target: &DMLConcreteType,
-                            source: &DMLConcreteType) -> bool {
+                            source: &DMLConcreteType,
+                            mode: TypeComparisonMode) -> bool {
     use DMLConcreteTypeKind::{Const, Named, Typedef};
+
+    if target.equivalent(source) {
+        return true;
+    }
 
     fn transparent(typed: &DMLConcreteType) -> &DMLConcreteType {
         match &typed.kind {
@@ -601,14 +746,24 @@ fn pointer_target_can_store(target: &DMLConcreteType,
     let source = transparent(source);
     let target_const = matches!(target.kind, Const(_));
     let source_const = matches!(source.kind, Const(_));
+    let target_unqualified = match &target.kind {
+        Const(inner) => inner.as_ref(),
+        _ => target,
+    };
+    let source_unqualified = match &source.kind {
+        Const(inner) => inner.as_ref(),
+        _ => source,
+    };
+    if matches!(&target_unqualified.kind, Named(name) if name == "void")
+        || matches!(&source_unqualified.kind, Named(name) if name == "void") {
+        return mode == TypeComparisonMode::Fuzzy
+            || !source_const
+            || target_const;
+    }
     if source_const && !target_const {
         return false;
     }
-    let target = match &target.kind { Const(inner) => inner.as_ref(), _ => target };
-    let source = match &source.kind { Const(inner) => inner.as_ref(), _ => source };
-    matches!(&target.kind, Named(name) if name == "void")
-        || matches!(&source.kind, Named(name) if name == "void")
-        || target.equivalent(source)
+    target_unqualified.equivalent(source_unqualified)
 }
 
 fn types_equivalent(left: &[DMLConcreteType],
@@ -652,19 +807,33 @@ impl DMLResolvedType {
     }
 
     pub fn equivalent_unqualified(&self, other: &DMLResolvedType) -> bool {
+        self.equivalent_unqualified_with_mode(other, TypeComparisonMode::default())
+    }
+
+    pub fn equivalent_unqualified_with_mode(
+        &self,
+        other: &DMLResolvedType,
+        mode: TypeComparisonMode,
+    ) -> bool {
         fn unqualified(typ: &DMLConcreteType) -> &DMLConcreteType {
             match &typ.kind {
                 DMLConcreteTypeKind::Typedef {
                     underlying: Some(underlying), ..
                 } => unqualified(underlying),
-                DMLConcreteTypeKind::Const(inner) => inner,
+                DMLConcreteTypeKind::Const(inner) => unqualified(inner),
                 _ => typ,
             }
         }
 
         match (self, other) {
-            (DMLResolvedType::Actual(left), DMLResolvedType::Actual(right)) =>
-                unqualified(left).equivalent(unqualified(right)),
+            (DMLResolvedType::Actual(left), DMLResolvedType::Actual(right)) => {
+                let left = unqualified(left);
+                let right = unqualified(right);
+                match mode {
+                    TypeComparisonMode::Strict => left.equivalent(right),
+                    TypeComparisonMode::Fuzzy => left.equivalent_fuzzy(right),
+                }
+            },
             _ => true,
         }
     }
@@ -677,10 +846,18 @@ impl DMLResolvedType {
         &self,
         source: &DMLResolvedType,
     ) -> StorageCompatibility {
+        self.storage_compatibility_with_mode(source, TypeComparisonMode::default())
+    }
+
+    pub fn storage_compatibility_with_mode(
+        &self,
+        source: &DMLResolvedType,
+        mode: TypeComparisonMode,
+    ) -> StorageCompatibility {
         match (self, source) {
             (DMLResolvedType::Actual(target),
              DMLResolvedType::Actual(source)) =>
-                target.storage_compatibility(source),
+                target.storage_compatibility_with_mode(source, mode),
             _ => StorageCompatibility::Compatible,
         }
     }
@@ -696,13 +873,14 @@ fn resolve_members(database: &TypeDatabase,
                    members: &[DMLTypeMember],
                    visited: &mut Vec<TypeId>,
                    anonymous: &mut Vec<DMLStructType>,
+                   collect_anonymous: bool,
                    expression_type: &mut dyn FnMut(
                        &ExpressionKind) -> Option<DMLConcreteType>)
                    -> Vec<DMLResolvedMember> {
     members.iter().map(|member|DMLResolvedMember {
         name: member.name.as_ref().map(|name|name.val.clone()),
         typed: resolve_concrete_type(
-            database, &member.typed, visited, anonymous, true,
+            database, &member.typed, visited, anonymous, collect_anonymous,
             expression_type),
     }).collect()
 }
@@ -742,8 +920,10 @@ fn resolve_concrete_type(database: &TypeDatabase,
                 } else {
                     Named(name.val.clone())
                 }
-            } else {
+            } else if is_builtin_type(&name.val) {
                 Named(name.val.clone())
+            } else {
+                Unknown
             }
         },
         DMLTypeKind::Struct(members) => {
@@ -753,21 +933,23 @@ fn resolve_concrete_type(database: &TypeDatabase,
             Struct {
                 identity: ast.span,
                 fields: resolve_members(
-                    database, members, visited, anonymous, expression_type),
+                    database, members, visited, anonymous,
+                    collect_anonymous, expression_type),
             }
         },
         DMLTypeKind::Layout { byte_order, fields } => Layout {
             identity: ast.span,
             byte_order: byte_order.clone(),
             fields: resolve_members(
-                database, fields, visited, anonymous, expression_type),
+                database, fields, visited, anonymous,
+                collect_anonymous, expression_type),
         },
         DMLTypeKind::Bitfields { width, fields } => Bitfields {
             identity: ast.span,
             width: width.clone(),
             fields: resolve_members(database, &fields.iter()
                 .map(|field|field.member.clone()).collect::<Vec<_>>(),
-                visited, anonymous, expression_type),
+                visited, anonymous, collect_anonymous, expression_type),
         },
         DMLTypeKind::TypeOf(expression) => expression_type(expression)
             .map(|typed|typed.kind)
@@ -780,7 +962,7 @@ fn resolve_concrete_type(database: &TypeDatabase,
         },
         DMLTypeKind::Hook(arguments) => Hook(arguments.iter().map(|argument|
             resolve_concrete_type(
-                database, argument, visited, anonymous, true,
+                database, argument, visited, anonymous, collect_anonymous,
                 expression_type)).collect()),
         DMLTypeKind::Const(inner) => Const(Box::new(resolve_concrete_type(
             database, inner, visited, anonymous, collect_anonymous,
@@ -812,7 +994,8 @@ fn resolve_concrete_type(database: &TypeDatabase,
                 expression_type)),
             parameters: parameters.iter().map(|parameter|
                 resolve_concrete_type(
-                    database, parameter, visited, anonymous, true,
+                    database, parameter, visited, anonymous,
+                    collect_anonymous,
                     expression_type)).collect(),
             variadic: *variadic,
         },
@@ -905,6 +1088,24 @@ mod tests {
                             })))),
             },
         }
+    }
+
+    #[test]
+    fn unknown_type_names_are_not_storage_checked() {
+        let database = TypeDatabase::default();
+        let (_, builtin) = eval_type_simple(&named_type("uint2"), &database);
+        let (_, misspelled) = eval_type_simple(&named_type("uit2"), &database);
+        assert!(matches!(misspelled.kind, DMLConcreteTypeKind::Unknown));
+        assert!(misspelled.can_store(&builtin));
+        assert!(builtin.can_store(&misspelled));
+
+        let mut report = vec![];
+        database.report_unknown_types(&named_type("uint2"), &mut report);
+        database.report_unknown_types(
+            &wrapped_type(DMLTypeKind::Pointer, named_type("uit2")),
+            &mut report);
+        assert_eq!(report.len(), 1);
+        assert_eq!(report[0].description, "Unknown type: 'uit2'");
     }
 
     #[test]
@@ -1008,11 +1209,20 @@ mod tests {
     #[test]
     fn recursive_typedef_resolution_terminates() {
         let mut database = TypeDatabase::default();
-        add_type(&mut database, "node_t", Some(wrapped_type(
+        let id = add_type(&mut database, "node_t", Some(wrapped_type(
             DMLTypeKind::Pointer, named_type("node_t"))));
 
         let node = resolved(&named_type("node_t"), &database);
         assert!(node.equivalent(&node));
+        let recursion_marker = DMLResolvedType::Actual(DMLConcreteType {
+            kind: DMLConcreteTypeKind::Typedef {
+                id,
+                underlying: None,
+            },
+            span: ZeroSpan::invalid("resolved-type-test.dml"),
+        });
+        assert!(node.equivalent(&recursion_marker));
+        assert!(recursion_marker.equivalent(&node));
     }
 
     #[test]
@@ -1034,6 +1244,34 @@ mod tests {
     }
 
     #[test]
+    fn struct_equivalence_uses_declaration_identity() {
+        let span = ZeroSpan::invalid("same-struct.dml");
+        let first = DMLConcreteType {
+            kind: DMLConcreteTypeKind::Struct {
+                identity: span,
+                fields: vec![],
+            },
+            span,
+        };
+        let second = DMLConcreteType {
+            kind: DMLConcreteTypeKind::Struct {
+                identity: span,
+                fields: vec![DMLResolvedMember {
+                    name: Some("field".to_string()),
+                    typed: DMLConcreteType {
+                        kind: DMLConcreteTypeKind::Named("int".to_string()),
+                        span,
+                    },
+                }],
+            },
+            span,
+        };
+
+        assert!(first.equivalent(&second));
+        assert!(second.equivalent(&first));
+    }
+
+    #[test]
     fn arithmetic_types_can_store_each_other() {
         let database = TypeDatabase::default();
 
@@ -1049,6 +1287,33 @@ mod tests {
             .can_store(&resolved(&named_type("bool"), &database)));
         assert!(!resolved(&named_type("uint8"), &database)
             .can_store(&resolved(&named_type("bool"), &database)));
+    }
+
+    #[test]
+    fn bitfields_store_integers_like_their_unsigned_backing_type() {
+        let database = TypeDatabase::default();
+        let span = ZeroSpan::invalid("bitfield-storage-test.dml");
+        let bitfields = DMLResolvedType::Actual(DMLConcreteType {
+            kind: DMLConcreteTypeKind::Bitfields {
+                identity: span,
+                width: Some("8".to_string()),
+                fields: vec![],
+            },
+            span,
+        });
+        let uint8 = resolved(&named_type("uint8"), &database);
+        let uint16 = resolved(&named_type("uint16"), &database);
+        let floating = resolved(&named_type("double"), &database);
+
+        assert_eq!(bitfields.storage_compatibility(&uint8),
+                   StorageCompatibility::Compatible);
+        assert_eq!(bitfields.storage_compatibility(&uint16),
+                   StorageCompatibility::Truncates(
+                       IntegerTruncation::AllTargets));
+        assert_eq!(bitfields.storage_compatibility(&floating),
+                   StorageCompatibility::Incompatible);
+        assert_eq!(uint8.storage_compatibility(&bitfields),
+                   StorageCompatibility::Compatible);
     }
 
     #[test]
@@ -1154,6 +1419,33 @@ mod tests {
             .can_store(&resolved(&int_pointer, &database)));
         assert!(!resolved(&int_pointer, &database)
             .can_store(&resolved(&const_int_pointer, &database)));
+    }
+
+    #[test]
+    fn comparison_modes_match_dmlc_pointer_semantics() {
+        let database = TypeDatabase::default();
+        let int_pointer = resolved(&wrapped_type(
+            DMLTypeKind::Pointer, named_type("int")), &database);
+        let int_array = resolved(&array_type(named_type("int"), Some(4)),
+                                 &database);
+        let const_int_pointer = resolved(&wrapped_type(
+            DMLTypeKind::Pointer,
+            wrapped_type(DMLTypeKind::Const, named_type("int"))),
+            &database);
+        let void_pointer = resolved(&wrapped_type(
+            DMLTypeKind::Pointer, named_type("void")), &database);
+
+        assert!(int_pointer.equivalent_unqualified(&int_array));
+        assert!(!int_pointer.equivalent_unqualified_with_mode(
+            &int_array, TypeComparisonMode::Strict));
+        assert!(int_pointer.equivalent_unqualified(&const_int_pointer));
+        assert!(!int_pointer.equivalent_unqualified_with_mode(
+            &const_int_pointer, TypeComparisonMode::Strict));
+        assert_eq!(void_pointer.storage_compatibility(&const_int_pointer),
+                   StorageCompatibility::Compatible);
+        assert_eq!(void_pointer.storage_compatibility_with_mode(
+            &const_int_pointer, TypeComparisonMode::Strict),
+            StorageCompatibility::Incompatible);
     }
 
     #[test]

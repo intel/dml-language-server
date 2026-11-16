@@ -4,29 +4,66 @@
 dml 1.4;
 device type_narrowing;
 
+typedef int int_alias; // @loc[13]=int_alias_def
+typedef long long_alias; // @loc[14]=long_alias_def
+typedef uint64 uint64_alias; // @loc[16]=uint64_alias_def
+typedef uint8 uint8_alias; // @loc[15]=uint8_alias_def
+
 bank diagnostics {
+    // @loc[36]=value_decl @goto-def-decl[36]->value_decl @goto-type-def[36]->uint8_alias_def
+    method takes_uint8(uint8_alias value) {
+    }
+
+    method returns_uint64() -> (uint64) {
+        return 256;
+    }
+
+    // @loc[43]=wide_decl @goto-def-decl[43]->wide_decl @goto-type-def[43]->uint64_alias_def
+    method truncating_return(uint64_alias wide) -> (uint8) {
+        return wide;
+    }
+
+    // @loc[50]=wide_decl_2 @goto-def-decl[50]->wide_decl_2 @goto-type-def[50]->uint64_alias_def
+    method suppressed_warning_paths(uint64_alias wide) {
+        takes_uint8(wide);
+        // @loc[27]=from_call_decl @goto-def-decl[27]->from_call_decl @goto-type-def[27]->uint8_alias_def
+        local uint8_alias from_call = returns_uint64();
+        // @loc[27]=array_decl @goto-def-decl[27]->array_decl @goto-type-def[27]->uint8_alias_def
+        local uint8_alias array[1] = {wide};
+    }
+
     method narrowing() {
-        local uint64 wide = 1;
-        local uint8 fitting_literal = 255;
-        // @diag-warning: truncated_literal | related->truncated_literal_decl: declared as 'uint8' here
-        local uint8 truncated_literal = 256; // @loc[21]=truncated_literal_decl
-        // @diag-warning: narrowed | related->narrowed_decl: declared as 'uint8' here
-        local uint8 narrowed = wide; // @loc[21]=narrowed_decl
-        // @diag-warning: platform_narrowed | related->platform_narrowed_decl: declared as 'long' here
-        local long platform_narrowed = wide; // @loc[20]=platform_narrowed_decl
-        local uint8 fitting_assignment;
+        // @loc[28]=wide_decl_3 @goto-def-decl[28]->wide_decl_3 @goto-type-def[28]->uint64_alias_def
+        local uint64_alias wide = 1;
+        // @loc[27]=fitting_literal_decl @goto-def-decl[27]->fitting_literal_decl @goto-type-def[27]->uint8_alias_def
+        local uint8_alias fitting_literal = 255;
+        // @disabled-diag-warning: truncated_literal | related->truncated_literal_decl: declared as 'uint8' here
+        // @loc[27]=truncated_literal_decl @goto-def-decl[27]->truncated_literal_decl @goto-type-def[27]->uint8_alias_def
+        local uint8_alias truncated_literal = 256; // @disabled-location[27]=truncated_literal_decl
+        // @disabled-diag-warning: narrowed | related->narrowed_decl: declared as 'uint8' here
+        // @loc[27]=narrowed_decl @goto-def-decl[27]->narrowed_decl @goto-type-def[27]->uint8_alias_def
+        local uint8_alias narrowed = wide; // @disabled-location[27]=narrowed_decl
+        // @disabled-diag-warning: platform_narrowed | related->platform_narrowed_decl: declared as 'long' here
+        // @loc[26]=platform_narrowed_decl @goto-def-decl[26]->platform_narrowed_decl @goto-type-def[26]->long_alias_def
+        local long_alias platform_narrowed = wide; // @disabled-location[26]=platform_narrowed_decl
+        // @loc[27]=fitting_assignment_decl @goto-def-decl[27]->fitting_assignment_decl @goto-type-def[27]->uint8_alias_def
+        local uint8_alias fitting_assignment;
         fitting_assignment = 255;
-        local uint8 narrowed_assignment; // @loc[21]=narrowed_assignment_decl
-        // @diag-warning: narrowed_assignment | related->narrowed_assignment_decl: declared as 'uint8' here
+        // @loc[27]=narrowed_assignment_decl @goto-def-decl[27]->narrowed_assignment_decl @goto-type-def[27]->uint8_alias_def
+        local uint8_alias narrowed_assignment; // @disabled-location[27]=narrowed_assignment_decl
+        // @disabled-diag-warning: narrowed_assignment | related->narrowed_assignment_decl: declared as 'uint8' here
         narrowed_assignment = wide;
-        local uint8 truncated_assignment; // @loc[21]=truncated_assignment_decl
-        // @diag-warning: truncated_assignment | related->truncated_assignment_decl: declared as 'uint8' here
+        // @loc[27]=truncated_assignment_decl @goto-def-decl[27]->truncated_assignment_decl @goto-type-def[27]->uint8_alias_def
+        local uint8_alias truncated_assignment; // @disabled-location[27]=truncated_assignment_decl
+        // @disabled-diag-warning: truncated_assignment | related->truncated_assignment_decl: declared as 'uint8' here
         truncated_assignment = 256;
-        local long platform_assignment; // @loc[20]=platform_assignment_decl
-        // @diag-warning: platform_assignment | related->platform_assignment_decl: declared as 'long' here
+        // @loc[26]=platform_assignment_decl @goto-def-decl[26]->platform_assignment_decl @goto-type-def[26]->long_alias_def
+        local long_alias platform_assignment; // @disabled-location[26]=platform_assignment_decl
+        // @disabled-diag-warning: platform_assignment | related->platform_assignment_decl: declared as 'long' here
         platform_assignment = wide;
-        local int incompatible_assignment; // @loc[19]=incompatible_assignment_decl
-        // @diag-error: incompatible_assignment | related->incompatible_assignment_decl: declared as 'int' here
+        // @goto-def-decl[25]->incompatible_assignment_decl @goto-type-def[25]->int_alias_def
+        local int_alias incompatible_assignment; // @loc[25]=incompatible_assignment_decl
+        // @diag-error: incompatible_assignment | related->incompatible_assignment_decl: declared as 'int_alias' here
         incompatible_assignment = "123";
     }
 }

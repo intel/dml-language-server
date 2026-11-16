@@ -773,9 +773,12 @@ fn setup_test_with_imports(
     let loaded_files: Vec<LoadedFile> = filenames.iter().map(|filename| {
         let file_path = base_dir.join(filename);
         let canon = load_isolated_analysis(&analysis, &vfs, &file_path);
-        verify_no_parse_errors(&analysis, &canon, filename);
         let (locations, operations, diagnostics) =
             collect_file_annotations(&file_path, filename, &canon, &analysis);
+        // Files with diagnostic annotations assert their parse errors instead
+        if diagnostics.is_empty() {
+            verify_no_parse_errors(&analysis, &canon, filename);
+        }
         let is_device = analysis.lock().unwrap()
             .get_isolated_analysis(&canon)
             .expect("isolated analysis must exist for just-loaded file")
@@ -1012,7 +1015,7 @@ mod tests {
                 &setup.ctx, &position, &mut HashSet::new()).unwrap();
             assert_eq!(references.len(), 1);
         }
-        run_annotation_tests(&setup.ctx, &setup.main_file, setup.annotations);
+        run_annotation_tests(&setup.ctx, &setup.main_file, &setup.annotations);
     }
 
     #[test]
@@ -1030,10 +1033,7 @@ mod tests {
         descriptions.sort();
         assert_eq!(descriptions, vec![
             "Conflicting assignments to parameter 'shared_default'",
-            "Conflicting assignments to parameter 'shared_default'",
             "Conflicting assignments to parameter 'shared_fixed'",
-            "Conflicting assignments to parameter 'shared_fixed'",
-            "Invalid assignment to auto-parameter 'shared_auto'",
             "Invalid assignment to auto-parameter 'shared_auto'",
         ], "unexpected parameter conflicts: {:#?}", errors);
         for error in errors {
@@ -1096,6 +1096,69 @@ mod tests {
     fn test_type_variables() {
         init_logging();
         let setup = setup_test(&["type_variables.dml"]);
+        run_fixture_annotations(&setup);
+    }
+
+    #[test]
+    fn test_type_member_access() {
+        init_logging();
+        let setup = setup_test(&["type_member_access.dml"]);
+        run_fixture_annotations(&setup);
+    }
+
+    #[test]
+    fn test_type_definitions() {
+        init_logging();
+        let setup = setup_test(&["type_definitions.dml"]);
+        run_fixture_annotations(&setup);
+    }
+
+    #[test]
+    fn test_lookup_misc() {
+        init_logging();
+        let setup = setup_test(&["lookup_misc.dml"]);
+        run_fixture_annotations(&setup);
+    }
+
+    #[test]
+    fn test_lookup_scopes() {
+        init_logging();
+        let setup = setup_test(&["lookup_scopes.dml"]);
+        run_fixture_annotations(&setup);
+    }
+
+    #[test]
+    fn test_diag_structure() {
+        init_logging();
+        let setup = setup_test(&["diag_structure.dml"]);
+        run_fixture_annotations(&setup);
+    }
+
+    #[test]
+    fn test_diag_parameters() {
+        init_logging();
+        let setup = setup_test(&["diag_parameters.dml"]);
+        run_fixture_annotations(&setup);
+    }
+
+    #[test]
+    fn test_diag_methods() {
+        init_logging();
+        let setup = setup_test(&["diag_methods.dml"]);
+        run_fixture_annotations(&setup);
+    }
+
+    #[test]
+    fn test_diag_types() {
+        init_logging();
+        let setup = setup_test(&["diag_types.dml"]);
+        run_fixture_annotations(&setup);
+    }
+
+    #[test]
+    fn test_diag_objects() {
+        init_logging();
+        let setup = setup_test(&["diag_objects.dml"]);
         run_fixture_annotations(&setup);
     }
 
@@ -1315,14 +1378,15 @@ mod tests {
     #[test]
     fn test_token_at_position_recovers_full_identifier() {
         init_logging();
-        // basic_lookup.dml line 10 (1-indexed) is:
-        //     `template base_template { ...`
-        // so `base_template` occupies 0-indexed columns 9..=21.
+        // basic_lookup.dml has a line `template base_template { ...`, so
+        // `base_template` occupies 0-indexed columns 9..=21.
         let setup = setup_test(&["basic_lookup.dml"]);
         let content = std::fs::read_to_string(&setup.main_file)
             .expect("failed to read fixture");
         let file: TextFile = content.parse().expect("failed to parse fixture text");
-        let row = 9; // 0-indexed line 10
+        let row = content.lines()
+            .position(|line|line.starts_with("template base_template "))
+            .expect("fixture should declare base_template") as u32;
 
         let at = |col: u32| token_at_position(
             &setup.analysis,
@@ -1363,7 +1427,7 @@ mod tests {
         assert!(setup.annotations.iter().all(|annotation|
             matches!(annotation.token.as_str(), "container" | "value" | "read")),
             "unexpected token text: {:?}", setup.annotations);
-        run_annotation_tests(&setup.ctx, &setup.main_file, setup.annotations);
+        run_annotation_tests(&setup.ctx, &setup.main_file, &setup.annotations);
     }
 
     #[test]
@@ -1547,14 +1611,20 @@ mod tests {
     #[track_caller]
     fn run_diagnostic_annotations(setup: &TestSetup) {
         let analysis = setup.analysis.lock().unwrap();
-        let device = analysis.get_device_analysis(&setup.main_canon_path)
-            .expect("device analysis should exist");
         let fixture_paths: HashSet<_> = setup.fixture_paths.iter()
             .map(|path|rel_to_test_files(path))
             .collect();
-        let mut actual: Vec<_> = device.errors.iter()
+        let device_errors = analysis.get_device_analysis(&setup.main_canon_path)
+            .into_iter()
+            .flat_map(|device|device.errors.iter())
+            .flat_map(|(path, errors)|errors.iter()
+                      .map(move |error|(path.clone(), error)));
+        let isolated_errors = analysis.isolated_analysis.values()
+            .map(|isolated|&isolated.stored)
+            .flat_map(|isolated|isolated.errors.iter()
+                      .map(move |error|(isolated.path.to_path_buf(), error)));
+        let mut actual: Vec<_> = device_errors.chain(isolated_errors)
             .filter(|(path, _)| fixture_paths.contains(&rel_to_test_files(path)))
-            .flat_map(|(path, errors)|errors.iter().map(move |error|(path.as_path(), error)))
             .filter(|(_, error)|!error.description.starts_with("Could not find file;"))
             .collect();
         actual.sort_by_key(|(path, error)|(

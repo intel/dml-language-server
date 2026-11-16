@@ -39,6 +39,28 @@ impl StructureSymbol for ForEachIdentifier {
     }
 }
 
+// A name in 'after hook -> (a, b): ...', usable in the call arguments
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct MessageComponent(pub DMLString);
+
+impl DeclarationSpan for MessageComponent {
+    fn span(&self) -> &ZeroSpan {
+        self.0.span()
+    }
+}
+
+impl DMLNamed for MessageComponent {
+    fn name(&self) -> &DMLString {
+        &self.0
+    }
+}
+
+impl StructureSymbol for MessageComponent {
+    fn kind(&self) -> DMLSymbolKind {
+        DMLSymbolKind::Local
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ForEach {
     pub identifier: ForEachIdentifier,
@@ -463,7 +485,7 @@ pub enum AfterExpression {
     // Note: We allow None here in order to not double-report
     // cases where a non-identifier has been providied as a binding
     // (it would report both wrong number of bindings and a parser error)
-    Hook(Expression, Vec<Option<String>>),
+    Hook(Expression, Vec<Option<MessageComponent>>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -492,13 +514,15 @@ impl After {
                     AfterExpression::Hook(
                         ExpressionKind::to_expression(
                             hook, report, file)?,
-                        vec![bind.read_leaf(file.file)]),
+                        vec![DMLString::from_token(bind, file)
+                             .map(MessageComponent)]),
                 statement::AfterTiming::HookBindList(hook, _, _, binds, _) =>
                     AfterExpression::Hook(
                         ExpressionKind::to_expression(
                             hook, report, file)?,
                         binds.iter()
-                            .map(|(bind, _)|bind.read_leaf(file.file))
+                            .map(|(bind, _)|DMLString::from_token(bind, file)
+                                 .map(MessageComponent))
                             .collect()),
             }));
         let call = ExpressionKind::to_expression(
@@ -513,6 +537,23 @@ impl After {
 impl DeclarationSpan for After {
     fn span(&self) -> &ZeroSpan {
         &self.span
+    }
+}
+
+impl SymbolContainer for After {
+    fn symbols(&self) -> Vec<&dyn StructureSymbol> {
+        self.message_components().map(
+            |component|component as &dyn StructureSymbol).collect()
+    }
+}
+
+impl After {
+    pub fn message_components(&self)
+                              -> impl Iterator<Item = &MessageComponent> {
+        match &self.after {
+            Some(AfterExpression::Hook(_, components)) => components.as_slice(),
+            _ => &[],
+        }.iter().flatten().filter(|component|component.0.val != "_")
     }
 }
 
@@ -1181,6 +1222,7 @@ impl SymbolContainer for StatementKind {
             StatementKind::TryCatch(stmnt) => stmnt.symbols(),
             StatementKind::VariableDecl(stmnt) => stmnt.symbols(),
             StatementKind::Compound(stmnt) => stmnt.symbols(),
+            StatementKind::After(stmnt) => stmnt.symbols(),
             _ => vec![],
         }
     }

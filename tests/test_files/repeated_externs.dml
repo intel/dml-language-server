@@ -3,6 +3,8 @@
 dml 1.4;
 
 device repeated_externs;
+
+typedef int int_alias; // @loc[13]=int_alias_def
 import "repeated_extern_import.dml";
 
 extern int shared_value; // @loc[12]=value @goto-ref[12]->value_use
@@ -11,9 +13,11 @@ extern int shared_function(int argument); // @loc[12]=function
 extern int shared_function(int renamed_argument); // @loc[12]=function_again
 
 method use_externs() -> (int) {
-    local int result = shared_value; // @loc[24]=value_use @goto-def-decl[24]->value,value_again,repeated_extern_import.dml:imported_value
+    // @loc[21]=result_decl @goto-def-decl[21]->result_decl @goto-type-def[21]->int_alias_def
+    local int_alias result = shared_value; // @loc[30]=value_use @goto-def-decl[30]->value,value_again,repeated_extern_import.dml:imported_value
     return shared_function(result); // @goto-def-decl[12]->function,function_again,repeated_extern_import.dml:imported_function
 }
 
 extern int colliding_name;
+// Loses the name collision to the extern, so has no symbol of its own
 session int colliding_name;

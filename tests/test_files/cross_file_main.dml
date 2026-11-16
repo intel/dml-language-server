@@ -4,6 +4,8 @@ dml 1.4;
 
 device cross_file_test;
 
+typedef int int_alias; // @loc[13]=int_alias_def
+
 import "imported_file.dml";
 
 // Bank using imported template
@@ -16,8 +18,9 @@ bank imported_bank is imported_template { // @goto-def-decl[27]->imported_file.d
         // Reference to imported method
         this.imported_method(); // @goto-def-decl[14]->imported_file.dml:imported_method
         // Reference to imported param
-        // @loc[28]=imported_param_ref
-        local int x = this.imported_param; // @goto-def-decl[28]->imported_file.dml:imported_param
+        // @loc[34]=imported_param_ref
+        // @loc[25]=x_decl @goto-def-decl[25]->x_decl @goto-type-def[25]->int_alias_def
+        local int_alias x = this.imported_param; // @goto-def-decl[34]->imported_file.dml:imported_param
     }
 }
 

@@ -4,6 +4,9 @@
 dml 1.4;
 device type_returns;
 
+typedef bool bool_alias; // @loc[14]=bool_alias_def
+typedef int int_alias; // @loc[13]=int_alias_def
+
 template shared_return_source {
     shared method shared_text() -> (const char *) {
         return "shared";
@@ -21,7 +24,8 @@ bank shared_return_diagnostics is shared_return_calls {
 }
 
 bank diagnostics {
-    method typed_pair(int argument, bool flag) -> (int, bool) {
+    // @loc[33]=argument_decl @goto-def-decl[33]->argument_decl @goto-type-def[33]->int_alias_def @loc[54]=flag_decl @goto-def-decl[54]->flag_decl @goto-type-def[54]->bool_alias_def
+    method typed_pair(int_alias argument, bool_alias flag) -> (int, bool) {
         return (argument, flag);
     }
 

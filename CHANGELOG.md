@@ -11,6 +11,14 @@
 - Fixed bug in template cycle detection that could cause crashes when an object
   instantiated a template involved in a cycle
 - Fixed bug in parser that could cause hangs when parsing broken 'layout' types
+- Adjusted range for error report related to mismatching `memoized` methods
+- The DLS will now report an error when a method override mismatches `startup` or `independent` qualifiers
+- Adjusted range for error report related to overriding non-default methods
+- The DLS will now report an error if it cannot determine a most-overriding method in an object
+- The DLS will now report ambiguous parameter overrides, even if these are hidden below a valid override
+- The DLS will now report an error if you declare multiple index variables of the same non-'_' name in a declaration
+- The DLS will now report `error` objects using their error message, mimicking DMLC reports more closely
+- Fixed the lookup of various symbols in nested scopes, including in method, switch, `#if`, and `after` scopes
 
 ## 0.9.22
 - Fixed an issue in server logging where the large allocations could be made by debug prints even at lower debug levels

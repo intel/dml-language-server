@@ -13,7 +13,7 @@ use crate::analysis::parsing::misc::{objident_filter, SingleInitializer};
 use crate::analysis::reference::{CodeReference, Reference, ReferenceKind,
                                  MaybeIsNodeRef, NodeRef};
 use crate::analysis::FileSpec;
-use crate::analysis::structure::expressions::DMLString;
+use crate::analysis::structure::expressions::{DMLString, MemberOp};
 use crate::analysis::{DeclarationSpan, LocalDMLError};
 use crate::vfs::TextFile;
 
@@ -133,12 +133,19 @@ impl TreeElement for MemberLiteralContent {
 impl MaybeIsNodeRef for MemberLiteralContent {
     fn maybe_noderef<'a>(&self, file: FileSpec<'a>) -> Option<NodeRef> {
         let left_noderef = self.left.maybe_noderef(file)?;
+        let op = if self.operation.get_token()
+            .is_some_and(|token|token.kind == TokenKind::Arrow) {
+                MemberOp::Arrow
+            } else {
+                MemberOp::Dot
+            };
         let right_node = DMLString::from_token(&self.right, file)?;
         let span = ZeroSpan::combine(
             *left_noderef.span(),
             *right_node.span());
         Some(NodeRef::Sub(
             Box::new(left_noderef),
+            op,
             right_node,
             span))
     }
@@ -458,6 +465,7 @@ impl TreeElement for IndexContent {
 impl MaybeIsNodeRef for IndexContent {
     fn maybe_noderef<'a>(&self, file: FileSpec<'a>) -> Option<NodeRef> {
         self.array.maybe_noderef(file)
+            .map(|array|NodeRef::Index(Box::new(array)))
     }
 }
 
