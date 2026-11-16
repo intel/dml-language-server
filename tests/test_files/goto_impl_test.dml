@@ -48,6 +48,7 @@ bank container_for_register {
 // Make sure goto-impl on template does not find template type references
 method m() {
     // @loc[11]=multi_use_template_as_type_1 @loc[52]=multi_use_template_as_type_2
+    // @loc[30]=m_decl @goto-def-decl[30]->m_decl @goto-type-def[30]->multi_use_tmpl
     local multi_use_template m = cast(group_multi, multi_use_template); // @goto-def-decl[11]->multi_use_tmpl @goto-def-decl[52]->multi_use_tmpl
 }
 

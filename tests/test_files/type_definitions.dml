@@ -1,0 +1,60 @@
+//  © 2026 Intel Corporation
+//  SPDX-License-Identifier: Apache-2.0 and MIT
+
+dml 1.4;
+device type_definitions;
+
+typedef int int_alias; // @loc[13]=int_alias_def
+
+// Go-to-definition finds the declaration of a name, while
+// go-to-type-definition finds the declaration of its type
+
+typedef uint32 addr_t; // @loc[16]=addr_t_def
+
+typedef struct {
+    addr_t x; // @loc[12]=x_def
+} point_t; // @loc[3]=point_t_def
+
+extern typedef struct {
+    void (*ping)(int value);
+} some_interface_interface_t; // @loc[3]=interface_t_def
+
+// @goto-def-decl[11]->implement_def @goto-type-def[11]->interface_t_def
+implement some_interface { // @loc[11]=implement_def
+    session addr_t foo; // @loc[20]=foo_def @goto-def-decl[20]->foo_def @goto-type-def[20]->addr_t_def
+    // @loc[27]=value_decl @goto-def-decl[27]->value_decl @goto-type-def[27]->int_alias_def
+    method ping(int_alias value) {}
+}
+
+template typed_t { // @loc[10]=typed_t_def
+    param tp : addr_t; // @loc[11]=tp_decl
+}
+
+group holder is typed_t { // @loc[7]=holder_def
+    param tp = 4; // @loc[11]=tp_def
+}
+
+// @goto-def-decl[17]->sp_def @goto-type-def[17]->point_t_def
+session point_t sp; // @loc[17]=sp_def
+// @goto-def-decl[14]->sa_def @goto-type-def[14]->addr_t_def
+saved addr_t sa; // @loc[14]=sa_def
+extern addr_t ea; // @loc[15]=ea_def
+// @goto-def-decl[17]->tref_def @goto-type-def[17]->typed_t_def
+session typed_t tref; // @loc[17]=tref_def
+
+// @goto-def-decl[20]->arg_def @goto-type-def[20]->addr_t_def
+method uses(addr_t arg) { // @loc[8]=uses_def @loc[20]=arg_def
+    // @goto-def-decl[15]->plain_def @goto-type-def[15]->
+    local int plain = 0; // @loc[15]=plain_def
+    // @goto-def-decl[18]->typed_def @goto-type-def[18]->addr_t_def
+    local addr_t typed = 0; // @loc[18]=typed_def
+    plain = 1; // @goto-def-decl[5]->plain_def @goto-type-def[5]->
+    typed = arg; // @goto-def-decl[5]->typed_def @goto-type-def[5]->addr_t_def @goto-def-decl[13]->arg_def @goto-type-def[13]->addr_t_def
+    typed = sa + ea; // @goto-def-decl[13]->sa_def @goto-type-def[13]->addr_t_def @goto-def-decl[18]->ea_def @goto-type-def[18]->addr_t_def
+    typed = sp.x; // @goto-def-decl[13]->sp_def @goto-type-def[13]->point_t_def @goto-def-decl[16]->x_def @goto-type-def[16]->addr_t_def
+    typed = some_interface.foo; // @goto-def-decl[13]->implement_def @goto-type-def[13]->interface_t_def @goto-def-decl[28]->foo_def @goto-type-def[28]->addr_t_def
+    typed = holder.tp; // @goto-def-decl[13]->holder_def @goto-type-def[13]-> @goto-def[20]->tp_def @goto-decl[20]->tp_decl @goto-type-def[20]->addr_t_def
+    // @loc[19]=t2_decl @goto-def-decl[19]->t2_decl @goto-type-def[19]->typed_t_def
+    local typed_t t2 = tref; // @goto-def-decl[24]->tref_def @goto-type-def[24]->typed_t_def
+    uses(typed); // @goto-def-decl[5]->uses_def @goto-type-def[5]-> @goto-type-def[10]->addr_t_def
+}

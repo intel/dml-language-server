@@ -22,4 +22,5 @@ group template_user is template_as_type {}
 // @goto-type-def[26]->template_as_type_def
 // @goto-def-decl[51]->template_user_def
 // @goto-def-decl[66]->template_as_type_def
+// @loc[26]=template_user_ref_decl @goto-def-decl[26]->template_user_ref_decl
 session template_as_type template_user_ref = cast(template_user, template_as_type);

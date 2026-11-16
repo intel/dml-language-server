@@ -4,6 +4,8 @@ dml 1.4;
 
 device multi_level_test;
 
+typedef int int_alias; // @loc[13]=int_alias_def
+
 // Test multiple levels of template inheritance (3 levels)
 // @loc[10]=shared_level_template
 template shared_level_template { // @goto-ref[10]->level_0_template_is_shared
@@ -73,9 +75,10 @@ bank multi_instance_bank {
         param upwards_param = 2;
         method use_param() {
             // Reference to template param - goto-def should go to template
-            // @loc[27]=reg1_this_ref
-            // @loc[32]=reg1_level_0_param_ref
-            local int x = this.level_0_param; // @goto-def[37]->level_2_level_0_param @goto-decl[37]->level_0_param
+            // @loc[33]=reg1_this_ref
+            // @loc[38]=reg1_level_0_param_ref
+            // @loc[29]=x_decl @goto-def-decl[29]->x_decl @goto-type-def[29]->int_alias_def
+            local int_alias x = this.level_0_param; // @goto-def[43]->level_2_level_0_param @goto-decl[43]->level_0_param
             // @loc[18]=reg_1_level_1_param_ref;
             x += level_1_param; // @goto-def[18]->level_2_level_1_param @goto-decl[18]->level_1_param
             // @loc[18]=reg_1_level_2_param_ref;
@@ -89,9 +92,10 @@ bank multi_instance_bank {
         param upwards_param = 4;
         method use_param() {
             // Reference to template param - goto-def should go to template
-            // @loc[27]=reg2_this_ref
-            // @loc[32]=reg2_level_0_param_ref
-            local int x = this.level_0_param; // @goto-def[37]->level_2_level_0_param @goto-decl[37]->level_0_param
+            // @loc[33]=reg2_this_ref
+            // @loc[38]=reg2_level_0_param_ref
+            // @loc[29]=x_decl_2 @goto-def-decl[29]->x_decl_2 @goto-type-def[29]->int_alias_def
+            local int_alias x = this.level_0_param; // @goto-def[43]->level_2_level_0_param @goto-decl[43]->level_0_param
             // @loc[18]=reg_2_level_1_param_ref;
             x += level_1_param; // @goto-def[18]->level_2_level_1_param @goto-decl[18]->level_1_param
             // @loc[18]=reg_2_level_2_param_ref;

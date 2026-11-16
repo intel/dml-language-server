@@ -1,0 +1,4 @@
+dml 1.4;
+template t {
+    group g2 { method m() { local int x = 1; x = 2; } }
+}

@@ -4,6 +4,8 @@ dml 1.4;
 
 device conditional_conflicts;
 
+typedef int int_alias; // @loc[13]=int_alias_def
+
 template exclusive_method {
     method exclusive_name() {}
 }
@@ -102,5 +104,6 @@ template exclusive_auto_assignment {
 
 extern int extern_int;
 #if (false) {
-    session int extern_int;
+    // @loc[23]=extern_int_decl @goto-def-decl[23]->extern_int_decl @goto-type-def[23]->int_alias_def
+    session int_alias extern_int;
 }

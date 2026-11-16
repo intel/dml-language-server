@@ -1,0 +1,149 @@
+dml 1.4;
+device diag_methods;
+
+// Method override and inheritance errors, mirroring DMLC's EMETH, EDMETH,
+// EAMBINH and EABSTEMPLATE
+
+typedef uint32 int_alias_t;
+
+template t {
+    inline method inline_args(inline x, int y) default {} // @loc[38]=inline_x @loc[45]=typed_y
+    method throwing() throws default {} // @loc[12]=throwing_decl
+    method int_args(uint32 a, int_alias_t b) default {} // @loc[28]=int_arg_a
+    method int_return() -> (int) default { return 0; } // @loc[12]=int_return_decl @loc[29]=int_return_type
+    method int_return_2() -> (int_alias_t, uint32) default { return (0, 0); } // @loc[44]=second_return_type
+    independent method indep() default {} // @loc[24]=indep_decl
+    method with_abstract_decls(); // @loc[12]=abstract_decl
+    // @diag-error: Wrong number of arguments in method override | related->abstract_decl: Overridden method declared here
+    method with_abstract_decls(int i) default {}
+    shared method sm() {} // @loc[19]=shared_sm
+    method nondefault() {} // @loc[12]=nondefault_decl
+}
+
+is t;
+
+// @diag-error: Cannot override non-default method | related->shared_sm: Non-default method declared here
+method sm() {}
+
+// @diag-error: Mismatching argument type in method override | related->inline_x: Corresponding argument declared here
+// @diag-error: Mismatching argument type in method override | related->typed_y: Corresponding argument declared here
+inline method inline_args(int x, inline y) {}
+
+// @diag-error: Non-throwing method cannot override throwing method | related->throwing_decl: Throwing method declared here
+method throwing() {}
+
+// @diag-error: Mismatching argument type in method override | related->int_arg_a: Corresponding argument declared here
+method int_args(char a, int_alias_t b) default {}
+
+// @diag-error: Mismatching return type in method override | related->int_return_type: Corresponding return type declared here
+method int_return() -> (char) default { return 0; }
+
+// @diag-error: Mismatching return type in method override | related->second_return_type: Corresponding return type declared here
+method int_return_2() -> (int_alias_t, char) default { return (0, 0); }
+
+// @diag-error: Cannot override non-default method | related->nondefault_decl: Non-default method declared here
+method nondefault() {}
+
+group g4 is t {
+    // @diag-error: qualified as independent, but the other is not | related->indep_decl: Overridden method declared here
+    method indep() {}
+    // @diag-error: qualified as independent, but the other is not | related->int_return_decl: Overridden method declared here
+    independent method int_return() -> (int) { return 0; }
+}
+
+// Typedefs are transparent in override signatures
+port p is t {
+    method int_args(int_alias_t a, uint32 b) {}
+    method int_return_2() -> (uint32, int_alias_t) { return (0, 0); }
+}
+
+template asm1 {
+    shared method m(); // @loc[19]=asm1_m
+}
+
+template asm2 {
+    shared method m(); // @loc[19]=asm2_m
+}
+
+// At most one abstract shared declaration is allowed, even when overridden
+// @diag-error: Conflicting definitions of method 'm' in asm4 | related->asm1_m: in asm1, related->asm2_m: in asm2
+template asm4 is (asm1, asm2) {
+    shared method m() {}
+}
+
+template asm6 is asm1 {
+    shared method m() default {} // @loc[19]=asm6_m
+}
+
+template asm7 is asm1 {
+    shared method m() default {} // @loc[19]=asm7_m
+}
+
+// No error: the template's own definition overrides both parents
+template asm8 is (asm6, asm7) {
+    shared method m() {}
+}
+
+template asm9 is asm1 {
+    shared method m() {} // @loc[19]=asm9_m
+}
+
+// @diag-error: Conflicting definitions of method 'm' in asm10 | related->asm6_m: in asm6, related->asm9_m: in asm9
+template asm10 is (asm6, asm9) {}
+
+// @diag-error: Conflicting definitions of method 'm' in ambiguous | related->asm6_m: Conflicting definition here, related->asm7_m: Conflicting definition here
+group ambiguous is (asm6, asm7);
+
+group resolved is (asm6, asm7) {
+    method m() {}
+}
+
+// Redundant instantiations do not hide which definition wins
+group redundant is (asm6, asm7, asm1, asm8);
+
+template shared_base {
+    shared method shared_default() default {}
+}
+
+// No error: a non-shared method may override a shared one
+template nonshared_override is shared_base {
+    method shared_default() {}
+}
+
+template nonshared_base {
+    method nonshared_default() default {} // @loc[12]=nonshared_decl
+}
+
+template shared_override is nonshared_base {
+    // @diag-error: Shared method cannot override non-shared method | related->nonshared_decl: Overridden method declared here
+    shared method nonshared_default() {}
+}
+
+template abstract_base { // @loc[10]=abstract_base_template
+    method abs();
+}
+
+// No error: non-shared abstract declarations may be repeated
+template abstract_again is abstract_base {
+    method abs();
+}
+
+group implements_abstract is abstract_again {
+    method abs() {}
+}
+
+template throws_base {
+    method may_throw() throws default {} // @loc[12]=may_throw_decl
+    method no_throw() default {} // @loc[12]=no_throw_decl
+}
+
+group throws_mismatch is throws_base {
+    // @diag-error: Non-throwing method cannot override throwing method | related->may_throw_decl: Throwing method declared here
+    method may_throw() {}
+    // @diag-error: Throwing method cannot override non-throwing method | related->no_throw_decl: Non-throwing method declared here
+    method no_throw() throws {}
+}
+
+// @diag-error: requires method 'abs' to be defined | related->abstract_base_template: Template defined here
+group unimplemented is abstract_base {
+}

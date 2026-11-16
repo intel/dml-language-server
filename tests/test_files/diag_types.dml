@@ -1,0 +1,129 @@
+dml 1.4;
+device diag_types;
+
+// Type errors, mirroring DMLC's ETYPE, EANONSTRUCT and ENAMECOLL for types
+
+// @diag-error: Unknown type: 'undefined_ret_t'
+extern undefined_ret_t undef_ret();
+// @diag-error: Unknown type: 'undefined_arg_t'
+extern void undef_arg(undefined_arg_t);
+// @diag-error: Unknown type: 'undefined_val_t'
+extern undefined_val_t undef_val;
+// @diag-error: Unknown type: 'undefined_func_t'
+typedef undefined_func_t undef_func();
+// @diag-error: Unknown type: 'undefined_typedef_arg_t'
+extern typedef void undef_typedef_arg(undefined_typedef_arg_t);
+// @diag-error: Unknown type: 'undefined_typedef_val_t'
+extern typedef undefined_typedef_val_t undef_typedef_val;
+
+typedef struct {
+    // @diag-error: Unknown type: 'undefined_member_t'
+    undefined_member_t member;
+    // @diag-error: Unknown type: 'undefined_pointee_t'
+    undefined_pointee_t *pointer;
+    // @diag-error: Unknown type: 'undefined_element_t'
+    undefined_element_t array[4];
+} has_undefined_members;
+
+template t {
+    // @diag-error: Unknown type: 'undefined_hook_t'
+    shared hook(undefined_hook_t) h;
+    // @diag-error: Unknown type: 'undefined_session_t'
+    session undefined_session_t ses;
+    // @diag-error: Unknown type: 'undefined_saved_t'
+    saved undefined_saved_t sav;
+    // @diag-error: Unknown type: 'undefined_param_t'
+    param p : undefined_param_t;
+    // @diag-error: Unknown type: 'undefined_marg_t'
+    // @diag-error: Unknown type: 'undefined_mret_t'
+    shared method m(bool a, undefined_marg_t b) -> (undefined_mret_t);
+    // @diag-error: Unknown type: 'undefined_narg_t'
+    // @diag-error: Unknown type: 'undefined_nret_t'
+    shared method n(bool a, undefined_narg_t b) -> (undefined_nret_t) {
+        assert false;
+    }
+}
+
+// Templates are checked even when never instantiated, except for the bodies
+// and signatures of non-shared methods
+template never_instantiated {
+    // @diag-error: Unknown type: 'undefined_unused_session_t'
+    session undefined_unused_session_t s;
+    method nonshared(undefined_nonshared_t x) {
+        local undefined_nonshared_local_t y;
+    }
+}
+
+// Declarations behind a false '#if' are not checked
+#if (false) {
+    session undefined_hidden_t hidden;
+    method hidden_method(undefined_hidden_arg_t x) {}
+}
+
+group uses_t is t {
+    param p = 0;
+    method m(bool a, int b) -> (int) {
+        return 0;
+    }
+}
+
+method locals() {
+    // @diag-error: Unknown type: 'undefined_local_t'
+    local undefined_local_t l;
+    // @diag-error: Unknown type: 'undefined_const_t'
+    local const undefined_const_t *cp;
+}
+
+// @diag-error: Cannot use anonymous struct type in argument type
+// @diag-error: Cannot use anonymous struct type in return type
+method anonymous_arg(struct { int i; } *arg) -> (struct { int j; }) {
+}
+
+typedef struct {
+    int x;
+} known_t;
+
+method fields(known_t k) -> (int) {
+    // @diag-error: Struct type has no field named 'y'
+    return k.y;
+}
+
+typedef int dup_t; // @loc[13]=first_dup
+// @diag-error: Duplicate typedef name; 'dup_t' | related->first_dup: Previously defined here
+typedef int dup_t;
+
+template typedef_collision { // @loc[10]=colliding_template
+}
+// @diag-error: Typedef name 'typedef_collision' collides with a template name | related->colliding_template: Template defined here
+typedef int typedef_collision;
+
+// Built-in type names, as accepted by DMLC's parse_type and initial typedefs
+method builtins() {
+    local uint1 a;
+    local int64 b;
+    local uint64_be_t c;
+    local int24_le_t d;
+    local bool e;
+    local double f;
+    local float g;
+    local char h;
+    local long i;
+    local ulong j;
+    local size_t k;
+    local ssize_t l;
+    local int64_t m;
+    local uint64_t n;
+    local void *o;
+    local integer_t p;
+    local uinteger_t q;
+    // @diag-error: Unknown type: 'int0'
+    local int0 bad_width;
+    // @diag-error: Unknown type: 'int65'
+    local int65 too_wide;
+    // @diag-error: Unknown type: 'uint8_xe_t'
+    local uint8_xe_t bad_endian;
+    // @diag-error: Unknown type: 'short'
+    local short bad_short;
+    // @diag-error: Unknown type: 'unsigned'
+    local unsigned bad_unsigned;
+}

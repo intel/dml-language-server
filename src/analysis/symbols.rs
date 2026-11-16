@@ -121,8 +121,10 @@ pub enum SymbolSource {
     MethodLocal(Arc<DMLMethodRef>, DMLString),
     // TODO: RC this if it's expensive
     Type(TypeId),
-    TypeMember(TypeId, ZeroSpan),
+    // (type containing the member, member name location)
+    TypeMember(TypeUse, ZeroSpan),
     Template(Arc<DMLTemplate>),
+    Loggroup(DMLString),
 }
 
 impl std::fmt::Debug for SymbolSource {
@@ -156,6 +158,10 @@ impl std::fmt::Debug for SymbolSource {
                 f.debug_struct("SymbolSource::Template")
                 .field("name", &templ.name)
                 .finish_non_exhaustive(),
+            SymbolSource::Loggroup(name) =>
+                f.debug_struct("SymbolSource::Loggroup")
+                .field("name", &name.val)
+                .finish(),
         }
     }
 }
@@ -183,7 +189,7 @@ impl SymbolSource {
     pub fn as_type(&self) -> Option<TypeId> {
         match self {
             Self::Type(typ) => Some(*typ),
-            Self::TypeMember(typ, _) => Some(*typ),
+            Self::TypeMember(TypeUse::Declared(typ), _) => Some(*typ),
             _ => None
         }
     }
@@ -212,6 +218,7 @@ impl SymbolSource {
             SymbolSource::Type(_) => None,
             SymbolSource::TypeMember(_, _) => None,
             SymbolSource::Template(templ) => Some(&templ.name),
+            SymbolSource::Loggroup(name) => Some(&name.val),
         }
     }
 }
@@ -246,6 +253,8 @@ pub struct Symbol {
     pub type_definitions: HashSet<ZeroSpan>,
     // TODO: RC or box this if it's expensive
     pub typed: Option<TypeUse>,
+    // Pointer and array layers wrapping 'typed' in the declared type
+    pub indirections: u32,
 }
 
 // We do this often enough to warrant a reusable pattern,
@@ -368,6 +377,7 @@ impl Symbol {
             bases: Vec::default(),
             type_definitions: HashSet::default(),
             typed: None,
+            indirections: 0,
         }
     }
 

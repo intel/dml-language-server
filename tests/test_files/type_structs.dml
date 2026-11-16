@@ -4,9 +4,18 @@
 dml 1.4;
 device type_structs;
 
+typedef bool bool_alias; // @loc[14]=bool_alias_def
+typedef int int_alias; // @loc[13]=int_alias_def
+
 typedef struct {
     int value;
 } diagnostic_inner_t;
+
+extern typedef struct {
+    transaction_t *prev;
+    struct { } *_cache;
+// @loc[3]=transaction_t_def
+} transaction_t;
 
 typedef struct {
     int value;
@@ -17,31 +26,52 @@ typedef struct {
 } diagnostic_outer_t; // @goto-ref[3]->outer_type_use,outer_pointer_type_use
 
 bank diagnostics {
+    // @loc[52]=modified_txn_decl @goto-def-decl[52]->modified_txn_decl @goto-type-def[52]->transaction_t_def
+    method recursive_struct_pointer(transaction_t *modified_txn) {
+        // @loc[30]=prev_modified_decl @goto-def-decl[30]->prev_modified_decl @goto-type-def[30]->transaction_t_def
+        local transaction_t *prev_modified = modified_txn->prev;
+    }
+
     method struct_fields(
         // @loc[9]=outer_type_use
+        // @loc[28]=value_decl @goto-def-decl[28]->value_decl @goto-type-def[28]->outer_type_def
         diagnostic_outer_t value, // @goto-def-decl[9]->outer_type_def
         // @loc[9]=outer_pointer_type_use
+        // @loc[29]=pointer_decl @goto-def-decl[29]->pointer_decl @goto-type-def[29]->outer_type_def
         diagnostic_outer_t *pointer) { // @goto-def-decl[9]->outer_type_def
-        local int scalar_field = value.value;
-        local int *pointer_field = value.pointer;
-        local int *array_field = value.array;
-        local int array_element = value.array[0];
-        local int nested_field = value.nested.value;
-        local int indirect_field = pointer->value;
+        // @loc[25]=scalar_field_decl @goto-def-decl[25]->scalar_field_decl @goto-type-def[25]->int_alias_def
+        local int_alias scalar_field = value.value;
+        // @loc[26]=pointer_field_decl @goto-def-decl[26]->pointer_field_decl @goto-type-def[26]->int_alias_def
+        local int_alias *pointer_field = value.pointer;
+        // @loc[26]=array_field_decl @goto-def-decl[26]->array_field_decl @goto-type-def[26]->int_alias_def
+        local int_alias *array_field = value.array;
+        // @loc[25]=array_element_decl @goto-def-decl[25]->array_element_decl @goto-type-def[25]->int_alias_def
+        local int_alias array_element = value.array[0];
+        // @loc[25]=nested_field_decl @goto-def-decl[25]->nested_field_decl @goto-type-def[25]->int_alias_def
+        local int_alias nested_field = value.nested.value;
+        // @loc[25]=indirect_field_decl @goto-def-decl[25]->indirect_field_decl @goto-type-def[25]->int_alias_def
+        local int_alias indirect_field = pointer->value;
 
-        // @diag-error: bad_scalar_field | related->bad_scalar_field_decl: declared as 'bool' here
-        local bool bad_scalar_field = value.value; // @loc[20]=bad_scalar_field_decl
-        // @diag-error: bad_pointer_field | related->bad_pointer_field_decl: declared as 'int' here
-        local int bad_pointer_field = value.pointer; // @loc[19]=bad_pointer_field_decl
-        // @diag-error: bad_array_field | related->bad_array_field_decl: declared as 'bool' here
-        local bool bad_array_field = value.array; // @loc[20]=bad_array_field_decl
-        // @diag-error: bad_array_element | related->bad_array_element_decl: declared as 'bool' here
-        local bool bad_array_element = pointer->array[0]; // @loc[20]=bad_array_element_decl
-        // @diag-error: bad_nested_field | related->bad_nested_field_decl: declared as 'bool' here
-        local bool bad_nested_field = value.nested.value; // @loc[20]=bad_nested_field_decl
-        // @diag-error: bad_indirect_field | related->bad_indirect_field_decl: declared as 'bool' here
-        local bool bad_indirect_field = pointer->value; // @loc[20]=bad_indirect_field_decl
+        // @diag-error: bad_scalar_field | related->bad_scalar_field_decl: declared as 'bool_alias' here
+        // @goto-def-decl[26]->bad_scalar_field_decl @goto-type-def[26]->bool_alias_def
+        local bool_alias bad_scalar_field = value.value; // @loc[26]=bad_scalar_field_decl
+        // @diag-error: bad_pointer_field | related->bad_pointer_field_decl: declared as 'int_alias' here
+        // @goto-def-decl[25]->bad_pointer_field_decl @goto-type-def[25]->int_alias_def
+        local int_alias bad_pointer_field = value.pointer; // @loc[25]=bad_pointer_field_decl
+        // @diag-error: bad_array_field | related->bad_array_field_decl: declared as 'bool_alias' here
+        // @goto-def-decl[26]->bad_array_field_decl @goto-type-def[26]->bool_alias_def
+        local bool_alias bad_array_field = value.array; // @loc[26]=bad_array_field_decl
+        // @diag-error: bad_array_element | related->bad_array_element_decl: declared as 'bool_alias' here
+        // @goto-def-decl[26]->bad_array_element_decl @goto-type-def[26]->bool_alias_def
+        local bool_alias bad_array_element = pointer->array[0]; // @loc[26]=bad_array_element_decl
+        // @diag-error: bad_nested_field | related->bad_nested_field_decl: declared as 'bool_alias' here
+        // @goto-def-decl[26]->bad_nested_field_decl @goto-type-def[26]->bool_alias_def
+        local bool_alias bad_nested_field = value.nested.value; // @loc[26]=bad_nested_field_decl
+        // @diag-error: bad_indirect_field | related->bad_indirect_field_decl: declared as 'bool_alias' here
+        // @goto-def-decl[26]->bad_indirect_field_decl @goto-type-def[26]->bool_alias_def
+        local bool_alias bad_indirect_field = pointer->value; // @loc[26]=bad_indirect_field_decl
         // @diag-error: Struct type has no field named 'missing'
-        local int missing_field = value.missing;
+        // @loc[25]=missing_field_decl @goto-def-decl[25]->missing_field_decl @goto-type-def[25]->int_alias_def
+        local int_alias missing_field = value.missing;
     }
 }

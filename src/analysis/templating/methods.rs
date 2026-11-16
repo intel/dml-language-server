@@ -83,6 +83,7 @@ pub fn eval_method_args(args: &[MethodArgument], types: &TypeDatabase,
     args.iter().map(|arg|
                     match arg {
                         MethodArgument::Typed(name, typed) => {
+                            types.report_unknown_types(typed, report);
                             let (structs, type_ref) = eval_type_simple(
                                 typed, types);
                             for s in &structs {
@@ -116,6 +117,7 @@ pub fn eval_method_returns(returns: &[DMLType], types: &TypeDatabase,
                            report: &mut Vec<DMLError>)
                        -> Vec<DMLResolvedType> {
     returns.iter().map(|ret| {
+        types.report_unknown_types(ret, report);
         let (structs, type_ref) = eval_type_simple(ret, types);
         for s in &structs {
             report.push(
@@ -252,7 +254,7 @@ impl MethodExpressionResolver<'_> {
                     target_name, truncation.target_suffix()),
                 StorageCompatibility::Compatible => continue,
             };
-            report.push(DMLError {
+            let error = DMLError {
                 span: *expression.span(),
                 description,
                 related: vec![(declaration.name.span,
@@ -262,7 +264,13 @@ impl MethodExpressionResolver<'_> {
                         DiagnosticSeverity::ERROR,
                     _ => DiagnosticSeverity::WARNING,
                 }),
-            });
+            };
+            match compatibility {
+                StorageCompatibility::Truncates(_) => if false {
+                    report.push(error);
+                },
+                _ => report.push(error),
+            }
         }
     }
 }
@@ -506,7 +514,7 @@ fn check_local_variable_types(statement: &Statement,
                     truncation.target_suffix()),
                 StorageCompatibility::Compatible => continue,
             };
-            report.push(DMLError {
+            let error = DMLError {
                 span: source.span,
                 description,
                 related: vec![(*target.span(),
@@ -516,7 +524,13 @@ fn check_local_variable_types(statement: &Statement,
                         DiagnosticSeverity::ERROR,
                     _ => DiagnosticSeverity::WARNING,
                 }),
-            });
+            };
+            match compatibility {
+                StorageCompatibility::Truncates(_) => if false {
+                    report.push(error);
+                },
+                _ => report.push(error),
+            }
         }
     }
 
@@ -550,39 +564,49 @@ fn check_local_variable_types(statement: &Statement,
                 related,
                 severity: Some(DiagnosticSeverity::ERROR),
             }),
-            (StorageCompatibility::Truncates(truncation), Some(_)) => Some(DMLError {
-                span: *expression.span(),
-                description: if initializer {
-                    format!("Initializer for local variable '{}' does not fit in \
-                             type '{}'{} and will be truncated",
-                            variable_name, target_name,
-                            truncation.target_suffix())
+            (StorageCompatibility::Truncates(truncation), Some(_)) => {
+                if false {
+                    Some(DMLError {
+                        span: *expression.span(),
+                        description: if initializer {
+                            format!("Initializer for local variable '{}' does not fit in \
+                                     type '{}'{} and will be truncated",
+                                    variable_name, target_name,
+                                    truncation.target_suffix())
+                        } else {
+                            format!("Value assigned to local variable '{}' does not fit in \
+                                     type '{}'{} and will be truncated",
+                                    variable_name, target_name,
+                                    truncation.target_suffix())
+                        },
+                        related,
+                        severity: Some(DiagnosticSeverity::WARNING),
+                    })
                 } else {
-                    format!("Value assigned to local variable '{}' does not fit in \
-                             type '{}'{} and will be truncated",
-                            variable_name, target_name,
-                            truncation.target_suffix())
-                },
-                related,
-                severity: Some(DiagnosticSeverity::WARNING),
-            }),
+                    None
+                }
+            },
             (StorageCompatibility::Truncates(truncation), None) =>
-                Some(DMLError {
-                    span: *expression.span(),
-                    description: if initializer {
-                        format!("Initializer for local variable '{}' of type '{}' \
-                                 may be truncated when stored in type '{}'{}",
-                                variable_name, source_name, target_name,
-                                truncation.target_suffix())
-                    } else {
-                        format!("Assignment to local variable '{}' from type '{}' \
-                                 may be truncated when stored in type '{}'{}",
-                                variable_name, source_name, target_name,
-                                truncation.target_suffix())
-                    },
-                    related,
-                    severity: Some(DiagnosticSeverity::WARNING),
-                }),
+                if false {
+                    Some(DMLError {
+                        span: *expression.span(),
+                        description: if initializer {
+                            format!("Initializer for local variable '{}' of type '{}' \
+                                     may be truncated when stored in type '{}'{}",
+                                    variable_name, source_name, target_name,
+                                    truncation.target_suffix())
+                        } else {
+                            format!("Assignment to local variable '{}' from type '{}' \
+                                     may be truncated when stored in type '{}'{}",
+                                    variable_name, source_name, target_name,
+                                    truncation.target_suffix())
+                        },
+                        related,
+                        severity: Some(DiagnosticSeverity::WARNING),
+                    })
+                } else {
+                    None
+                },
             (StorageCompatibility::Compatible, _) => None,
         }
     }
@@ -627,7 +651,7 @@ fn check_local_variable_types(statement: &Statement,
             },
             StorageCompatibility::Compatible => return None,
         };
-        Some(DMLError {
+        let error = DMLError {
             span: *expression.span(),
             description,
             related: vec![(declaration_span,
@@ -636,7 +660,15 @@ fn check_local_variable_types(statement: &Statement,
                 StorageCompatibility::Incompatible => DiagnosticSeverity::ERROR,
                 _ => DiagnosticSeverity::WARNING,
             }),
-        })
+        };
+        match compatibility {
+            StorageCompatibility::Truncates(_) => if false {
+                Some(error)
+            } else {
+                None
+            },
+            _ => Some(error),
+        }
     }
 
     fn array_storage_diagnostic(
@@ -671,7 +703,7 @@ fn check_local_variable_types(statement: &Statement,
                 truncation.target_suffix()),
             (StorageCompatibility::Compatible, _) => return None,
         };
-        Some(DMLError {
+        let error = DMLError {
             span: *expression.span(),
             description,
             related,
@@ -679,7 +711,15 @@ fn check_local_variable_types(statement: &Statement,
                 StorageCompatibility::Incompatible => DiagnosticSeverity::ERROR,
                 _ => DiagnosticSeverity::WARNING,
             }),
-        })
+        };
+        match storage.compatibility {
+            StorageCompatibility::Truncates(_) => if false {
+                Some(error)
+            } else {
+                None
+            },
+            _ => Some(error),
+        }
     }
 
     fn check_variable(variable: &crate::analysis::structure::objects::Variable,
@@ -723,6 +763,7 @@ fn check_local_variable_types(statement: &Statement,
             if declaration.kind != VariableDeclKind::Local {
                 continue;
             }
+            types.report_unknown_types(&declaration.typed, report);
             let (anonymous, target) = evaluate_type(
                 &declaration.typed, environment, method, object, types, report);
             if anonymous.is_empty() {
@@ -1150,9 +1191,52 @@ pub fn check_method_body_types(method: &DMLMethodRef,
                                types: &TypeDatabase,
                                report: &mut Vec<DMLError>) {
     let declaration = method.get_decl();
+    report_error_statements(&declaration.body, report);
     check_local_variable_types(
         &declaration.body, &declaration.method_args,
         method, object, types, report);
+}
+
+// Mirrors DMLC's EERRSTMT; only '#if' (not 'if') can exclude an error
+fn report_error_statements(statement: &Statement,
+                           report: &mut Vec<DMLError>) {
+    let children: Vec<&Statement> = match statement.as_ref() {
+        StatementKind::Error(error) => {
+            report.push(DMLError {
+                span: error.span,
+                description: match error.message.as_deref() {
+                    Some(ExpressionKind::StringLiteral(message)) =>
+                        message.val.clone(),
+                    _ => "forced compilation error in source code"
+                        .to_string(),
+                },
+                related: vec![],
+                severity: Some(DiagnosticSeverity::ERROR),
+            });
+            vec![]
+        },
+        StatementKind::Compound(compound) =>
+            compound.statements.iter().collect(),
+        StatementKind::If(statement) => std::iter::once(&statement.ifbody)
+            .chain(statement.elsebody.as_ref()).collect(),
+        StatementKind::While(statement) => vec![&statement.body],
+        StatementKind::DoWhile(statement) => vec![&statement.body],
+        StatementKind::For(statement) => vec![&statement.body],
+        StatementKind::ForEach(statement) => vec![&statement.body],
+        StatementKind::TryCatch(statement) =>
+            vec![&statement.tryblock, &statement.catchblock],
+        StatementKind::HashSelect(statement) =>
+            vec![&statement.selectbranch, &statement.elsebranch],
+        StatementKind::Switch(statement) => statement.cases.iter()
+            .filter_map(|case|match case {
+                SwitchCase::Statement(statement) => Some(statement),
+                _ => None,
+            }).collect(),
+        _ => vec![],
+    };
+    for child in children {
+        report_error_statements(child, report);
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -1160,6 +1244,8 @@ pub struct MethodDecl {
     pub name: DMLString,
     pub modifier: MethodModifier,
     pub independent: bool,
+    pub startup: bool,
+    pub memoized: bool,
     pub default: bool,
     pub throws: bool,
     pub method_args: Vec<DMLMethodArg>,
@@ -1206,6 +1292,8 @@ pub trait MethodDeclaration : DMLNamedMember + MaybeAbstract {
     fn is_shared(&self) -> bool;
     fn is_default(&self) -> bool;
     fn throws(&self) -> bool;
+    // (qualifier name, whether present) for independent, startup and memoized
+    fn qualifiers(&self) -> [(&'static str, bool); 3];
     fn fully_typed(&self) -> bool {
         for arg in self.args() {
             if matches!(arg, DMLMethodArg::Inline(_)) {
@@ -1257,6 +1345,21 @@ pub trait MethodDeclaration : DMLNamedMember + MaybeAbstract {
                                "Throwing method declared here".to_string())],
                 severity: Some(DiagnosticSeverity::ERROR),
             });
+        }
+        for ((qualifier, mine), (_, theirs)) in
+            self.qualifiers().iter().zip(overridden.qualifiers().iter()) {
+            if mine != theirs {
+                report.push(DMLError {
+                    span: *self.location(),
+                    description: format!(
+                        "One declaration is qualified as {}, but the other \
+                         is not", qualifier),
+                    related: vec![(*overridden.location(),
+                                   "Overridden method declared here"
+                                   .to_string())],
+                    severity: Some(DiagnosticSeverity::ERROR),
+                });
+            }
         }
         if self.args().len() != overridden.args().len() {
             report.push(DMLError {
@@ -1322,6 +1425,12 @@ impl MethodDeclaration for MethodDecl {
         self.throws
     }
 
+    fn qualifiers(&self) -> [(&'static str, bool); 3] {
+        [("independent", self.independent),
+         ("startup", self.startup),
+         ("memoized", self.memoized)]
+    }
+
     fn args(&self) -> &Vec<DMLMethodArg> {
         &self.method_args
     }
@@ -1339,6 +1448,8 @@ impl MethodDecl {
             name: content.object.name.clone(),
             modifier: content.modifier,
             independent: content.independent,
+            startup: content.startup,
+            memoized: content.memoized,
             default: content.default,
             body: content.body.clone(),
             throws: content.throws,
@@ -1408,6 +1519,10 @@ impl MethodDeclaration for DMLMethodRef {
 
     fn throws(&self) -> bool {
         self.concrete_decl.throws()
+    }
+
+    fn qualifiers(&self) -> [(&'static str, bool); 3] {
+        self.concrete_decl.qualifiers()
     }
 
     fn args(&self) -> &Vec<DMLMethodArg> {
@@ -1548,6 +1663,10 @@ impl MethodDeclaration for DMLConcreteMethod {
         self.decl.throws()
     }
 
+    fn qualifiers(&self) -> [(&'static str, bool); 3] {
+        self.decl.qualifiers()
+    }
+
     fn args(&self) -> &Vec<DMLMethodArg> {
         self.decl.args()
     }
@@ -1596,6 +1715,9 @@ mod tests {
         fn is_shared(&self) -> bool { false }
         fn is_default(&self) -> bool { false }
         fn throws(&self) -> bool { false }
+        fn qualifiers(&self) -> [(&'static str, bool); 3] {
+            [("independent", false), ("startup", false), ("memoized", false)]
+        }
         fn args(&self) -> &Vec<DMLMethodArg> { &self.arguments }
         fn returns(&self) -> &Vec<DMLResolvedType> { &self.returns }
     }
@@ -1719,7 +1841,7 @@ mod tests {
     }
 
     #[test]
-    fn override_argument_compatibility_is_exact() {
+    fn override_argument_compatibility_ignores_pointee_const_by_default() {
         let location = ZeroSpan::invalid("method-type-test.dml");
         let int_type = concrete_named_type("int");
         let const_int_type = DMLConcreteType {
@@ -1756,10 +1878,8 @@ mod tests {
         accepting_override.check_override(&base, &mut accepted_report);
         rejecting_override.check_override(&const_base, &mut rejected_report);
 
-        assert!(accepted_report.iter().any(|error|
-            error.description == "Mismatching argument type in method override"));
-        assert!(rejected_report.iter().any(|error|
-            error.description == "Mismatching argument type in method override"));
+        assert!(accepted_report.is_empty());
+        assert!(rejected_report.is_empty());
     }
 
     #[test]

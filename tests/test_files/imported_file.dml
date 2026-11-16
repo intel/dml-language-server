@@ -2,6 +2,8 @@
 //  SPDX-License-Identifier: Apache-2.0 and MIT
 dml 1.4;
 
+typedef int imported_int_alias; // @loc[13]=imported_int_alias_def
+
 // This file defines types and templates to be imported by cross_file_main.dml
 
 // Template to be imported and used
@@ -19,8 +21,9 @@ template imported_template { // @goto-impl[10]->cross_file_main.dml:imported_tem
     // Method that references a parameter defined in the importing file
     method use_bank_param() {
         // This will reference bank_specific_param from cross_file_main.dml
-        // @loc[28]=bank_specific_param_ref
-        local int y = this.bank_specific_param; // @goto-def[28]->cross_file_main.dml:bank_specific_param
+        // @loc[43]=bank_specific_param_ref
+        // @loc[34]=y_decl @goto-def-decl[34]->y_decl @goto-type-def[34]->imported_int_alias_def
+        local imported_int_alias y = this.bank_specific_param; // @goto-def[43]->cross_file_main.dml:bank_specific_param
     }
 }
 
