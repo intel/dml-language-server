@@ -255,6 +255,8 @@ pub struct Symbol {
     pub typed: Option<TypeUse>,
     // Pointer and array layers wrapping 'typed' in the declared type
     pub indirections: u32,
+    // Declared with a 'typeof' type, which leaves 'typed' unresolved
+    pub typeof_declared: bool,
 }
 
 // We do this often enough to warrant a reusable pattern,
@@ -378,6 +380,7 @@ impl Symbol {
             type_definitions: HashSet::default(),
             typed: None,
             indirections: 0,
+            typeof_declared: false,
         }
     }
 

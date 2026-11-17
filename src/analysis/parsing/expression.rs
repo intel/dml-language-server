@@ -126,6 +126,10 @@ impl TreeElement for MemberLiteralContent {
         if let Some(refr) = self.maybe_noderef(file) {
             accumulator.push(CodeReference::from_noderef(
                 refr, ReferenceKind::Variable).into());
+        } else if self.left.maybe_noderef(file).is_none() {
+            if let Some(member) = DMLString::from_token(&self.right, file) {
+                accumulator.push(Reference::UntrackedMember(member));
+            }
         }
     }
 }

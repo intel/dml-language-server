@@ -1399,6 +1399,46 @@ mod tests {
     }
 
     #[test]
+    fn test_type_lookup_limitations() {
+        init_logging();
+        fn limitations_at(setup: &TestSetup, needle: &str, offset: usize,
+                          lookup: LookupFn) -> Vec<u64> {
+            let content = std::fs::read_to_string(&setup.main_file)
+                .expect("failed to read fixture");
+            let (row, line) = content.lines().enumerate()
+                .find(|(_, line)|line.contains(needle))
+                .expect("fixture should contain needle");
+            let col = line.find(needle).unwrap() + offset;
+            let position = make_file_position(
+                &setup.main_file, row as u32, col as u32);
+            let mut limitations = HashSet::new();
+            lookup(&setup.ctx, &position, &mut limitations)
+                .expect("lookup failed");
+            limitations.into_iter().map(|limitation|limitation.issue_num)
+                .collect()
+        }
+
+        let variables = setup_test(&["type_variables.dml"]);
+        assert_eq!(limitations_at(&variables, "typeof(valid) bad_typeof_local", 14,
+                                  type_definitions_at_fp), vec![65],
+                   "typeof-declared local should report a limitation");
+        assert!(limitations_at(&variables, "copied = valid", 0,
+                               type_definitions_at_fp).is_empty(),
+                "typed local should not report a limitation");
+        assert!(limitations_at(&variables, "local int_alias copied", 6,
+                               definitions_at_fp).is_empty(),
+                "typedef reference should not report a limitation");
+
+        let members = setup_test(&["type_member_access.dml"]);
+        assert_eq!(limitations_at(&members, "point_ptr()->x", 13,
+                                  definitions_at_fp), vec![65],
+                   "member of a call result should report a limitation");
+        assert!(limitations_at(&members, "uint32 x;", 0,
+                               definitions_at_fp).is_empty(),
+                "builtin type reference should not report a limitation");
+    }
+
+    #[test]
     fn test_token_at_position_recovers_full_identifier() {
         init_logging();
         // basic_lookup.dml has a line `template base_template { ...`, so
