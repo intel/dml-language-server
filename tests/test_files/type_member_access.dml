@@ -202,3 +202,12 @@ method chain_indexing(uint32_alias i) -> (uint32) {
     r += array_of_arrays[i].leaves[0].e; // @goto-def-decl[29]->leaves_def @goto-def-decl[39]->chain_e_def
     return r;
 }
+
+method point_ptr() -> (point_t *) {
+    return &sess_point;
+}
+
+// Members of non-reference expressions are not resolved (a known limitation)
+method untracked_member() -> (uint32) {
+    return point_ptr()->x; // @goto-def-decl[25]->
+}

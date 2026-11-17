@@ -141,6 +141,8 @@ pub struct CodeReference {
 pub enum Reference {
     CodeReference(CodeReference),
     FileReference(DMLString),
+    // Member accessed on an expression that is not itself a reference
+    UntrackedMember(DMLString),
 }
 
 impl Reference {
@@ -154,6 +156,7 @@ impl LocationSpan for Reference {
         match self {
             Reference::CodeReference(code_ref) => code_ref.loc_span(),
             Reference::FileReference(import) => &import.span,
+            Reference::UntrackedMember(member) => &member.span,
         }
     }
 }
@@ -162,6 +165,7 @@ impl DeclarationSpan for Reference {
         match self {
             Reference::CodeReference(code_ref) => code_ref.span(),
             Reference::FileReference(import) => &import.span,
+            Reference::UntrackedMember(member) => &member.span,
         }
     }
 }

@@ -2335,6 +2335,7 @@ fn set_symbol_type(symbol: &SymbolRef, types: &TypeDatabase, typed: &DMLType) {
     let mut symbol = symbol.lock().unwrap();
     symbol.typed = shape.map(|(type_use, _)|type_use);
     symbol.indirections = shape.map_or(0, |(_, layers)|layers);
+    symbol.typeof_declared = types.is_typeof_shape(typed);
 }
 
 fn add_member_symbols(maker: &SymbolMaker,
@@ -2440,14 +2441,17 @@ fn populate_symbol_types(maker: &SymbolMaker,
                 }),
             _ => None,
         };
-        let shape = type_syntax.and_then(|typed|
-            types.resolve_type_shape(typed));
-        if let Some(type_syntax) = type_syntax {
-            register_anonymous_types(maker, types, type_syntax,
-                                     &mut anonymous, &mut fields);
-        }
+        // Symbols without syntax here (e.g. locals) were typed on creation
+        let Some(type_syntax) = type_syntax else {
+            continue;
+        };
+        let shape = types.resolve_type_shape(type_syntax);
+        let typeof_declared = types.is_typeof_shape(type_syntax);
+        register_anonymous_types(maker, types, type_syntax,
+                                 &mut anonymous, &mut fields);
         symbol.typed = shape.map(|(type_use, _)|type_use);
         symbol.indirections = shape.map_or(0, |(_, layers)|layers);
+        symbol.typeof_declared = typeof_declared;
     }
     for (span, members) in anonymous {
         storage.anonymous_type_members.entry(span).or_insert(members);

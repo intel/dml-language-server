@@ -148,6 +148,21 @@ impl TypeDatabase {
         }
     }
 
+    // Whether the type under 'typed', as found by 'resolve_type_shape', is a
+    // 'typeof' that we cannot resolve
+    pub fn is_typeof_shape(&self, typed: &DMLType) -> bool {
+        match &typed.kind {
+            DMLTypeKind::TypeOf(_) => true,
+            DMLTypeKind::Const(inner) |
+            DMLTypeKind::Pointer(inner) |
+            DMLTypeKind::Vector(inner) |
+            DMLTypeKind::Array { element: inner, .. } |
+            DMLTypeKind::Function { returns: inner, .. } =>
+                self.is_typeof_shape(inner),
+            _ => false,
+        }
+    }
+
     // Follows typedefs from 'type_use' to a struct-like type, counting the
     // pointer/array layers the typedefs add on the way
     pub fn struct_core(&self, type_use: TypeUse) -> Option<(TypeUse, u32)> {

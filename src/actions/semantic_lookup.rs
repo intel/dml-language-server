@@ -18,7 +18,7 @@ use crate::analysis::templating::types::TypeUse;
 use crate::analysis::{DeviceAnalysis, IsolatedAnalysis, LocationSpan, SymbolRef, ZeroRange};
 
 use crate::analysis::parsing::tree::{ZeroSpan, ZeroFilePosition};
-use crate::analysis::reference::{CodeReference, Reference, ReferenceKind};
+use crate::analysis::reference::{CodeReference, Reference};
 use crate::file_management::CanonPath;
 use crate::server::Output;
 
@@ -43,11 +43,20 @@ impl fmt::Display for DLSLimitation {
     }
 }
 
-pub fn type_semantic_limitation() -> DLSLimitation {
+pub fn typeof_type_limitation() -> DLSLimitation {
     DLSLimitation {
         issue_num: 65,
-        description: "The DLS does not currently support semantic analysis of \
-                      types, including reference finding".to_string(),
+        description: "The DLS does not currently resolve 'typeof' types"
+            .to_string(),
+    }
+}
+
+pub fn untracked_member_limitation() -> DLSLimitation {
+    DLSLimitation {
+        issue_num: 65,
+        description: "The DLS does not currently resolve members accessed \
+                      on expressions other than plain references, such as \
+                      function calls or casts".to_string(),
     }
 }
 
@@ -133,10 +142,10 @@ impl <'t> SemanticLookup<'t> {
                 match reference {
                     Reference::CodeReference(code_ref) => {
                         stored_symbols = get_symbols_of_ref(&code_ref, &analysis_info, &mut recognized_limitations);
-                        if code_ref.reference_kind() == ReferenceKind::Type &&
-                            stored_symbols.iter().all(|(_, symbols)|symbols.is_empty()) {
-                            recognized_limitations.insert(type_semantic_limitation());
-                        }
+                    },
+                    Reference::UntrackedMember(_) => {
+                        recognized_limitations.insert(
+                            untracked_member_limitation());
                     },
                     Reference::FileReference(file_ref) => {
                         targeted_files = get_import_target_of(&file_ref, analysis_lock)
@@ -485,7 +494,9 @@ pub fn type_definitions_at_fp(
                 Some(TypeUse::Anonymous(span)) => {
                     locations.insert(span);
                 },
-                None => (),
+                None => if symbol.typeof_declared {
+                    relevant_limitations.insert(typeof_type_limitation());
+                },
             }
         }
     }
