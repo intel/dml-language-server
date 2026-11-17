@@ -1169,7 +1169,6 @@ impl DeviceAnalysis {
                 }
             }
         }
-        // TODO: types
     }
 
     fn lookup_global_from_ref(&self,
@@ -1293,8 +1292,6 @@ impl DeviceAnalysis {
                 .map(|symbol|vec![Arc::clone(symbol)])
                 .ok_or_else(||format!(
                     "Unexpectedly missing loggroup matching {:?}", sym)),
-            // TODO: Extern lookup
-            DMLSymbolKind::Extern => Ok(vec![]),
             e => {
                 Err(format!("Unexpected symbol kind of global symbol: {:?}", e))
             },
@@ -1401,11 +1398,10 @@ impl DeviceAnalysis {
             // TODO: Cannot be resolved without constant folding
             SymbolSource::MethodArg(_method, _name) => (),
             SymbolSource::MethodLocal(_method, _name) => (),
-            // TODO: Fix once type system is sorted
-            SymbolSource::Type(_typed) => (),
+            // NOTE: types handled near start-of-function
+            SymbolSource::Type(_) => (),
             SymbolSource::TypeMember(_, _) => (),
-            // TODO: Handle lookups inside templates
-            SymbolSource::Template(_templ) => (),
+            SymbolSource::Template(_) => (),
             SymbolSource::Loggroup(_) => (),
         }
     }
