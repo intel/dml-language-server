@@ -62,6 +62,11 @@ group g is tq {
             local int_alias z = o.tq_p; // @goto-def-decl[33]->foreach_o_def @goto-def[35]->g_tq_p_def @goto-decl[35]->tq_p_def
             o.tq_s(); // @goto-def-decl[15]->tq_s_def
         }
+        // @loc[17]=select_s_def @goto-def-decl[17]->select_s_def @goto-type-def[17]->tq_def
+        #select s in (each tq in (this)) where (true) {
+            s.tq_s(); // @goto-def-decl[13]->select_s_def @goto-def-decl[15]->tq_s_def
+        } #else {
+        }
         tq_ref.tq_s(); // @goto-def-decl[16]->tq_s_def
         // @loc[25]=sz_decl @goto-def-decl[25]->sz_decl @goto-type-def[25]->int_alias_def
         local int_alias sz = sizeoftype(lay_t); // @goto-def-decl[41]->lay_t_def

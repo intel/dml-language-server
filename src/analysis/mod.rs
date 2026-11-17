@@ -2766,6 +2766,18 @@ fn enter_new_method_scope(maker: &SymbolMaker,
     scope.sub_ranges.push(entry);
 }
 
+// 'each T in (...)' yields values of template type 'T'; other lists can be
+// heterogeneous, so their elements are left untyped
+fn iteration_variable_type(list: &Expression, fallback: ZeroSpan) -> DMLType {
+    match list.as_ref() {
+        ExpressionKind::EachIn(each) => DMLType {
+            kind: DMLTypeKind::Named(each.templ.clone()),
+            span: each.templ.span,
+        },
+        _ => DMLType::unknown(fallback),
+    }
+}
+
 fn add_switch_case_symbols(maker: &SymbolMaker,
                            method: &Arc<DMLMethodRef>,
                            cases: &[SwitchCase],
@@ -2942,14 +2954,8 @@ fn add_new_method_scope_symbols(maker: &SymbolMaker,
                 symbols: HashMap::default(),
                 sub_ranges: vec![],
             };
-            // 'each T in (...)' yields values of template type 'T'
-            let identifier_type = match content.inexpr.as_ref() {
-                ExpressionKind::EachIn(each) => DMLType {
-                    kind: DMLTypeKind::Named(each.templ.clone()),
-                    span: each.templ.span,
-                },
-                _ => DMLType::unknown(*content.identifier.loc_span()),
-            };
+            let identifier_type = iteration_variable_type(
+                &content.inexpr, *content.identifier.loc_span());
             add_new_method_scope_symbol(maker,
                                         method,
                                         &content.identifier,
@@ -2977,12 +2983,12 @@ fn add_new_method_scope_symbols(maker: &SymbolMaker,
                 symbols: HashMap::default(),
                 sub_ranges: vec![],
             };
-            let unknown_type = DMLType::unknown(*content.ident.loc_span());
+            let identifier_type = iteration_variable_type(
+                &content.inexpr, *content.ident.loc_span());
             add_new_method_scope_symbol(maker,
                                         method,
                                         &content.ident,
-                                        // TODO: infer type
-                                        &unknown_type,
+                                        &identifier_type,
                                         types,
                                         errors,
                                         storage,
