@@ -314,6 +314,17 @@ template must_override {
     method dead_behind_reached() default {
         error "behind an override that is itself dead";
     }
+    method reached_qualified() default {
+        // @diag-error: reached through a template-qualified call
+        error "reached through a template-qualified call";
+    }
+    method default_in_dead_branch() default {
+        error "default() only in an excluded branch";
+    }
+    method default_in_unknown_branch() default {
+        // @diag-error: default() in a branch that may be taken
+        error "default() in a branch that may be taken";
+    }
 }
 template middle is must_override {
     method dead_behind_reached() default {
@@ -326,6 +337,19 @@ group overrides is middle {
         default();
     }
     method dead_behind_reached() {}
+    method reached_qualified() {
+        templates.must_override.reached_qualified();
+    }
+    method default_in_dead_branch() {
+        #if (false) {
+            default();
+        }
+    }
+    method default_in_unknown_branch() {
+        #if (unknown_condition) {
+            default();
+        }
+    }
 }
 
 // @diag-error: unconditional error object
