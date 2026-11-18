@@ -84,6 +84,29 @@ template asm8 is (asm6, asm7) {
     shared method m() {}
 }
 
+// An own definition is checked against every parent it overrides
+template multi_int {
+    shared method mm(int x) default {}
+}
+template multi_bool {
+    shared method mm(bool x) default {} // @loc[27]=multi_bool_x
+}
+template multi_override is (multi_int, multi_bool) {
+    // @diag-error: Mismatching argument type in method override | related->multi_bool_x: Corresponding argument declared here
+    shared method mm(int x) {}
+}
+
+template multi_final {
+    shared method nd() {} // @loc[19]=multi_final_nd
+}
+template multi_default {
+    shared method nd() default {}
+}
+template multi_nondefault is (multi_final, multi_default) {
+    // @diag-error: This method attempts to override a non-default method | related->multi_final_nd: Attempted to override this declaration
+    shared method nd() {}
+}
+
 template asm9 is asm1 {
     shared method m() {} // @loc[19]=asm9_m
 }

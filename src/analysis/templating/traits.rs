@@ -319,6 +319,29 @@ impl DMLTrait {
         let impl_map = merge_impl_maps(name, loc, parents.values(),
                                        &own_methods, report);
 
+        // Unrelated parents can each provide an implementation that our own
+        // definition overrides directly
+        let mut own_overrides: HashMap<String, Vec<Arc<DMLTrait>>> =
+            HashMap::default();
+        for method_name in &own_methods {
+            let mut direct: Vec<Arc<DMLTrait>> = vec![];
+            for candidate in parents.values()
+                .filter_map(|parent|lookup_impl(parent, method_name))
+                .filter(|candidate|candidate.get_method(method_name).is_some()) {
+                if direct.iter().any(|existing|matches!(
+                    existing.implement_relation(candidate),
+                    ImplementRelation::Same | ImplementRelation::Implements)) {
+                    continue;
+                }
+                direct.retain(|existing|candidate.implement_relation(existing)
+                              != ImplementRelation::Implements);
+                direct.push(Arc::clone(candidate));
+            }
+            if !direct.is_empty() {
+                own_overrides.insert(method_name.clone(), direct);
+            }
+        }
+
         // Check that our implementations do not collide
         let mut used_names = HashMap::default();
         fn maybe_report_collision(used: &mut HashMap<String, ZeroSpan>,
@@ -476,49 +499,60 @@ impl DMLTrait {
         // NOTE: Override order is already checked in merge_impl_maps, so we can use
         // impl_map to get the next in order
         for meth in defined_methods.values().chain(abstract_methods.values()) {
-            // TODO: Fairly sure this does not handle ambiguous overrides correctly.
-            // Odds are: they are reported correctly from merge_impl_maps, but
-            // we do not collect all of them here
             let default_call = if let Some(ancestor) = impl_map.get(&meth.name.val) {
                 if let Some(coll) = ancestor.get_member(
                     meth.name.val.as_str()) {
                     match coll {
-                        TraitMemberKind::Method(undermeth) => {
-                            // Non-shared overrides are checked per object
-                            if !meth.is_shared() {
-                            } else if meth.is_abstract() && undermeth.is_shared() {
-                                report.push(DMLError {
-                                    span: meth.name.span,
-                                    description:
-                                    "Abstract method cannot \
-                                     override another method".into(),
-                                    severity: Some(DiagnosticSeverity::ERROR),
-                                    related: vec![
-                                        (*undermeth.location(),
-                                         "Overridden definition here".into())],
-                                });
-                            } else if !undermeth.is_default() && !undermeth.is_abstract() {
-                                report.push(DMLError {
-                                    span: meth.name.span,
-                                    description:
-                                    "This method attempts to override \
-                                     a non-default method".into(),
-                                    related: vec![
-                                        (*undermeth.location(),
-                                         "Attempted to override this \
-                                          declaration".into())],
-                                    severity: Some(DiagnosticSeverity::ERROR),
-                                });
-                            }
-                            if meth.is_shared() {
+                        TraitMemberKind::Method(_) => {
+                            let overridden: Vec<&Arc<DMLTrait>> = own_overrides
+                                .get(&meth.name.val)
+                                .map(|traits|traits.iter().collect())
+                                .unwrap_or_else(||vec![ancestor]);
+                            for undermeth in overridden.iter().filter_map(
+                                |overridden|overridden.get_method(&meth.name.val)) {
+                                // Non-shared overrides are checked per object
+                                if !meth.is_shared() {
+                                    continue;
+                                }
+                                if meth.is_abstract() && undermeth.is_shared() {
+                                    report.push(DMLError {
+                                        span: meth.name.span,
+                                        description:
+                                        "Abstract method cannot \
+                                         override another method".into(),
+                                        severity: Some(DiagnosticSeverity::ERROR),
+                                        related: vec![
+                                            (*undermeth.location(),
+                                             "Overridden definition here".into())],
+                                    });
+                                } else if !undermeth.is_default() && !undermeth.is_abstract() {
+                                    report.push(DMLError {
+                                        span: meth.name.span,
+                                        description:
+                                        "This method attempts to override \
+                                         a non-default method".into(),
+                                        related: vec![
+                                            (*undermeth.location(),
+                                             "Attempted to override this \
+                                              declaration".into())],
+                                        severity: Some(DiagnosticSeverity::ERROR),
+                                    });
+                                }
                                 meth.check_override(undermeth, report);
                             }
-                            ancestor.get_defined_method(meth.identity())
-                                .map(|dmeth|DefaultCallReference::Valid(
-                                    Arc::new(DMLMethodRef {
-                                        template_ref: Some(Arc::clone(ancestor)),
+                            let mut defaults: Vec<_> = overridden.iter()
+                                .filter_map(|overridden|overridden
+                                    .get_defined_method(meth.identity())
+                                    .map(|dmeth|Arc::new(DMLMethodRef {
+                                        template_ref: Some(Arc::clone(overridden)),
                                         concrete_decl: dmeth.clone(),
                                     })))
+                                .collect();
+                            match defaults.len() {
+                                0 => None,
+                                1 => defaults.pop().map(DefaultCallReference::Valid),
+                                _ => Some(DefaultCallReference::Ambiguous(defaults)),
+                            }
                         },
                         TraitMemberKind::Saved(invalid) |
                         TraitMemberKind::Session(invalid) |
