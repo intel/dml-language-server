@@ -187,7 +187,11 @@ fn lower_base_type(content: &types::BaseTypeContent,
         }),
         types::BaseTypeContent::Bitfields(bitfields) => Some(
             DMLTypeKind::Bitfields {
-                width: bitfields.iconst.read_leaf(file.file),
+                // Invalid widths are reported when parsing
+                width: bitfields.iconst.read_leaf(file.file)
+                    .map(|width|width.replace('_', ""))
+                    .filter(|width|width.parse::<u8>()
+                            .is_ok_and(|width|(1..=64).contains(&width))),
                 fields: bitfields.fields.iter().map(|field| {
                     let range = match &field.range {
                         types::BitfieldsRange::Expression(expression) =>

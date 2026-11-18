@@ -427,6 +427,11 @@ impl DMLConcreteType {
             || matches!(source.kind, Unknown | TypeOf) {
             return StorageCompatibility::Compatible;
         }
+        // Bitfields of invalid width were already reported when parsing
+        if matches!(self.kind, Bitfields { width: None, .. })
+            || matches!(source.kind, Bitfields { width: None, .. }) {
+            return StorageCompatibility::Compatible;
+        }
         if let (Some(target), Some(source)) =
             (integer_storage_type(self), integer_storage_type(source)) {
             return target.storage_compatibility(source);
