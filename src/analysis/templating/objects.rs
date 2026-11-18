@@ -22,6 +22,7 @@ use crate::analysis::symbols::{DMLSymbolKind};
 use crate::analysis::templating::Declaration;
 use crate::analysis::templating::types::{eval_type, TypeDatabase};
 use crate::analysis::templating::methods::{check_method_body_types,
+                                          unreachable_spans,
                                           DMLConcreteMethod, DMLMethodRef,
                                           DefaultCallReference, MethodDecl,
                                           MethodDeclaration};
@@ -3064,25 +3065,16 @@ pub fn check_method_body_types_for_objects(
     types: &TypeDatabase,
     report: &mut Vec<DMLError>,
 ) {
-    // 'live' is false once the chain passes a method that never calls default
     fn collect_method_chain(method: &Arc<DMLMethodRef>,
-                            live: bool,
-                            seen: &mut HashMap<ZeroSpan, usize>,
-                            methods: &mut Vec<(Arc<DMLMethodRef>, bool)>) {
-        if let Some(index) = seen.get(method.location()) {
-            if live && !methods[*index].1 {
-                methods[*index].1 = true;
-            } else {
-                return;
-            }
-        } else {
-            seen.insert(*method.location(), methods.len());
-            methods.push((Arc::clone(method), live));
+                            seen: &mut HashSet<ZeroSpan>,
+                            methods: &mut Vec<Arc<DMLMethodRef>>) {
+        if !seen.insert(*method.location()) {
+            return;
         }
+        methods.push(Arc::clone(method));
         if let Some(default) = method.get_default() {
-            let live = live && method.get_decl().calls_default;
             for method in default.flat_refs() {
-                collect_method_chain(method, live, seen, methods);
+                collect_method_chain(method, seen, methods);
             }
         }
     }
@@ -3097,13 +3089,43 @@ pub fn check_method_body_types_for_objects(
                 }))
             .collect();
         let mut methods_to_check = vec![];
-        let mut seen_methods = HashMap::default();
+        let mut implementations = HashSet::default();
         for method in &effective_methods {
             collect_method_chain(
-                method, true, &mut seen_methods, &mut methods_to_check);
+                method, &mut implementations, &mut methods_to_check);
         }
-        for (method, live) in methods_to_check {
-            check_method_body_types(&method, object, types, live, report);
+
+        // Overridden implementations only run when a reachable 'default()'
+        // or template-qualified call in a running body leads to them
+        let mut live: HashSet<ZeroSpan> = HashSet::default();
+        let mut pending = effective_methods.clone();
+        while let Some(method) = pending.pop() {
+            if !live.insert(*method.location()) {
+                continue;
+            }
+            let declaration = method.get_decl();
+            let mut unreachable = vec![];
+            unreachable_spans(&declaration.body, &mut unreachable);
+            let reachable = |span: &ZeroSpan|!unreachable.iter().any(
+                |excluded|excluded.contains_pos(&span.start_position()));
+            if declaration.default_references.iter().any(reachable) {
+                if let Some(default) = method.get_default() {
+                    pending.extend(default.flat_refs().into_iter()
+                                   .map(Arc::clone));
+                }
+            }
+            pending.extend(object.resolved_method_calls.iter()
+                .filter(|(span, target)|
+                        declaration.body.span().contains_pos(
+                            &span.start_position())
+                        && reachable(span)
+                        && implementations.contains(target.location()))
+                .map(|(_, target)|Arc::clone(target)));
+        }
+
+        for method in methods_to_check {
+            let is_live = live.contains(method.location());
+            check_method_body_types(&method, object, types, is_live, report);
         }
     }
 }

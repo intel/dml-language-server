@@ -1201,14 +1201,33 @@ pub fn check_method_body_types(method: &DMLMethodRef,
         method, object, types, report);
 }
 
-// Mirrors DMLC's EERRSTMT; only '#if' (not 'if') can exclude an error, and
-// '#if' branches are only checked when the condition is provably known
+// Mirrors DMLC's EERRSTMT; only '#if' (not 'if') can exclude an error
 fn report_error_statements(statement: &Statement,
                            report: &mut Vec<DMLError>) {
-    fn known_condition(condition: &ExpressionKind) -> Option<bool> {
-        condition.evaluate(&mut EvaluationContext::new(), &mut vec![])
-            .as_bool()
+    if let StatementKind::Error(error) = statement.as_ref() {
+        report.push(DMLError {
+            span: error.span,
+            description: match error.message.as_deref() {
+                Some(ExpressionKind::StringLiteral(message)) =>
+                    message.val.clone(),
+                _ => "forced compilation error in source code".to_string(),
+            },
+            related: vec![],
+            severity: Some(DiagnosticSeverity::ERROR),
+        });
     }
+    for child in reachable_children(statement) {
+        report_error_statements(child, report);
+    }
+}
+
+fn known_condition(condition: &ExpressionKind) -> Option<bool> {
+    condition.evaluate(&mut EvaluationContext::new(), &mut vec![]).as_bool()
+}
+
+// Sub-statements that may run; '#if' branches only count when the condition
+// is provably known to select them
+fn reachable_children(statement: &Statement) -> Vec<&Statement> {
     fn case_statements<'s>(cases: &'s [SwitchCase],
                            statements: &mut Vec<&'s Statement>) {
         for case in cases {
@@ -1226,21 +1245,7 @@ fn report_error_statements(statement: &Statement,
             }
         }
     }
-    let children: Vec<&Statement> = match statement.as_ref() {
-        StatementKind::Error(error) => {
-            report.push(DMLError {
-                span: error.span,
-                description: match error.message.as_deref() {
-                    Some(ExpressionKind::StringLiteral(message)) =>
-                        message.val.clone(),
-                    _ => "forced compilation error in source code"
-                        .to_string(),
-                },
-                related: vec![],
-                severity: Some(DiagnosticSeverity::ERROR),
-            });
-            vec![]
-        },
+    match statement.as_ref() {
         StatementKind::Compound(compound) =>
             compound.statements.iter().collect(),
         StatementKind::If(statement) => std::iter::once(&statement.ifbody)
@@ -1265,9 +1270,48 @@ fn report_error_statements(statement: &Statement,
             statements
         },
         _ => vec![],
-    };
-    for child in children {
-        report_error_statements(child, report);
+    }
+}
+
+// Spans of '#if' branches in 'statement' that are provably not taken
+pub fn unreachable_spans(statement: &Statement, spans: &mut Vec<ZeroSpan>) {
+    fn untaken_cases(cases: &[SwitchCase], spans: &mut Vec<ZeroSpan>) {
+        for case in cases {
+            match case {
+                SwitchCase::Statement(statement) =>
+                    unreachable_spans(statement, spans),
+                SwitchCase::HashIf(hashif) => {
+                    let known = known_condition(&hashif.condition);
+                    for (branch, cases) in [(true, &hashif.truecases),
+                                            (false, &hashif.falsecases)] {
+                        if known.is_some_and(|known|known != branch) {
+                            spans.extend(cases.iter().map(|case|*case.span()));
+                        } else {
+                            untaken_cases(cases, spans);
+                        }
+                    }
+                },
+                SwitchCase::Case(_) | SwitchCase::Default(_) => (),
+            }
+        }
+    }
+    match statement.as_ref() {
+        StatementKind::HashIf(hashif) => {
+            let known = known_condition(&hashif.condition);
+            for (branch, body) in [(true, Some(&hashif.ifbody)),
+                                   (false, hashif.elsebody.as_ref())] {
+                let Some(body) = body else { continue; };
+                if known.is_some_and(|known|known != branch) {
+                    spans.push(*body.span());
+                } else {
+                    unreachable_spans(body, spans);
+                }
+            }
+        },
+        StatementKind::Switch(switch) => untaken_cases(&switch.cases, spans),
+        _ => for child in reachable_children(statement) {
+            unreachable_spans(child, spans);
+        },
     }
 }
 
@@ -1283,8 +1327,8 @@ pub struct MethodDecl {
     pub method_args: Vec<DMLMethodArg>,
     pub return_types: Vec<DMLResolvedType>,
     pub body: Statement,
-    // Whether the body references 'default', i.e. may run the overridden method
-    pub calls_default: bool,
+    // Locations of 'default' references in the body
+    pub default_references: Vec<ZeroSpan>,
     pub span: ZeroSpan,
 }
 
@@ -1486,12 +1530,15 @@ impl MethodDecl {
             memoized: content.memoized,
             default: content.default,
             body: content.body.clone(),
-            calls_default: content.references.iter()
+            default_references: content.references.iter()
                 .filter_map(Reference::as_code_ref)
                 .filter_map(|reference|reference.as_variable_ref())
-                .any(|variable|matches!(&variable.reference,
-                                        NodeRef::Simple(name)
-                                        if name.val == "default")),
+                .filter_map(|variable|match &variable.reference {
+                    NodeRef::Simple(name) if name.val == "default" =>
+                        Some(name.span),
+                    _ => None,
+                })
+                .collect(),
             throws: content.throws,
             method_args: eval_method_args(&content.arguments, types, report),
             return_types: eval_method_returns(&content.returns, types, report),
