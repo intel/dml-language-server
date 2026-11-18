@@ -1409,8 +1409,9 @@ mod tests {
                 .find(|(_, line)|line.contains(needle))
                 .expect("fixture should contain needle");
             let col = line.find(needle).unwrap() + offset;
+            // Spans use canonical paths, which differ from main_file on Windows
             let position = make_file_position(
-                &setup.main_file, row as u32, col as u32);
+                setup.main_canon_path.as_path(), row as u32, col as u32);
             let mut limitations = HashSet::new();
             lookup(&setup.ctx, &position, &mut limitations)
                 .expect("lookup failed");
