@@ -100,8 +100,9 @@ template multi_final {
     shared method nd() {} // @loc[19]=multi_final_nd
 }
 template multi_default {
-    shared method nd() default {}
+    shared method nd() default {} // @loc[19]=multi_default_nd
 }
+// @diag-error: Conflicting definitions of method 'nd' in multi_nondefault | related->multi_final_nd: in multi_final, related->multi_default_nd: in multi_default
 template multi_nondefault is (multi_final, multi_default) {
     // @diag-error: This method attempts to override a non-default method | related->multi_final_nd: Attempted to override this declaration
     shared method nd() {}
@@ -113,6 +114,21 @@ template asm9 is asm1 {
 
 // @diag-error: Conflicting definitions of method 'm' in asm10 | related->asm6_m: in asm6, related->asm9_m: in asm9
 template asm10 is (asm6, asm9) {}
+
+// No error: unrelated default definitions only need an override once
+// instantiated, as in DMLC
+template overridable_pair is (asm6, asm7) {}
+
+// No error: asm8 already resolves the conflict between asm6 and asm7
+template redundant_template is (asm6, asm7, asm8) {}
+
+// A non-default definition cannot be merged with an unrelated one, even
+// when overridden
+// @diag-error: Conflicting definitions of method 'm' in asm11 | related->asm6_m: in asm6, related->asm9_m: in asm9
+template asm11 is (asm6, asm9) {
+    // @diag-error: attempts to override a non-default method | related->asm9_m: Attempted to override this declaration
+    shared method m() {}
+}
 
 // @diag-error: Conflicting definitions of method 'm' in ambiguous | related->asm6_m: Conflicting definition here, related->asm7_m: Conflicting definition here
 group ambiguous is (asm6, asm7);
