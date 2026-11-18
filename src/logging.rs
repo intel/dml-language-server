@@ -3,9 +3,18 @@
 
 use std::io::Write;
 use std::fmt;
-use std::sync::LazyLock;
+use std::sync::{LazyLock, OnceLock};
 
-use chrono::Local;
+use time::{OffsetDateTime, UtcOffset};
+use time::format_description::FormatItem;
+use time::macros::format_description;
+
+// Must be resolved while single-threaded; 'time' refuses to read it otherwise
+static LOCAL_OFFSET: OnceLock<UtcOffset> = OnceLock::new();
+
+const TIMESTAMP_FORMAT: &[FormatItem<'static>] = format_description!(
+    "[year]-[month]-[day]T[hour]:[minute]:[second][offset_hour sign:mandatory]:[offset_minute]"
+);
 
 macro_rules! info {
     ($($arg:tt)*) => {
@@ -103,6 +112,8 @@ pub fn format_truncated(max_len: Option<usize>, args: fmt::Arguments<'_>) -> Str
 }
 
 pub fn init() {
+    LOCAL_OFFSET.get_or_init(
+        || UtcOffset::current_local_offset().unwrap_or(UtcOffset::UTC));
     // Slightly dumb way to do this, build the logger once with defaults
     // to get the max level for all modules from env, then build again
     // to remove this restriction and place it on log:: instead
@@ -123,7 +134,10 @@ fn local_time_format(
 ) -> std::io::Result<()> {
     // ISO 8601 with seconds precision (env_logger's default), but local time
     // with the local UTC offset instead of the "Z" suffix.
-    let ts = Local::now().format("%Y-%m-%dT%H:%M:%S%:z");
+    let offset = LOCAL_OFFSET.get().copied().unwrap_or(UtcOffset::UTC);
+    let ts = OffsetDateTime::now_utc().to_offset(offset)
+        .format(TIMESTAMP_FORMAT)
+        .map_err(std::io::Error::other)?;
     let level = record.level();
     let style = buf.default_level_style(level);
     // Formatting 'style' normally enables it, doing it with :# disables it
