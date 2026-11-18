@@ -35,6 +35,20 @@ fn delimiter_recovery_layout_member_semicolon() {
          layout_missing_member_semicolon_t;");
 }
 
+// A missing semicolon before a keyword an enclosing context understands
+#[test]
+fn delimiter_recovery_struct_member_before_outer_keyword() {
+    assert_delimiter_recovery_terminates(
+        "typedef struct { uint8 a saved int x; } struct_outer_keyword_t;");
+}
+
+#[test]
+fn delimiter_recovery_layout_member_before_outer_keyword() {
+    assert_delimiter_recovery_terminates(
+        "typedef layout \"big-endian\" { uint8 a saved int x; } \
+         layout_outer_keyword_t;");
+}
+
 #[test]
 fn delimiter_recovery_bitfield_at() {
     assert_delimiter_recovery_terminates(

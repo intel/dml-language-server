@@ -99,7 +99,12 @@ impl Parse<BaseTypeContent> for StructTypeContent {
         let mut members = vec![];
         let mut cont = true;
         while cont {
-            let next = new_context.peek_kind(stream);
+            // An ended member list means an enclosing construct took over
+            let next = if list_context.peek_kind(stream).is_some() {
+                new_context.peek_kind(stream)
+            } else {
+                None
+            };
             cont = false;
             if let Some(next_kind) = next {
                 if CDecl::first_token_matcher(next_kind) {
@@ -186,7 +191,11 @@ impl Parse<BaseTypeContent> for LayoutContent {
             let semi = list_context.expect_next_kind(
                 stream, TokenKind::SemiColon);
             fields.push((field, semi));
-            cont = new_context.peek_kind(stream).is_some_and(|t|CDecl::first_token_matcher(t) || t == TokenKind::SemiColon);
+            // An ended member list means an enclosing construct took over
+            cont = list_context.peek_kind(stream).is_some()
+                && new_context.peek_kind(stream).is_some_and(
+                    |t|CDecl::first_token_matcher(t)
+                        || t == TokenKind::SemiColon);
         }
         let rbrace = new_context.expect_next_kind(stream, TokenKind::RBrace);
         BaseTypeContent::Layout(LayoutContent {
