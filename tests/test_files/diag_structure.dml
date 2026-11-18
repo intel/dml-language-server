@@ -91,6 +91,16 @@ typedef bitfields 0 { // @diag-error: Bitfields width must be an integer between
     uint8 b @ [7:0];
 } bad_bitfields;
 
+typedef bitfields 129 { // @diag-error: Bitfields width must be an integer between 1 and 64
+    uint8 b @ [7:0];
+} huge_bitfields;
+
+// Invalid widths are only reported once, not again when storing into them
+method invalid_width_storage() {
+    local bad_bitfields zero_width = 1;
+    local huge_bitfields huge_width = 1;
+}
+
 typedef struct {
     // @diag-error: missing name in declaration
     int;
