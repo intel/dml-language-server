@@ -2537,37 +2537,83 @@ fn sort_method_decls<'t>(decls: &[(&Rank, &ExistCondition,
         (method_map_defs, method_order, method_map_decls)
 }
 
-// Some definition must override all others that can coexist with it
+// Two definitions that can coexist must have a common override that can exist
+// alongside both; an override hides others unless its condition provably
+// excludes them
 fn report_ambiguous_method_definitions(
     obj: &DMLCompositeObject,
     name: &str,
     all_decls: &[(&Rank, &ExistCondition, &MethodDecl)],
     default_map: &DeclMap<'_>,
     report: &mut Vec<DMLError>) {
-    let overridden: HashSet<&MethodDecl> = default_map.values()
-        .flatten().copied().collect();
     let condition_of = |method: &MethodDecl| all_decls.iter()
         .find(|(_, _, decl)|*decl == method)
         .map(|(rank, condition, _)|(*rank, *condition));
-    let mut tops: Vec<&MethodDecl> = default_map.keys().copied()
-        .filter(|method|!overridden.contains(method)).collect();
-    tops.sort_by_key(|method|*method.location());
-    // Same-rank duplicates are reported as name collisions instead
-    let coexisting = tops.iter().enumerate().any(|(index, first)|
-        tops[index + 1..].iter().any(|second|
-            match (condition_of(first), condition_of(second)) {
-                (Some((first_rank, first)), Some((second_rank, second))) =>
-                    first_rank != second_rank
-                    && !first.guaranteed_excluded_from(second),
-                _ => true,
-            }));
-    if coexisting {
+    let excludes = |first: &MethodDecl, second: &MethodDecl|
+        match (condition_of(first), condition_of(second)) {
+            (Some((_, first)), Some((_, second))) =>
+                first.guaranteed_excluded_from(second),
+            _ => false,
+        };
+    // Everything each definition overrides, directly or not
+    let overridden_by: HashMap<&MethodDecl, HashSet<&MethodDecl>> =
+        default_map.keys().map(|method|{
+            let mut reached = HashSet::new();
+            let mut pending: Vec<&MethodDecl> = default_map.get(method)
+                .into_iter().flatten().copied().collect();
+            while let Some(next) = pending.pop() {
+                if reached.insert(next) {
+                    pending.extend(default_map.get(next)
+                                   .into_iter().flatten().copied());
+                }
+            }
+            (*method, reached)
+        }).collect();
+    let overrides = |overrider: &MethodDecl, method: &MethodDecl|
+        overridden_by.get(overrider)
+        .is_some_and(|overridden|overridden.contains(method));
+    // An override of 'method' that can exist whenever 'method' and 'other' do
+    let hidden_by_override = |method: &MethodDecl, other: &MethodDecl,
+                              also_overriding: Option<&MethodDecl>|
+        overridden_by.keys().any(|overrider|
+            overrides(overrider, method)
+            && also_overriding.is_none_or(|also|overrides(overrider, also))
+            && !excludes(overrider, method) && !excludes(overrider, other));
+
+    let mut definitions: Vec<&MethodDecl> = default_map.keys().copied()
+        .collect();
+    definitions.sort_by_key(|method|*method.location());
+    let mut conflicting: Vec<&MethodDecl> = vec![];
+    for (index, first) in definitions.iter().enumerate() {
+        for second in &definitions[index + 1..] {
+            let (Some((first_rank, _)), Some((second_rank, _))) =
+                (condition_of(first), condition_of(second)) else {
+                continue;
+            };
+            // Same-rank duplicates are reported as name collisions instead
+            if first_rank == second_rank || excludes(first, second)
+                || overrides(first, second) || overrides(second, first)
+                || hidden_by_override(first, second, Some(second))
+                // Only report the most specific definitions
+                || hidden_by_override(first, second, None)
+                || hidden_by_override(second, first, None) {
+                continue;
+            }
+            for method in [*first, *second] {
+                if !conflicting.contains(&method) {
+                    conflicting.push(method);
+                }
+            }
+        }
+    }
+    if !conflicting.is_empty() {
+        conflicting.sort_by_key(|method|*method.location());
         report.push(DMLError {
             span: obj.declloc,
             description: format!(
                 "Conflicting definitions of method '{}' in {}",
                 name, obj.identity()),
-            related: tops.iter().map(|method|(*method.location(),
+            related: conflicting.iter().map(|method|(*method.location(),
                 "Conflicting definition here".to_string())).collect(),
             severity: Some(DiagnosticSeverity::ERROR),
         });

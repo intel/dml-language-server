@@ -137,6 +137,28 @@ group resolved is (asm6, asm7) {
     method m() {}
 }
 
+template cond_a {
+    method cm() default {} // @loc[12]=cond_a_cm
+}
+template cond_b {
+    method cm() default {} // @loc[12]=cond_b_cm
+}
+
+// An override that provably does not exist hides nothing
+// @diag-error: Conflicting definitions of method 'cm' in excluded_override | related->cond_a_cm: Conflicting definition here, related->cond_b_cm: Conflicting definition here
+group excluded_override is (cond_a, cond_b) {
+    #if (false) {
+        method cm() {}
+    }
+}
+
+// No error: an override under an unknown condition hides the conflict
+group possible_override is (cond_a, cond_b) {
+    #if (unknown_flag) {
+        method cm() {}
+    }
+}
+
 // Redundant instantiations do not hide which definition wins
 group redundant is (asm6, asm7, asm1, asm8);
 
