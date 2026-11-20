@@ -1,7 +1,7 @@
 //  © 2024 Intel Corporation
 //  SPDX-License-Identifier: Apache-2.0 and MIT
 use core::time::Duration;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashSet};
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 use std::fs;
@@ -100,7 +100,7 @@ pub struct ClientInterface {
     server: Job,
     reader: channel::Receiver<String>,
     _reading_thread: JoinHandle<()>,
-    diagnostics: HashMap<CanonPath, Vec<Diagnostic>>,
+    diagnostics: BTreeMap<CanonPath, Vec<Diagnostic>>,
     waiting_for_received_diag: HashSet<CanonPath>,
     waiting_for_received_lint: HashSet<CanonPath>,
     linting_enabled: bool,
@@ -140,7 +140,7 @@ impl ClientInterface {
             server,
             reader: receiver,
             _reading_thread: reading_thread,
-            diagnostics: HashMap::default(),
+            diagnostics: BTreeMap::default(),
             waiting_for_received_diag: HashSet::default(),
             waiting_for_received_lint: HashSet::default(),
             linting_enabled: lint,

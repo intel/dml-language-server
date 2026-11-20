@@ -29,6 +29,31 @@ pub fn typeident_filter(token: TokenKind) -> bool {
     }
 }
 
+// Struct-like member names must be present and unique (DMLC ENAMECOLL)
+fn check_member_names<'a>(members: impl Iterator<Item = &'a CDecl>,
+                          file: &TextFile) -> Vec<LocalDMLError> {
+    let mut used_names = vec![];
+    let mut errors = vec![];
+    for member in members {
+        match member.get_name() {
+            None => errors.append(&mut member.ensure_named()),
+            Some(token) => {
+                let name = token.read_token(file);
+                if used_names.contains(&name) {
+                    errors.push(LocalDMLError {
+                        range: member.range(),
+                        description: "The name is already in use in the \
+                                      same scope".to_string(),
+                    });
+                } else {
+                    used_names.push(name);
+                }
+            },
+        }
+    }
+    errors
+}
+
 #[derive(PartialEq, Clone, Debug)]
 pub struct StructTypeContent {
     pub structtok: LeafToken,
@@ -47,12 +72,8 @@ impl TreeElement for StructTypeContent {
                      &self.members,
                      &self.rbrace)
     }
-    fn post_parse_sanity(&self, _file: &TextFile) -> Vec<LocalDMLError> {
-        let mut errors = vec![];
-        for (decl, _) in &self.members {
-            errors.append(&mut decl.ensure_named());
-        }
-        errors
+    fn post_parse_sanity(&self, file: &TextFile) -> Vec<LocalDMLError> {
+        check_member_names(self.members.iter().map(|(decl, _)|decl), file)
     }
     fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, aux: AuxParams) {
         rules.indent_code_block.check(IndentCodeBlockArgs::from_struct_type_content(self, aux.depth), acc);
@@ -78,7 +99,12 @@ impl Parse<BaseTypeContent> for StructTypeContent {
         let mut members = vec![];
         let mut cont = true;
         while cont {
-            let next = new_context.peek_kind(stream);
+            // An ended member list means an enclosing construct took over
+            let next = if list_context.peek_kind(stream).is_some() {
+                new_context.peek_kind(stream)
+            } else {
+                None
+            };
             cont = false;
             if let Some(next_kind) = next {
                 if CDecl::first_token_matcher(next_kind) {
@@ -121,10 +147,8 @@ impl TreeElement for LayoutContent {
                      &self.rbrace)
     }
     fn post_parse_sanity(&self, file: &TextFile) -> Vec<LocalDMLError> {
-        let mut errors = vec![];
-        for (field, _) in &self.fields {
-            errors.append(&mut field.ensure_named());
-        }
+        let mut errors = check_member_names(
+            self.fields.iter().map(|(field, _)|field), file);
         if let Some(byteorder) = self.byteorder.read_leaf(file) {
             if byteorder != r#""big-endian""# &&
                 byteorder != r#""little-endian""# {
@@ -161,16 +185,18 @@ impl Parse<BaseTypeContent> for LayoutContent {
             stream, TokenKind::StringConstant);
         let lbrace = new_context.expect_next_kind(stream, TokenKind::LBrace);
         let mut fields = vec![];
-        while match new_context.peek_kind(stream) {
-            Some(TokenKind::RBrace) | None => false,
-            Some(_) => {
-                let field = CDecl::parse(&list_context, stream, file_info);
-                let semi = list_context.expect_next_kind(
-                    stream, TokenKind::SemiColon);
-                fields.push((field, semi));
-                true
-            },
-        } {}
+        let mut cont = !new_context.peek_kind(stream).is_none_or(|t|t == TokenKind::RBrace);
+        while cont {
+            let field = CDecl::parse(&list_context, stream, file_info);
+            let semi = list_context.expect_next_kind(
+                stream, TokenKind::SemiColon);
+            fields.push((field, semi));
+            // An ended member list means an enclosing construct took over
+            cont = list_context.peek_kind(stream).is_some()
+                && new_context.peek_kind(stream).is_some_and(
+                    |t|CDecl::first_token_matcher(t)
+                        || t == TokenKind::SemiColon);
+        }
         let rbrace = new_context.expect_next_kind(stream, TokenKind::RBrace);
         BaseTypeContent::Layout(LayoutContent {
             layout,
@@ -290,28 +316,18 @@ impl TreeElement for BitfieldsContent {
                      &self.rbrace)
     }
     fn post_parse_sanity(&self, file: &TextFile) -> Vec<LocalDMLError> {
-        let mut used_names = vec![];
         let mut errors = vec![];
-        for field in &self.fields {
-            match field.cdecl.get_name() {
-                None => errors.push(LocalDMLError {
-                    range: field.cdecl.range(),
-                    description: "missing name in declaration".to_string(),
-                }),
-                Some(tok) => {
-                    let name = tok.read_token(file);
-                    if used_names.contains(&name) {
-                        errors.push(LocalDMLError {
-                            range: field.cdecl.range(),
-                            description: "The name is already in use in the \
-                                          same scope".to_string(),
-                        })
-                    } else {
-                        used_names.push(name)
-                    }
-                }
-            }
+        if self.iconst.read_leaf(file)
+            .map(|width|width.replace('_', "").parse::<u8>())
+            .is_some_and(|width|!matches!(width, Ok(1..=64))) {
+            errors.push(LocalDMLError {
+                range: self.iconst.range(),
+                description: "Bitfields width must be an integer between 1 and 64"
+                    .to_string(),
+            });
         }
+        errors.append(&mut check_member_names(
+            self.fields.iter().map(|field|&field.cdecl), file));
         errors
     }
     fn evaluate_rules(&self, acc: &mut Vec<DMLStyleError>, rules: &CurrentRules, aux: AuxParams) {
@@ -609,6 +625,66 @@ impl TreeElement for CTypeDeclSimpleContent {
 }
 
 pub type CTypeDeclSimple = AstObject<CTypeDeclSimpleContent>;
+
+#[cfg(test)]
+mod tests {
+    use std::str::FromStr;
+
+    use logos::Logos;
+
+    use super::*;
+
+    fn bitfields_sanity_errors(width: &str) -> Vec<LocalDMLError> {
+        sanity_errors(&format!("bitfields {width} {{}}"))
+    }
+
+    fn sanity_errors(source: &str) -> Vec<LocalDMLError> {
+        let mut parser = FileParser::new(TokenKind::lexer(source));
+        let context = ParseContext::new_context(doesnt_understand_tokens);
+        let ast = BaseType::parse(&context, &mut parser, &FileInfo::default());
+        assert!(parser.skipped_tokens.is_empty(),
+                "unexpected skipped tokens: {:?}", parser.skipped_tokens);
+
+        let file = TextFile::from_str(source).unwrap();
+        let mut errors = vec![];
+        ast.post_parse_sanity_walk(&mut errors, &file);
+        errors
+    }
+
+    #[test]
+    fn struct_like_member_names_must_be_unique() {
+        for source in ["struct { int i; int i; }",
+                       "layout \"big-endian\" { uint32 i; uint32 i; }",
+                       "bitfields 32 { uint16 i @ [15:0]; uint16 i @ [31:16]; }",
+                       "struct { struct { int j; int j; } inner; }"] {
+            let errors = sanity_errors(source);
+            assert_eq!(errors.len(), 1, "{}: {:?}", source, errors);
+            assert_eq!(errors[0].description,
+                       "The name is already in use in the same scope");
+        }
+        for source in ["struct { int i; struct { int i; } inner; }",
+                       "layout \"big-endian\" { uint32 i; uint32 j; }"] {
+            assert!(sanity_errors(source).is_empty(), "{}", source);
+        }
+    }
+
+    #[test]
+    fn bitfields_width_must_be_valid_integer_width() {
+        for width in ["1", "64", "6_4"] {
+            assert!(bitfields_sanity_errors(width).is_empty(),
+                    "width {} should be valid", width);
+        }
+
+        for width in ["0", "65", "999999999999999999999999999999"] {
+            let errors = bitfields_sanity_errors(width);
+            assert_eq!(errors.len(), 1, "width {} should be invalid", width);
+            assert_eq!(errors[0].description,
+                       "Bitfields width must be an integer between 1 and 64");
+            assert_eq!(errors[0].range,
+                       ZeroRange::from_u32(0, 0, 10, 10 + width.len() as u32));
+        }
+    }
+}
 
 impl Parse<CTypeDeclSimpleContent> for CTypeDeclSimple {
     fn parse(context: &ParseContext,

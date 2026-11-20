@@ -14,7 +14,7 @@ use crate::actions::{AnalysisProgressKind, AnalysisWaitKind,
                      ContextDefinition, InitActionContext,
                      rpc_error_code};
 use crate::actions::notifications::ContextDefinitionKindParam;
-use crate::actions::semantic_lookup::{DLSLimitation, declarations_at_fp, definitions_at_fp, implementations_at_fp, references_at_fp};
+use crate::actions::semantic_lookup::{DLSLimitation, declarations_at_fp, definitions_at_fp, implementations_at_fp, references_at_fp, type_definitions_at_fp};
 use crate::analysis::{Named, DeclarationSpan, LocationSpan};
 use crate::analysis::symbols::SimpleSymbol;
 use crate::config::Config;
@@ -32,6 +32,7 @@ pub use crate::lsp_data::request::{
     GotoDeclaration, GotoDeclarationResponse,
     GotoDefinition,
     GotoImplementation, GotoImplementationResponse,
+    GotoTypeDefinition, GotoTypeDefinitionResponse,
     HoverRequest,
     RangeFormatting,
     References,
@@ -157,6 +158,7 @@ fn structure_to_symbolkind(kind: DMLSymbolKind)
         DMLSymbolKind::Loggroup
             => SymbolKind::CONSTANT,
         DMLSymbolKind::Extern |
+        DMLSymbolKind::Field |
         DMLSymbolKind::Saved |
         DMLSymbolKind::Session |
         DMLSymbolKind::Local |
@@ -564,6 +566,57 @@ impl RequestAction for GotoDefinition {
                 let main_file_name = fp.path();
                 warn_miss_lookup(lookuperror,
                                  main_file_name.to_str());
+                Self::fallback_response()
+            },
+        }
+    }
+}
+
+impl RequestAction for GotoTypeDefinition {
+    type Response = ResponseWithMessage<Option<GotoTypeDefinitionResponse>>;
+
+    fn timeout() -> std::time::Duration {
+        crate::server::dispatch::DEFAULT_REQUEST_TIMEOUT * 5
+    }
+
+    fn fallback_response() -> Result<Self::Response, ResponseError> {
+        Ok(None.into())
+    }
+
+    fn get_identifier(params: &Self::Params) -> String {
+        Self::request_identifier(
+            &text_document_position_to_ident(
+                &params.text_document_position_params))
+    }
+
+    fn handle<O: Output>(
+        ctx: InitActionContext<O>,
+        params: Self::Params,
+    ) -> Result<Self::Response, ResponseError> {
+        debug!("Requesting type definitions with params {:?}", params);
+        let fp = match ctx.text_doc_pos_to_pos(
+            &params.text_document_position_params,
+            "goto_type_def") {
+            Some(fp) => fp,
+            None => return Self::fallback_response(),
+        };
+        let canon_path = make_canon_path!(fp.path())?;
+        wait_for_device_path!(ctx, canon_path);
+
+        let mut limitations = HashSet::new();
+        match type_definitions_at_fp(&ctx, &fp, &mut limitations) {
+            Ok(locations) => {
+                let locations = locations.into_iter()
+                    .map(|location|ls_util::dls_to_location(&location))
+                    .collect();
+                Ok(response_maybe_with_limitations(
+                    &fp.path(),
+                    Some(GotoTypeDefinitionResponse::Array(locations)),
+                    limitations,
+                    &ctx))
+            },
+            Err(error) => {
+                warn_miss_lookup(error, fp.path().to_str());
                 Self::fallback_response()
             },
         }

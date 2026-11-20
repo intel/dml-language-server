@@ -1,0 +1,59 @@
+//  © 2026 Intel Corporation
+//  SPDX-License-Identifier: Apache-2.0 and MIT
+
+dml 1.4;
+device type_default_calls;
+
+typedef bool bool_alias; // @loc[14]=bool_alias_def
+typedef int int_alias; // @loc[13]=int_alias_def
+
+template assignment_base {
+    method checked_without_default_call() default {
+        // @diag-error: base_without_default_assignment | related->base_without_default_decl: declared as 'int_alias' here
+        // @goto-def-decl[25]->base_without_default_decl @goto-type-def[25]->int_alias_def
+        local int_alias base_without_default_assignment = "base without default"; // @loc[25]=base_without_default_decl
+    }
+
+    // @goto-def-decl[48]->checked_default_arg @goto-type-def[48]->int_alias_def
+    method checked_with_default_call(int_alias default_argument) -> (int, bool) // @loc[12]=checked_default_method @loc[48]=checked_default_arg
+            default {
+        // @diag-error: base_with_default_assignment | related->base_with_default_decl: declared as 'int_alias' here
+        // @goto-def-decl[25]->base_with_default_decl @goto-type-def[25]->int_alias_def
+        local int_alias base_with_default_assignment = "base with default"; // @loc[25]=base_with_default_decl
+        return (default_argument, false);
+    }
+}
+
+template assignment_override is assignment_base {
+    method checked_without_default_call() {
+        // @diag-error: override_without_default_assignment | related->override_without_default_decl: declared as 'int_alias' here
+        // @goto-def-decl[25]->override_without_default_decl @goto-type-def[25]->int_alias_def
+        local int_alias override_without_default_assignment = false; // @loc[25]=override_without_default_decl
+    }
+
+    // @loc[48]=default_argument_decl @goto-def-decl[48]->default_argument_decl @goto-type-def[48]->int_alias_def
+    method checked_with_default_call(int_alias default_argument) -> (int, bool) {
+        // @loc[26]=default_int_decl @goto-def-decl[26]->default_int_decl @goto-type-def[26]->int_alias_def @loc[50]=default_bool_decl @goto-def-decl[50]->default_bool_decl @goto-type-def[50]->bool_alias_def
+        local (int_alias default_int, bool_alias default_bool) = default(default_argument);
+        // @goto-def-decl[27]->bad_default_bool_decl @goto-type-def[27]->bool_alias_def @goto-def-decl[55]->bad_default_int_decl @goto-type-def[55]->int_alias_def
+        local (bool_alias bad_default_bool, int_alias bad_default_int) = // @loc[27]=bad_default_bool_decl @loc[55]=bad_default_int_decl
+            // @diag-error: bad_default_bool | related->bad_default_bool_decl: declared here
+            // @diag-error: bad_default_int | related->bad_default_int_decl: declared here
+            // @diag-error: Cannot pass value of type 'const char *' | related->checked_default_arg: Argument declared here
+            default("default argument");
+        // @loc[26]=missing_default_arg_int_decl @goto-def-decl[26]->missing_default_arg_int_decl @goto-type-def[26]->int_alias_def @loc[62]=missing_default_arg_bool_decl @goto-def-decl[62]->missing_default_arg_bool_decl @goto-type-def[62]->bool_alias_def
+        local (int_alias missing_default_arg_int, bool_alias missing_default_arg_bool) =
+            // @diag-error: expects 1 arguments but call provides 0 | related->checked_default_method: Method declared here
+            default();
+        // @diag-error: returns 2 values but declaration binds 1 | related->checked_default_method: Method declared here
+        // @loc[25]=short_default_binding_decl @goto-def-decl[25]->short_default_binding_decl @goto-type-def[25]->int_alias_def
+        local int_alias short_default_binding = default(default_argument);
+        // @diag-error: override_with_default_assignment | related->override_with_default_decl: declared as 'int_alias' here
+        // @goto-def-decl[25]->override_with_default_decl @goto-type-def[25]->int_alias_def
+        local int_alias override_with_default_assignment = false; // @loc[25]=override_with_default_decl
+        return default(default_argument);
+    }
+}
+
+bank diagnostics is assignment_override {
+}

@@ -13,7 +13,7 @@ use crate::analysis::structure::objects::{CompObjectKind};
 use crate::analysis::structure::expressions::DMLString;
 use crate::analysis::templating::objects::{DMLObject, DMLNamedMember, StructureKey};
 use crate::analysis::templating::methods::{DMLMethodRef};
-use crate::analysis::templating::types::DMLResolvedType;
+use crate::analysis::templating::types::{TypeId, TypeUse};
 use crate::analysis::templating::traits::DMLTemplate;
 
 #[derive(PartialEq, Eq, Debug, Clone, Copy, Hash, PartialOrd, Ord)]
@@ -22,6 +22,7 @@ pub enum DMLSymbolKind {
     Parameter,
     Constant,
     Extern,
+    Field,
     Hook,
     Local,
     Loggroup,
@@ -119,8 +120,11 @@ pub enum SymbolSource {
     MethodArg(Arc<DMLMethodRef>, DMLString),
     MethodLocal(Arc<DMLMethodRef>, DMLString),
     // TODO: RC this if it's expensive
-    Type(DMLResolvedType),
+    Type(TypeId),
+    // (type containing the member, member name location)
+    TypeMember(TypeUse, ZeroSpan),
     Template(Arc<DMLTemplate>),
+    Loggroup(DMLString),
 }
 
 impl std::fmt::Debug for SymbolSource {
@@ -146,10 +150,18 @@ impl std::fmt::Debug for SymbolSource {
             SymbolSource::Type(_) => 
                 f.debug_struct("SymbolSource::Type")
                 .finish_non_exhaustive(),
+            SymbolSource::TypeMember(_, location) =>
+                f.debug_struct("SymbolSource::TypeMember")
+                .field("location", location)
+                .finish(),
             SymbolSource::Template(templ) => 
                 f.debug_struct("SymbolSource::Template")
                 .field("name", &templ.name)
                 .finish_non_exhaustive(),
+            SymbolSource::Loggroup(name) =>
+                f.debug_struct("SymbolSource::Loggroup")
+                .field("name", &name.val)
+                .finish(),
         }
     }
 }
@@ -174,9 +186,10 @@ impl SymbolSource {
             _ => None
         }
     }
-    pub fn as_type(&self) -> Option<&DMLResolvedType> {
+    pub fn as_type(&self) -> Option<TypeId> {
         match self {
-            Self::Type(typ) => Some(typ),
+            Self::Type(typ) => Some(*typ),
+            Self::TypeMember(TypeUse::Declared(typ), _) => Some(*typ),
             _ => None
         }
     }
@@ -203,7 +216,9 @@ impl SymbolSource {
             SymbolSource::MethodArg(_, name) => Some(&name.val),
             SymbolSource::MethodLocal(_, name) => Some(&name.val),
             SymbolSource::Type(_) => None,
+            SymbolSource::TypeMember(_, _) => None,
             SymbolSource::Template(templ) => Some(&templ.name),
+            SymbolSource::Loggroup(name) => Some(&name.val),
         }
     }
 }
@@ -233,8 +248,15 @@ pub struct Symbol {
     // some param or method set in them
     pub implementations: HashSet<ZeroSpan>,
     pub source: SymbolSource,
+    // Explicit type declarations denoted by this syntax without implying
+    // that the symbol itself has a value type.
+    pub type_definitions: HashSet<ZeroSpan>,
     // TODO: RC or box this if it's expensive
-    pub typed: Option<DMLResolvedType>,
+    pub typed: Option<TypeUse>,
+    // Pointer and array layers wrapping 'typed' in the declared type
+    pub indirections: u32,
+    // Declared with a 'typeof' type, which leaves 'typed' unresolved
+    pub typeof_declared: bool,
 }
 
 // We do this often enough to warrant a reusable pattern,
@@ -355,7 +377,10 @@ impl Symbol {
             references: HashSet::default(),
             implementations: HashSet::default(),
             bases: Vec::default(),
+            type_definitions: HashSet::default(),
             typed: None,
+            indirections: 0,
+            typeof_declared: false,
         }
     }
 

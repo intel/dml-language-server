@@ -1,0 +1,131 @@
+dml 1.4;
+device diag_structure;
+
+// Errors found in a single file, independent of any device
+
+// @diag-error: bitorder must be 'le' or 'be'
+bitorder mixed;
+
+// @diag-error: Version declaration must be first statement in file
+dml 1.4;
+// @diag-error: Device declaration must be second statement in file
+device again;
+// @diag-error: Bitorder declaration must follow a device declaration
+bitorder be;
+// @diag-error: Provisional declaration must immediately follow the version declaration
+provisional explicit_param_decls;
+
+group g {
+    // @diag-error: Constant declaration not allowed in an object declaration
+    constant c = 1;
+    // @diag-error: Extern declaration not allowed in an object declaration
+    extern int e;
+    // @diag-error: Template declaration not allowed in an object declaration
+    template t {}
+    // @diag-error: Header declaration not allowed in an object declaration
+    header %{ %}
+    // @diag-error: Footer declaration not allowed in an object declaration
+    footer %{ %}
+    // @diag-error: Loggroup declaration not allowed in an object declaration
+    loggroup lg;
+    #if (true) {
+        // @diag-error: Loggroup declaration not allowed in '#if'
+        loggroup lg_if;
+    }
+    // @diag-error: Typedef declaration not allowed in an object declaration
+    typedef int t2;
+}
+
+#if (true) {
+    // @diag-error: Param declaration not allowed directly inside a #if block
+    param p = 1;
+}
+
+// @diag-error: No assignment to parameter 'tp' | related->tp_decl: Declared here
+group typed_param_holder {
+    // @diag-error: Typed parameter declaration only permitted in top level template block
+    param tp : int; // @loc[5]=tp_decl
+}
+
+// @diag-error: Shared method declaration only permitted in top level template block
+shared method sm() {}
+
+// @diag-error: inline arguments require method to be declared as inline
+method mi(inline a) {}
+
+// @diag-error: only use inline if there are untyped arguments
+inline method im(int a) {}
+
+// @diag-error: a method declared as startup must also be declared independent
+startup method st() {}
+
+// @diag-error: a method declared as startup cannot have input parameters
+independent startup method st_args(int a) {}
+
+independent startup memoized method st_mem() -> (int) { return 1; }
+
+// @diag-error: a method declared as memoized must also be declared independent
+// @diag-error: a method declared as memoized must also be declared startup
+memoized method mm() -> (int) { return 1; }
+
+// @diag-error: a method declared as memoized must also be declared startup
+independent memoized method mm_void() {}
+
+// @diag-error: a method declared as memoized must either throw or have return types
+independent startup memoized method mm_nothing() {}
+
+// @diag-error: a startup method not declared as memoized cannot throw
+independent startup method st_throws() throws {}
+
+// @diag-error: a startup method not declared as memoized cannot have return values
+independent startup method st_returns() -> (int) { return 1; }
+
+// @diag-error: a startup method cannot be declared as default
+independent startup method st_default() default {}
+
+typedef layout "middle-endian" { // @diag-error: Must be 'big-endian' or 'little-endian'
+    uint8 a;
+} bad_layout;
+
+typedef bitfields 0 { // @diag-error: Bitfields width must be an integer between 1 and 64
+    uint8 b @ [7:0];
+} bad_bitfields;
+
+typedef bitfields 129 { // @diag-error: Bitfields width must be an integer between 1 and 64
+    uint8 b @ [7:0];
+} huge_bitfields;
+
+// Invalid widths are only reported once, not again when storing into them
+method invalid_width_storage() {
+    local bad_bitfields zero_width = 1;
+    local huge_bitfields huge_width = 1;
+}
+
+typedef struct {
+    // @diag-error: missing name in declaration
+    int;
+} unnamed_member;
+
+method m1() {}
+export m1 as "m1_export";
+
+method body() {
+    // @diag-error: Too large integer constant
+    local int big = 99999999999999999999999999;
+    // @diag-error: Too large integer constant
+    local int small = -99999999999999999999999999;
+    // @diag-error: Wrong number of initializers in declaration
+    local (int w1, int w2) = (1, 2, 3);
+    // @diag-error: Invalid log kind
+    log foo: "x";
+    // @diag-error: Can only compose string literals with '+', got '-'
+    log info: "a" - "b";
+    // @diag-error: Expected string literal, got integer constant
+    log info: "a" + 1;
+    // @diag-error: Expected composed string literal
+    log info: big;
+    // @diag-error: Expected time unit ('s', 'cycles', 'ps')
+    after 1 xs: body();
+    // @diag-error: Expected '*' before 'const'
+    local const uint8 *cast_ptr = cast(big, uint8 const *);
+}

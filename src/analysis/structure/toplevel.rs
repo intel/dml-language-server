@@ -124,7 +124,7 @@ impl ExistCondition {
                     // TODO/NOTE: For now this will only report for provably non-constant
                     // expressions, which there are none. As evaluation improves we can
                     // eventually flip this to report for non-provably constant expressions
-                    if evaluated.constant == Some(false) {
+                    if evaluated.constant() == Some(false) {
                         // TODO: This can be improved to find the range of the nearest
                         // sub-expression that is non-constant without blaming the whole expression
                         // (probably as a related span)
@@ -212,13 +212,40 @@ impl ExistCondition {
     }
 }
 
+// The non-'#if' context that an '#if' block is nested in
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum StatementContext {
-    Object,
-    HashIfTrue,
-    HashIfElse,
+pub enum HashIfParent {
+    TopLevel,
+    Object(CompObjectKind),
     InEach,
     Template,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum StatementContext {
+    Object(CompObjectKind),
+    HashIfTrue(HashIfParent),
+    HashIfElse(HashIfParent),
+    InEach,
+    Template,
+}
+
+impl StatementContext {
+    pub fn hashif_parent(self) -> HashIfParent {
+        match self {
+            StatementContext::Object(kind) => HashIfParent::Object(kind),
+            StatementContext::HashIfTrue(parent) |
+            StatementContext::HashIfElse(parent) => parent,
+            StatementContext::InEach => HashIfParent::InEach,
+            StatementContext::Template => HashIfParent::Template,
+        }
+    }
+
+    pub fn is_toplevel_hashif(self) -> bool {
+        matches!(self,
+                 StatementContext::HashIfTrue(HashIfParent::TopLevel) |
+                 StatementContext::HashIfElse(HashIfParent::TopLevel))
+    }
 }
 
 impl Display for StatementContext {
@@ -226,9 +253,9 @@ impl Display for StatementContext {
         write!(f,
                "{}",
                match self {
-                   StatementContext::HashIfTrue => "'#if'",
-                   StatementContext::HashIfElse => "'#else'",
-                   StatementContext::Object => "an object declaration",
+                   StatementContext::HashIfTrue(_) => "'#if'",
+                   StatementContext::HashIfElse(_) => "'#else'",
+                   StatementContext::Object(_) => "an object declaration",
                    StatementContext::InEach => "an 'in each' declaration",
                    StatementContext::Template => "a 'template' definition",
                })
@@ -395,6 +422,8 @@ pub struct StatementSpec {
     pub errors: Vec<ObjectDecl<Error>>,
     pub constants: Vec<ObjectDecl<Constant>>,
     pub externs: Vec<Extern>,
+    // Only populated for top-level '#if' branches, moved into TopLevel
+    pub loggroups: Vec<ObjectDecl<Loggroup>>,
 }
 
 impl SymbolContainer for StatementSpec {
@@ -453,6 +482,7 @@ impl StatementSpec {
             exports: vec![],
             imports: vec![],
             templates: vec![],
+            loggroups: vec![],
         }
     }
     pub fn consume(mut self,
@@ -468,7 +498,8 @@ impl StatementSpec {
                    errors: &mut Vec<ObjectDecl<Error>>,
                    templates: &mut Vec<ObjectDecl<Template>>,
                    imports: &mut Vec<ObjectDecl<Import>>,
-                   hooks: &mut Vec<ObjectDecl<Hook>>) {
+                   hooks: &mut Vec<ObjectDecl<Hook>>,
+                   loggroups: &mut Vec<ObjectDecl<Loggroup>>) {
         objects.append(&mut self.objects);
         constants.append(&mut self.constants);
         sessions.append(&mut self.sessions);
@@ -482,6 +513,7 @@ impl StatementSpec {
         imports.append(&mut self.imports);
         templates.append(&mut self.templates);
         hooks.append(&mut self.hooks);
+        loggroups.append(&mut self.loggroups);
     }
 }
 
@@ -504,6 +536,7 @@ fn flatten_hashif_branch(context: StatementContext,
     let mut hooks = vec![];
     let mut errors = vec![];
     let mut templates = vec![];
+    let mut loggroups = vec![];
     for inst in &stmnts.instantiations {
         instantiations.push(ObjectDecl::with_condition(
             inst, &condition));
@@ -599,12 +632,17 @@ fn flatten_hashif_branch(context: StatementContext,
                         imports.push(ObjectDecl::with_condition(
                             import, &condition)),
                     DMLObject::Loggroup(loggroup) =>
-                        report.push(LocalDMLError {
-                            range: loggroup.span.range,
-                            description: format!(
-                                "Loggroup declaration not allowed in {}",
-                                context),
-                        }),
+                        if context.is_toplevel_hashif() {
+                            loggroups.push(ObjectDecl::with_condition(
+                                loggroup, &condition));
+                        } else {
+                            report.push(LocalDMLError {
+                                range: loggroup.span.range,
+                                description: format!(
+                                    "Loggroup declaration not allowed in {}",
+                                    context),
+                            });
+                        },
                     DMLObject::Typedef(typdef) =>
                         report.push(LocalDMLError {
                             range: typdef.object.span.range,
@@ -614,7 +652,7 @@ fn flatten_hashif_branch(context: StatementContext,
                         }),
                     DMLObject::CompositeObject(compobj) => {
                         let subspec = flatten_hashif_branch(
-                            StatementContext::Object,
+                            StatementContext::Object(compobj.kind.kind),
                             &compobj.statements,
                             condition.clone(), report);
                         objects.push(
@@ -656,13 +694,13 @@ fn flatten_hashif_branch(context: StatementContext,
                         sessions.push(ObjectDecl::with_condition(
                             sess, &condition)),
                     DMLObject::Parameter(param) => {
-                            if matches!(context, StatementContext::HashIfElse | StatementContext::HashIfTrue) {
+                            if matches!(context, StatementContext::HashIfElse(_) | StatementContext::HashIfTrue(_)) {
                                 report.push(LocalDMLError {
                                     range: *param.loc_range(),
                                     description: format!("Param declaration not allowed directly inside a {} block",
                                         match context {
-                                            StatementContext::HashIfElse => "#else",
-                                            StatementContext::HashIfTrue => "#if",
+                                            StatementContext::HashIfElse(_) => "#else",
+                                            StatementContext::HashIfTrue(_) => "#if",
                                             _ => unreachable!("Unexpected statement context in param declaration check"),
                                         }),
                                 });
@@ -680,12 +718,12 @@ fn flatten_hashif_branch(context: StatementContext,
                     &ExistCondition::Conditional(Arc::new(vec![
                         (false, hi.condition.clone())])));
                 let truebranchspec = flatten_hashif_branch(
-                    StatementContext::HashIfTrue,
+                    StatementContext::HashIfTrue(context.hashif_parent()),
                     &hi.truebranch,
                     true_condition,
                     report);
                 let falsebranchspec = flatten_hashif_branch(
-                    StatementContext::HashIfElse,
+                    StatementContext::HashIfElse(context.hashif_parent()),
                     &hi.falsebranch,
                     false_condition,
                     report);
@@ -701,7 +739,8 @@ fn flatten_hashif_branch(context: StatementContext,
                                        &mut errors,
                                        &mut templates,
                                        &mut imports,
-                                       &mut hooks);
+                                       &mut hooks,
+                                       &mut loggroups);
                 falsebranchspec.consume(&mut objects,
                                         &mut sessions,
                                         &mut saveds,
@@ -714,7 +753,8 @@ fn flatten_hashif_branch(context: StatementContext,
                                         &mut errors,
                                         &mut templates,
                                         &mut imports,
-                                        &mut hooks);
+                                        &mut hooks,
+                                        &mut loggroups);
             },
         }
     }
@@ -733,6 +773,7 @@ fn flatten_hashif_branch(context: StatementContext,
         templates,
         imports,
         externs: vec![],
+        loggroups,
     }
 }
 
@@ -746,7 +787,7 @@ pub struct TopLevel {
     pub device: Option<Device>,
     // These are all outside regular namespace, so makes sense to isolate them
     pub bitorder: Option<Bitorder>,
-    pub loggroups: Vec<Loggroup>,
+    pub loggroups: Vec<ObjectDecl<Loggroup>>,
     pub cblocks: Vec<CBlock>,
     pub typedefs: Vec<Typedef>,
     pub references: Vec<Reference>,
@@ -786,7 +827,14 @@ impl Scope for TopLevel {
         self.spec.scopes()
     }
     fn defined_symbols(&self) -> Vec<&dyn StructureSymbol> {
-        self.spec.symbols()
+        let mut symbols = self.spec.symbols();
+        symbols.extend(self.typedefs.to_symbols());
+        symbols.extend(self.loggroups.to_symbols());
+        symbols.extend(self.typedefs.iter().flat_map(|typedef|
+            typedef.typed.declaration_members().into_iter()
+                .filter(|member|member.name.is_some())
+                .map(|member|member as &dyn StructureSymbol)));
+        symbols
     }
 }
 
@@ -853,7 +901,7 @@ impl TopLevel {
         let mut ineachs = vec![];
 
         for ineach in &statements.ineachs {
-            let spec = flatten_hashif_branch(StatementContext::Object,
+            let spec = flatten_hashif_branch(StatementContext::InEach,
                                              &ineach.statements,
                                              ExistCondition::Always, report);
             ineachs.push(
@@ -899,7 +947,7 @@ impl TopLevel {
                                 description: "Bitorder declaration must follow a device declaration".to_string(),
                             }),
                         DMLObject::Loggroup(log) =>
-                            loggroups.push(log.clone()),
+                            loggroups.push(ObjectDecl::always(log)),
                         DMLObject::Constant(con) =>
                             constants.push(ObjectDecl::always(con)),
                         DMLObject::Extern(ext) =>
@@ -926,7 +974,7 @@ impl TopLevel {
                             typedefs.push(typedef.clone()),
                         DMLObject::CompositeObject(compobj) => {
                             let subspec = flatten_hashif_branch(
-                                StatementContext::Object,
+                                StatementContext::Object(compobj.kind.kind),
                                 &compobj.statements,
                                 ExistCondition::Always, report);
                             objects.push(
@@ -968,12 +1016,12 @@ impl TopLevel {
                     let false_condition = ExistCondition::Conditional(
                         Arc::new(vec![(false, hi.condition.clone())]));
                     let truebranchspec = flatten_hashif_branch(
-                        StatementContext::HashIfTrue,
+                        StatementContext::HashIfTrue(HashIfParent::TopLevel),
                         &hi.truebranch,
                         true_condition,
                         report);
                     let falsebranchspec = flatten_hashif_branch(
-                        StatementContext::HashIfElse,
+                        StatementContext::HashIfElse(HashIfParent::TopLevel),
                         &hi.falsebranch,
                         false_condition,
                         report);
@@ -989,7 +1037,8 @@ impl TopLevel {
                                            &mut errors,
                                            &mut templates,
                                            &mut imports,
-                                           &mut hooks);
+                                           &mut hooks,
+                                           &mut loggroups);
                     falsebranchspec.consume(&mut objects,
                                             &mut sessions,
                                             &mut saveds,
@@ -1002,7 +1051,8 @@ impl TopLevel {
                                             &mut errors,
                                             &mut templates,
                                             &mut imports,
-                                            &mut hooks);
+                                            &mut hooks,
+                                            &mut loggroups);
                 },
             }
         }
@@ -1010,7 +1060,7 @@ impl TopLevel {
         let spec = StatementSpec {
             objects, instantiations, ineachs, errors, imports,
             saveds, sessions, params, constants, methods, exports, hooks,
-            templates, externs,
+            templates, externs, loggroups: vec![],
         };
         let mut references = vec![];
         ast.references(&mut references, filespec);

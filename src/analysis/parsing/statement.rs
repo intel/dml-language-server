@@ -1365,8 +1365,8 @@ impl Parse<StatementContent> for AfterContent {
                         let mut cont = true;
                         while cont {
                             cont = false;
-                            let bind = inner.expect_next_kind(
-                                stream, TokenKind::Identifier);
+                            let bind = inner.expect_next_filter(
+                                stream, ident_filter, "identifier");
                             let comma = if inner.peek_kind(stream) == Some(
                                 TokenKind::Comma) {
                                 cont = true;
@@ -1389,8 +1389,8 @@ impl Parse<StatementContent> for AfterContent {
                     leaf => {
                         // Sanity, the rightside of hook must be an identifier
                         // There is no good way to reconstruct parser state here
-                        if leaf.get_token().map(|l|l.kind)
-                            != Some(TokenKind::Identifier) {
+                        if !leaf.get_token().is_some_and(
+                            |l|ident_filter(l.kind)) {
                                 error!("Internal Parser Error: Unexpectedly \
                                         got '-> {:?}'", leaf);
                             }

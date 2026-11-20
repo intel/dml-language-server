@@ -1,0 +1,109 @@
+//  © 2026 Intel Corporation
+//  SPDX-License-Identifier: Apache-2.0 and MIT
+
+dml 1.4;
+device type_assignments;
+
+typedef bool bool_alias; // @loc[14]=bool_alias_def
+typedef float float_alias; // @loc[15]=float_alias_def
+typedef int int_alias; // @loc[13]=int_alias_def
+typedef int8 int8_alias; // @loc[14]=int8_alias_def
+typedef uint16 uint16_alias; // @loc[16]=uint16_alias_def
+typedef uint8 uint8_alias; // @loc[15]=uint8_alias_def
+
+typedef bitfields 8 {
+    uint1 flag @ [0];
+// @loc[3]=byte_bits_t_def
+} byte_bits_t;
+
+typedef bitfields 1 {} one_bit_t;
+typedef bitfields 64 {} sixty_four_bits_t;
+typedef bitfields 6_4 {} underscored_width_t;
+
+bank diagnostics {
+    // @loc[45]=byte_decl @goto-def-decl[45]->byte_decl @goto-type-def[45]->uint8_alias_def @loc[64]=wide_decl @goto-def-decl[64]->wide_decl @goto-type-def[64]->uint16_alias_def
+    method bitfield_assignments(uint8_alias byte, uint16_alias wide) {
+        // @loc[27]=from_literal_decl @goto-def-decl[27]->from_literal_decl @goto-type-def[27]->byte_bits_t_def
+        local byte_bits_t from_literal = 1;
+        // @loc[27]=from_integer_decl @goto-def-decl[27]->from_integer_decl @goto-type-def[27]->byte_bits_t_def
+        local byte_bits_t from_integer = byte;
+        // @loc[27]=from_wide_integer_decl @goto-def-decl[27]->from_wide_integer_decl @goto-type-def[27]->byte_bits_t_def
+        local byte_bits_t from_wide_integer = wide;
+        // @loc[27]=from_bitfields_decl @goto-def-decl[27]->from_bitfields_decl @goto-type-def[27]->uint8_alias_def
+        local uint8_alias from_bitfields = from_integer;
+        // @diag-error: invalid_bitfields_assignment | related->invalid_bitfields_assignment_decl: declared as 'byte_bits_t' here
+        // @goto-def-decl[27]->invalid_bitfields_assignment_decl @goto-type-def[27]->byte_bits_t_def
+        local byte_bits_t invalid_bitfields_assignment = 1.5; // @loc[27]=invalid_bitfields_assignment_decl
+        // Digit separators do not change the width
+        local underscored_width_t from_underscored_width = byte;
+    }
+
+    method assignments() {
+        // @loc[26]=tuple_int_decl @goto-def-decl[26]->tuple_int_decl @goto-type-def[26]->int_alias_def @loc[48]=tuple_bool_decl @goto-def-decl[48]->tuple_bool_decl @goto-type-def[48]->bool_alias_def
+        local (int_alias tuple_int, bool_alias tuple_bool) = (4, false);
+        // @diag-error: bad_tuple_int | related->bad_tuple_int_decl: declared as 'int_alias' here
+        // @diag-error: bad_tuple_bool | related->bad_tuple_bool_decl: declared as 'bool_alias' here
+        // @goto-def-decl[26]->bad_tuple_int_decl @goto-type-def[26]->int_alias_def @goto-def-decl[52]->bad_tuple_bool_decl @goto-type-def[52]->bool_alias_def
+        local (int_alias bad_tuple_int, bool_alias bad_tuple_bool) = ("tuple", 4); // @loc[26]=bad_tuple_int_decl @loc[52]=bad_tuple_bool_decl
+        // @loc[27]=const_tuple_bool_decl @goto-def-decl[27]->const_tuple_bool_decl @goto-type-def[27]->bool_alias_def @loc[61]=const_tuple_int_decl @goto-def-decl[61]->const_tuple_int_decl @goto-type-def[61]->int_alias_def
+        local (bool_alias const_tuple_bool, const int_alias const_tuple_int) = (false, 4);
+        // @loc[27]=bad_const_tuple_bool_decl @goto-def-decl[27]->bad_const_tuple_bool_decl @goto-type-def[27]->bool_alias_def @goto-def-decl[65]->bad_const_tuple_int_decl @goto-type-def[65]->int_alias_def
+        local (bool_alias bad_const_tuple_bool, const int_alias bad_const_tuple_int) = // @loc[65]=bad_const_tuple_int_decl
+            // @diag-error: bad_const_tuple_int | related->bad_const_tuple_int_decl: declared as 'const int_alias' here
+            (false, "const tuple");
+
+        // @loc[25]=simultaneous_int_decl @goto-def-decl[25]->simultaneous_int_decl @goto-type-def[25]->int_alias_def
+        local int_alias simultaneous_int;
+        // @loc[26]=simultaneous_bool_decl @goto-def-decl[26]->simultaneous_bool_decl @goto-type-def[26]->bool_alias_def
+        local bool_alias simultaneous_bool;
+        (simultaneous_int, simultaneous_bool) = (4, false);
+        // @goto-def-decl[25]->bad_simultaneous_int_decl @goto-type-def[25]->int_alias_def
+        local int_alias bad_simultaneous_int; // @loc[25]=bad_simultaneous_int_decl
+        // @goto-def-decl[26]->bad_simultaneous_bool_decl @goto-type-def[26]->bool_alias_def
+        local bool_alias bad_simultaneous_bool; // @loc[26]=bad_simultaneous_bool_decl
+        // @diag-error: bad_simultaneous_int | related->bad_simultaneous_int_decl: declared as 'int_alias' here
+        // @diag-error: bad_simultaneous_bool | related->bad_simultaneous_bool_decl: declared as 'bool_alias' here
+        (bad_simultaneous_int, bad_simultaneous_bool) = ("simultaneous", 4);
+        // @loc[25]=short_simultaneous_int_decl @goto-def-decl[25]->short_simultaneous_int_decl @goto-type-def[25]->int_alias_def
+        local int_alias short_simultaneous_int;
+        // @loc[26]=short_simultaneous_bool_decl @goto-def-decl[26]->short_simultaneous_bool_decl @goto-type-def[26]->bool_alias_def
+        local bool_alias short_simultaneous_bool;
+        // @loc[25]=short_simultaneous_extra_decl @goto-def-decl[25]->short_simultaneous_extra_decl @goto-type-def[25]->int_alias_def
+        local int_alias short_simultaneous_extra;
+        // @diag-error: has 3 targets but initializer provides 2 values
+        (short_simultaneous_int, short_simultaneous_bool,
+         short_simultaneous_extra) = (4, false);
+        // @loc[25]=long_simultaneous_int_decl @goto-def-decl[25]->long_simultaneous_int_decl @goto-type-def[25]->int_alias_def
+        local int_alias long_simultaneous_int;
+        // @loc[26]=long_simultaneous_bool_decl @goto-def-decl[26]->long_simultaneous_bool_decl @goto-type-def[26]->bool_alias_def
+        local bool_alias long_simultaneous_bool;
+        // @diag-error: has 2 targets but initializer provides 3 values
+        (long_simultaneous_int, long_simultaneous_bool) = (4, false, 8);
+        // @diag-error: has 2 targets but initializer provides 1 value
+        (long_simultaneous_int, long_simultaneous_bool) = 4;
+        (long_simultaneous_int, long_simultaneous_bool) = unknown_pair();
+
+        // @goto-def-decl[25]->chain_int_decl @goto-type-def[25]->int_alias_def
+        local int_alias chain_int; // @loc[25]=chain_int_decl
+        // @loc[26]=chain_bool_decl @goto-def-decl[26]->chain_bool_decl @goto-type-def[26]->bool_alias_def
+        local bool_alias chain_bool;
+        // @diag-error: Cannot assign value of type 'bool_alias' | related->chain_int_decl: declared as 'int_alias' here
+        chain_int = chain_bool = false;
+
+        // @loc[25]=swap_i_decl @goto-def-decl[25]->swap_i_decl @goto-type-def[25]->int_alias_def
+        local int_alias swap_i = 1;
+        // @loc[25]=swap_j_decl @goto-def-decl[25]->swap_j_decl @goto-type-def[25]->int_alias_def
+        local int_alias swap_j = 0;
+        (swap_i, swap_j) = (swap_j, swap_i);
+
+        // @loc[26]=chain_byte_decl @goto-def-decl[26]->chain_byte_decl @goto-type-def[26]->int8_alias_def
+        local int8_alias chain_byte; // @disabled-location[26]=chain_byte_decl
+        // @loc[27]=chain_float_decl @goto-def-decl[27]->chain_float_decl @goto-type-def[27]->float_alias_def
+        local float_alias chain_float;
+        // @loc[25]=chain_integer_decl @goto-def-decl[25]->chain_integer_decl @goto-type-def[25]->int_alias_def
+        local int_alias chain_integer; // @disabled-location[25]=chain_integer_decl
+        // @disabled-diag-warning: chain_byte | related->chain_byte_decl: declared as 'int8' here
+        // @disabled-diag-warning: chain_integer | related->chain_integer_decl: declared as 'int' here
+        chain_float = chain_byte = chain_integer = 255.1;
+    }
+}

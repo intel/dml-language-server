@@ -1,0 +1,7 @@
+dml 1.4;
+device duplicate_template_device;
+import "duplicate_template_import.dml";
+template t {
+    group g1 { method m() { local int x = 1; x = 2; } }
+}
+bank b is t;

@@ -14,10 +14,11 @@ use crate::analysis::scope::{ContextedSymbol, ContextKey};
 use crate::analysis::structure::objects::MaybeAbstract;
 use crate::analysis::structure::expressions::DMLString;
 use crate::analysis::symbols::DMLSymbolKind;
+use crate::analysis::templating::types::TypeUse;
 use crate::analysis::{DeviceAnalysis, IsolatedAnalysis, LocationSpan, SymbolRef, ZeroRange};
 
 use crate::analysis::parsing::tree::{ZeroSpan, ZeroFilePosition};
-use crate::analysis::reference::{CodeReference, Reference, ReferenceKind};
+use crate::analysis::reference::{CodeReference, Reference};
 use crate::file_management::CanonPath;
 use crate::server::Output;
 
@@ -42,11 +43,20 @@ impl fmt::Display for DLSLimitation {
     }
 }
 
-pub fn type_semantic_limitation() -> DLSLimitation {
+pub fn typeof_type_limitation() -> DLSLimitation {
     DLSLimitation {
         issue_num: 65,
-        description: "The DLS does not currently support semantic analysis of \
-                      types, including reference finding".to_string(),
+        description: "The DLS does not currently resolve 'typeof' types"
+            .to_string(),
+    }
+}
+
+pub fn untracked_member_limitation() -> DLSLimitation {
+    DLSLimitation {
+        issue_num: 65,
+        description: "The DLS does not currently resolve members accessed \
+                      on expressions other than plain references, such as \
+                      function calls or casts".to_string(),
     }
 }
 
@@ -133,6 +143,10 @@ impl <'t> SemanticLookup<'t> {
                     Reference::CodeReference(code_ref) => {
                         stored_symbols = get_symbols_of_ref(&code_ref, &analysis_info, &mut recognized_limitations);
                     },
+                    Reference::UntrackedMember(_) => {
+                        recognized_limitations.insert(
+                            untracked_member_limitation());
+                    },
                     Reference::FileReference(file_ref) => {
                         targeted_files = get_import_target_of(&file_ref, analysis_lock)
                             .into_iter().cloned().collect();
@@ -202,11 +216,6 @@ fn get_refs_and_syms_at_fp<'t>(
             &fp, ref_at_pos);
         }
         return Ok(SymbolsOrReference::Symbols(syms));
-    }
-    if let Some(refr) = ref_at_pos.and_then(|r|r.as_code_ref()) {
-        if refr.reference_kind() == ReferenceKind::Type {
-            relevant_limitations.insert(type_semantic_limitation());
-        }
     }
     if let Some(refr) = ref_at_pos {
         Ok(SymbolsOrReference::Reference(refr.clone()))
@@ -458,4 +467,38 @@ pub fn references_at_fp(context: &InitActionContext<impl Output>,
        .into_iter()
        .flat_map(|s|s.lock().unwrap().references.clone())
        .collect())
+}
+
+pub fn type_definitions_at_fp(
+    context: &InitActionContext<impl Output>,
+    fp: &ZeroFilePosition,
+    relevant_limitations: &mut HashSet<DLSLimitation>)
+    -> Result<Vec<ZeroSpan>, AnalysisLookupError> {
+    let analysis_lock = context.analysis.lock().unwrap();
+    let mut semantic_lookup = SemanticLookup::create_lookup(
+        fp,
+        &analysis_lock,
+        context)?;
+    mem::swap(relevant_limitations, &mut semantic_lookup.recognized_limitations);
+
+    let mut locations = HashSet::new();
+    for (device, symbols) in &semantic_lookup.stored_symbols {
+        for symbol in symbols {
+            let symbol = symbol.lock().unwrap();
+            locations.extend(symbol.type_definitions.iter().copied());
+            match symbol.typed {
+                Some(TypeUse::Declared(type_id)) => if let Some(declaration) =
+                    device.types.declaration(type_id) {
+                        locations.insert(declaration.name.span);
+                    },
+                Some(TypeUse::Anonymous(span)) => {
+                    locations.insert(span);
+                },
+                None => if symbol.typeof_declared {
+                    relevant_limitations.insert(typeof_type_limitation());
+                },
+            }
+        }
+    }
+    Ok(locations.into_iter().collect())
 }

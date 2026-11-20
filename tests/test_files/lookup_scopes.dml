@@ -1,0 +1,94 @@
+dml 1.4;
+device lookup_scopes;
+
+typedef bool bool_alias; // @loc[14]=bool_alias_def
+typedef int int_alias; // @loc[13]=int_alias_def
+
+// Block scoping of locals, following DMLC (which follows C for 'switch')
+
+hook(int, bool) h;
+// @loc[25]=i_decl @goto-def-decl[25]->i_decl @goto-type-def[25]->int_alias_def @loc[39]=b_decl @goto-def-decl[39]->b_decl @goto-type-def[39]->bool_alias_def
+method target(int_alias i, bool_alias b) {} // @loc[8]=target_def
+
+// @loc[32]=sel_decl @goto-def-decl[32]->sel_decl @goto-type-def[32]->int_alias_def
+method switch_locals(int_alias sel) -> (int) {
+    switch (sel) {
+    case 0:
+        // @goto-def-decl[25]->sw_decl @goto-type-def[25]->int_alias_def
+        local int_alias sw; // @loc[25]=sw_decl
+        sw = 1; // @goto-def-decl[9]->sw_decl
+        break;
+    case 1:
+        // Later cases see locals of earlier ones
+        sw = 2; // @goto-def-decl[9]->sw_decl
+        break;
+    #if (true) {
+    case 2:
+        // @goto-def-decl[25]->in_hashif_decl @goto-type-def[25]->int_alias_def
+        local int_alias in_hashif; // @loc[25]=in_hashif_decl
+        in_hashif = 3; // @goto-def-decl[9]->in_hashif_decl
+        break;
+    }
+    default: {
+        // @goto-def-decl[25]->nested_decl @goto-type-def[25]->int_alias_def
+        local int_alias nested; // @loc[25]=nested_decl
+        nested = 4; // @goto-def-decl[9]->nested_decl
+    }
+    }
+    // Locals declared directly in a switch body leak into the enclosing block
+    sw = nested; // @goto-def-decl[5]->sw_decl @goto-def-decl[10]->
+    return sw; // @goto-def-decl[12]->sw_decl
+}
+
+// @loc[35]=sel_decl_2 @goto-def-decl[35]->sel_decl_2 @goto-type-def[35]->int_alias_def
+method switch_redeclare(int_alias sel) {
+    switch (sel) {
+    case 0:
+        // @goto-def-decl[25]->leaked_decl @goto-type-def[25]->int_alias_def
+        local int_alias leaked; // @loc[25]=leaked_decl
+        break;
+    }
+    // @diag-error: Duplicate definition of variable 'leaked' | related->leaked_decl: Previously defined here
+    // @loc[21]=leaked_decl_2 @goto-def-decl[21]->leaked_decl_2 @goto-type-def[21]->int_alias_def
+    local int_alias leaked;
+}
+
+method blocks() {
+    {
+        // @goto-def-decl[25]->inner_decl @goto-type-def[25]->int_alias_def
+        local int_alias inner; // @loc[25]=inner_decl
+        inner = 1; // @goto-def-decl[9]->inner_decl
+    }
+    // A nested block does not leak, so this is no redefinition
+    // @goto-def-decl[21]->outer_inner_decl @goto-type-def[21]->int_alias_def
+    local int_alias inner; // @loc[21]=outer_inner_decl
+    inner = 2; // @goto-def-decl[5]->outer_inner_decl
+}
+
+// @goto-def-decl[29]->arg_decl @goto-type-def[29]->int_alias_def
+method duplicates(int_alias arg) { // @loc[29]=arg_decl
+    {
+        // @loc[25]=arg_decl_2 @goto-def-decl[25]->arg_decl_2 @goto-type-def[25]->int_alias_def
+        local int_alias arg;
+    }
+    // @diag-error: Duplicate definition of variable 'arg' | related->arg_decl: Previously defined here
+    // @loc[21]=arg_decl_3 @goto-def-decl[21]->arg_decl_3 @goto-type-def[21]->int_alias_def
+    local int_alias arg;
+    // @goto-def-decl[21]->twice_first @goto-type-def[21]->int_alias_def
+    local int_alias twice; // @loc[21]=twice_first
+    // @diag-error: Duplicate definition of variable 'twice' | related->twice_first: Previously defined here
+    // @loc[21]=twice_decl @goto-def-decl[21]->twice_decl @goto-type-def[21]->int_alias_def
+    local int_alias twice;
+}
+
+method hooks() {
+    // @goto-def-decl[21]->local_i @goto-type-def[21]->int_alias_def
+    local int_alias i = 0; // @loc[21]=local_i
+    // @loc[17]=bind_i
+    // @loc[20]=bind_b
+    after h -> (i, b): target(i, b); // @goto-def-decl[24]->target_def @goto-def-decl[31]->bind_i @goto-def-decl[34]->bind_b
+    // @loc[20]=discard_bind_b
+    after h -> (_, b): target(i, b); // @goto-def-decl[31]->local_i @goto-def-decl[34]->discard_bind_b
+    // @diag-error: Duplicate definition of variable 'p' | related->first_p: Previously defined here
+    after h -> (p, p): target(p, false); // @loc[17]=first_p
+}
