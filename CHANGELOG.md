@@ -6,14 +6,14 @@
 
 ## 0.9.23
 - The DLS now supports most type-level semantics and lookups
-- - Goto-functionality from, and to, typedefs work
-- - You can goto-type-def on `implement` definitions or references to find their interface typedef
-- - Lookups to, and from, structure type members types (including interface types) work
-- - Lookups through pointers and arrays types work (only on type level)
-- - Lookup to type definitions from locals and method argument symbols and references to the same, generally work
-- - Some conservative type-checking semantics are implemented, offering a minimum of feedback for assignment and overrides
-- - Unknown types are reported, unless they are considered builtin
-- - Various smaller semantics/errors are implemented, related to `bitfield` constructs, templates-as-types, and initializers
+  - Goto-functionality from, and to, typedefs work
+  - You can goto-type-def on `implement` definitions or references to find their interface typedef
+  - Lookups to, and from, structure type members types (including interface types) work
+  - Lookups through pointers and arrays types work (only on type level)
+  - Lookup to type definitions from locals and method argument symbols and references to the same, generally work
+  - Some conservative type-checking semantics are implemented, offering a minimum of feedback for assignment and overrides
+  - Unknown types are reported, unless they are considered builtin
+  - Various smaller semantics/errors are implemented, related to `bitfield` constructs, templates-as-types, and initializers
 - Fixed a case where the DLS would repeatedly cancel its own in-flight analysis when no import paths could be resolved
 - Fixed a parser crash when using utf-16 wide characters in documentation strings
 - Improved server handling of invalid character literals
