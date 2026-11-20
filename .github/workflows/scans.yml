@@ -34,7 +34,7 @@ jobs:
         shell: bash
         if: ${{ success() || failure() }}
         run: |
-          cargo install cargo-deny
+          cargo install cargo-deny --version 0.21.0
           cargo deny --version
           set -o pipefail
           cargo deny check  2>&1 | tee -a ${{ inputs.log-dir }}/deny-log
