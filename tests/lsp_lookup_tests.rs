@@ -458,7 +458,7 @@ fn load_isolated_analysis(
         &file_path.to_path_buf(),
         text_file,
         status.clone(),
-    ).unwrap_or_else(|e| panic!("isolated analysis failed for {}: {:?}", file_path.display(), &e));
+    ).unwrap_or_else(|e| panic!("isolated analysis failed for {}: {:?}", file_path.display(), e));
 
     let timestamp = SystemTime::UNIX_EPOCH;
     let mut analysis = analysis_storage.lock().unwrap();
@@ -626,7 +626,7 @@ fn build_device_analysis_from_storage(
         imp_map,
         DeviceAnalysisJobOptions { max_reference_cache_size: 0 },
         status,
-    ).unwrap_or_else(|e| panic!("Failed to build device analysis with imports: {:?}", &e));
+    ).unwrap_or_else(|e| panic!("Failed to build device analysis with imports: {:?}", e));
 
     analysis_lock.device_analysis.insert(
         device_canon.clone(),

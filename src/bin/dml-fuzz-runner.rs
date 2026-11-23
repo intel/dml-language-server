@@ -7,11 +7,8 @@
 //! of three signal/code disciplines that the parent process classifies:
 //!
 //!   * exit 0           — parsed cleanly.
-//!   * exit 1           — Rust panic; message written to stderr as
-//!                        `PANIC: <message>`.
-//!   * killed by signal — uncaught crash (stack overflow → SIGSEGV,
-//!                        abort → SIGABRT, etc.). The parent classifies as
-//!                        `Panic` with a signal-number note.
+//!   * exit 1           — Rust panic; message written to stderr as `PANIC: <message>`.
+//!   * killed by signal — uncaught crash (stack overflow → SIGSEGV, abort → SIGABRT, etc.). The parent classifies as `Panic` with a signal-number note.
 
 use std::io::Read;
 use std::str::FromStr;

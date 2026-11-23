@@ -20,7 +20,7 @@ impl <I: Indexed> Debug for Column<I> {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
         write!(f, "Col<{}I>({})",
                I::MINIMUM_VALUE,
-               &self.0)
+               self.0)
     }
 }
 
@@ -95,7 +95,7 @@ impl <I: Indexed> Debug for Row<I> {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
         write!(f, "Row<{}I>({})",
                I::MINIMUM_VALUE,
-               &self.0)
+               self.0)
     }
 }
 

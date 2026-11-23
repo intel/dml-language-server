@@ -81,6 +81,7 @@ pub fn read_message<R: BufRead>(input: &mut R) -> Result<String, io::Error> {
                     io::Error::new(io::ErrorKind::InvalidData, "Couldn't read size")
                 })?);
             }
+            #[allow(clippy::collapsible_match)]
             "content-type:" => {
                 if header_value != "utf8" && header_value != "utf-8" {
                     return Err(io::Error::new(

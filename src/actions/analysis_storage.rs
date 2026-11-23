@@ -683,19 +683,19 @@ impl AnalysisStorage {
             if let Some((ifile, ierrors)) = self.gather_local_errors(file) {
                 isolated_errors.entry(ifile)
                     .or_default()
-                    .extend(ierrors.into_iter());
+                    .extend(ierrors);
             }
 
             lint_errors.entry(file.clone().into())
                 .or_default()
-                .extend(self.gather_linter_errors(file).into_iter());
+                .extend(self.gather_linter_errors(file));
 
             // Only report device errors if this analysis context is active
             if filter.is_none_or(|f|f.contains(&file.clone().into())) {
                 for (dfile, errors) in self.gather_device_errors(file) {
                     device_errors.entry(dfile.clone())
                     .or_default()
-                    .extend(errors.into_iter());
+                    .extend(errors);
                     if !self.has_client_file(&PathBuf::from("dml-builtins.dml")) {
                         device_errors.entry(dfile.clone())
                             .or_default().insert(

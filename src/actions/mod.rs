@@ -631,8 +631,7 @@ impl <O: Output> InitActionContext<O> {
                                 });
                             // TODO: For now, ignore flags since we have no
                             // means to pass them to device analysis anyway
-                            compentry.include_paths
-                                .extend(includes.into_iter());
+                            compentry.include_paths.extend(includes);
                         }
                     } else {
                         info!(
@@ -1327,6 +1326,7 @@ impl <O: Output> InitActionContext<O> {
                             achieved = false;
                             break;
                         },
+                    #[allow(clippy::collapsible_match)]
                     AnalysisProgressKind::DeviceDependencies =>
                         if !analysis.device_triggers.get(path)
                         .into_iter().flatten().any(
