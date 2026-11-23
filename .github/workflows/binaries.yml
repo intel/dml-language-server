@@ -80,7 +80,7 @@ jobs:
           set -o pipefail
           rustup component add clippy
           cargo clippy --version
-          cargo clippy --all-targets -- --deny warnings 2>&1 | tee -a ${{ inputs.log-dir }}/clippy.log
+          cargo clippy --all-targets --all-features -- --deny warnings 2>&1 | tee -a ${{ inputs.log-dir }}/clippy.log
       - name: Check Version
         shell: bash
         if: ${{ success() }}
