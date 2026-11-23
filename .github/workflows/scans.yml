@@ -30,6 +30,11 @@ jobs:
           rustc --version
       - name: Prepare log dir
         run: mkdir -p ${{ inputs.log-dir }}
+      - name: Check Lockfile
+        shell: bash
+        if: ${{ success() || failure() }}
+        run: |
+          CARGO_BUILD_WARNINGS=deny cargo check --all-features --all-targets --locked | tee -a ${{ inputs.log-dir }}/lockfile-log
       - name: Audit Deny
         shell: bash
         if: ${{ success() || failure() }}
@@ -42,7 +47,6 @@ jobs:
         shell: bash
         if: ${{ success() || failure() }}
         run: |
-          rm Cargo.lock
           cargo install --locked cargo-outdated
           cargo outdated --version
           set -o pipefail
