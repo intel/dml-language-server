@@ -16,7 +16,7 @@ on:
 
 env:
     CARGO_TERM_COLOR: always
-    rust_version: 1.93.0
+    rust_version: 1.100.0
 jobs:
   audit:
     runs-on: ${{ inputs.os }}
