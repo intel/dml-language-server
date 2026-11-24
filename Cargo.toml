@@ -40,7 +40,7 @@ required-features = ["fuzzing"]
 
 [dependencies]
 anyhow = "1.0"
-clap = { version = "4.2", features = ["cargo", "derive"] }
+clap = { version = "4.6", features = ["cargo", "derive"] }
 crossbeam = "0.8"
 crossbeam-deque = "0.8.1"
 crossbeam-utils = "0.8.7"
