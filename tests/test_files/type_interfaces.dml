@@ -22,3 +22,26 @@ implement some { // @loc[11]=some_impl_def
     // @goto-def[12]->some_interface_method_impl
     method interface_method() {}
 }
+
+extern typedef struct {
+    // @loc[12]=other_method_def
+    void (*other_method)(conf_object_t *obj);
+// @loc[3]=other_interface_t_def
+// @goto-ref[3]->thing_other_decl
+} other_interface_t;
+
+connect thing { // @loc[9]=thing_decl
+    // @loc[15]=thing_other_decl
+    // @goto-def-decl[15]->thing_other_decl
+    // @goto-type-def[15]->other_interface_t_def
+    interface other {
+    }
+}
+
+method use_interface() {
+    // @goto-def-decl[5]->thing_decl
+    // @goto-def-decl[11]->thing_other_decl
+    // @goto-type-def[11]->other_interface_t_def
+    // @goto-def-decl[17]->other_method_def
+    thing.other.other_method();
+}

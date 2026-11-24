@@ -1355,15 +1355,23 @@ impl DeviceAnalysis {
             |typed|self.types.struct_core(typed)) {
             // '.' needs the struct itself and '->' a pointer to (or array of) it
             let dereferences = indices + u32::from(*op == MemberOp::Arrow);
+            let mut found = false;
             if indirections + extra == dereferences {
                 for span in self.struct_member_spans(core, &member_name.val) {
                     if let Some(member_symbol) = self.symbol_info
                         .type_member_symbols.get(&span) {
                         ref_matches.add_match(Arc::clone(member_symbol));
+                        found = true;
                     }
                 }
             }
-            return;
+            // Typed objects (interfaces) may also have members of their own
+            let is_object = matches!(symbol.lock().unwrap().source,
+                                     SymbolSource::DMLObject(
+                                         DMLObject::CompObject(_)));
+            if found || !is_object {
+                return;
+            }
         }
         if let Some(TypeUse::Declared(type_id)) = typed {
             if let Some(declaration) = self.types.declaration(type_id)
@@ -2480,7 +2488,8 @@ fn bind_interface_implementations(storage: &SymbolStorage,
                                   objects: &StructureContainer,
                                   types: &TypeDatabase) {
     for object in objects.values()
-        .filter(|object|object.kind == CompObjectKind::Implement) {
+        .filter(|object|matches!(object.kind, CompObjectKind::Implement
+                                 | CompObjectKind::Interface)) {
         let interface_name = format!("{}_interface_t", object.identity.val);
         let type_ids = types.typedefs_named(&interface_name).iter()
             .filter(|type_id|types.declaration(**type_id)
@@ -2501,11 +2510,14 @@ fn bind_interface_implementations(storage: &SymbolStorage,
 
         object_symbol.lock().unwrap().type_definitions
             .insert(declaration.declaration_span);
-        {
-            let mut symbol = typedef_symbol.lock().unwrap();
-            symbol.references.insert(object.declloc);
-            symbol.implementations.insert(object.declloc);
+        typedef_symbol.lock().unwrap().references.insert(object.declloc);
+        if object.kind == CompObjectKind::Interface {
+            // Members of an interface object are those of its struct type
+            object_symbol.lock().unwrap().typed =
+                Some(TypeUse::Declared(*type_id));
+            continue;
         }
+        typedef_symbol.lock().unwrap().implementations.insert(object.declloc);
 
         let Some(underlying) = declaration.underlying.as_ref() else {
             continue;
