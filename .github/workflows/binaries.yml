@@ -47,7 +47,7 @@ jobs:
         shell: bash
         if: ${{ success() || failure() }}
         run: |
-         cargo check --all-features --all-targets --locked | tee -a ${{ inputs.log-dir }}/lockfile-log
+         cargo check --all-features --all-targets --locked 2>&1 | tee -a ${{ inputs.log-dir }}/lockfile-log
       - name: Build
         shell: bash
         run: |
