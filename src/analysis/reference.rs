@@ -20,7 +20,7 @@ impl std::fmt::Display for NodeRef {
             NodeRef::Sub(sub, name, _) => write!(f,
                                                  "{}.{}",
                                                  sub,
-                                                 &name.val),
+                                                 name.val),
         }
     }
 }

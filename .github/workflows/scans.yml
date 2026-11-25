@@ -16,7 +16,7 @@ on:
 
 env:
     CARGO_TERM_COLOR: always
-    rust_version: 1.93.0
+    rust_version: 1.100.0
 jobs:
   audit:
     runs-on: ${{ inputs.os }}
@@ -34,7 +34,7 @@ jobs:
         shell: bash
         if: ${{ success() || failure() }}
         run: |
-          cargo install cargo-deny --version 0.21.0
+          cargo install cargo-deny
           cargo deny --version
           set -o pipefail
           cargo deny check  2>&1 | tee -a ${{ inputs.log-dir }}/deny-log
@@ -42,7 +42,6 @@ jobs:
         shell: bash
         if: ${{ success() || failure() }}
         run: |
-          rm Cargo.lock
           cargo install --locked cargo-outdated
           cargo outdated --version
           set -o pipefail

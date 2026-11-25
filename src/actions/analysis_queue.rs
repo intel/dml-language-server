@@ -316,7 +316,7 @@ impl AnalysisQueue {
         }
         {
             let isolated_lock = self.isolated_tracker.lock().unwrap();
-            for (_, path) in isolated_lock.iter() {
+            for path in isolated_lock.values() {
                 if paths.contains(path) {
                     trace!("Detected there is still isolated \
                             work in-flight on {:?}",

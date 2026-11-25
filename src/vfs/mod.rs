@@ -844,7 +844,7 @@ impl FromStr for TextFile {
 fn byte_in_str(s: &str, c: crate::span::Column<crate::span::ZeroIndexed>) -> Result<usize, Error> {
     // We simulate a null-terminated string here because spans are exclusive at
     // the top, and so that index might be outside the length of the string.
-    for (i, (b, _)) in s.char_indices().chain(Some((s.len(), '\0')).into_iter()).enumerate() {
+    for (i, (b, _)) in s.char_indices().chain(Some((s.len(), '\0'))).enumerate() {
         if c.0 as usize == i {
             return Ok(b);
         }

@@ -131,13 +131,9 @@ impl TreeElement for MethodContent {
     #[allow(clippy::unnecessary_unwrap)]
     fn post_parse_sanity(&self, _file: &TextFile) -> Vec<LocalDMLError> {
         let mut errors = vec![];
-        let inline = self.modifier.as_ref().and_then(
-            |t| t.get_token()).and_then(
-            |t| if t.kind == TokenKind::Inline {
-                Some(t)
-            } else {
-                None
-            });
+        let inline = self.modifier.as_ref()
+            .and_then(|t|t.get_token())
+            .filter(|t|t.kind == TokenKind::Inline);
         if self.startup.is_some() {
             if !self.arguments.is_empty() {
                 errors.push(LocalDMLError {
@@ -774,6 +770,7 @@ fn check_dmlobject_kind(obj: &DMLObjectContent, _file: &TextFile) ->
                 }
             },
             DMLObjectContent::Method(methodcontent) => {
+                #[allow(clippy::collapsible_match)]
                 if methodcontent.modifier.as_ref().and_then(|m|m.get_token())
                     .is_some_and(|s|s.kind == TokenKind::Shared) {
                         return vec![LocalDMLError {

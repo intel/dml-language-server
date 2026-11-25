@@ -586,15 +586,13 @@ pub struct NspInparenArgs {
 
 impl NspInparenArgs {
     pub fn from_method(node: &MethodContent) -> Option<NspInparenArgs> {
-        let content_start_range;
-        let content_end_range;
-        if node.arguments.is_empty() {
-            content_start_range = node.rparen.range();
-            content_end_range = node.lparen.range();
-        } else {
-            content_start_range = node.arguments.first().unwrap().range();
-            content_end_range = node.arguments.last().unwrap().range();
-        }
+        let (content_start_range, content_end_range) =
+            if node.arguments.is_empty() {
+                (node.rparen.range(), node.lparen.range())
+            } else {
+                (node.arguments.first().unwrap().range(),
+                 node.arguments.last().unwrap().range())
+            };
         Some(NspInparenArgs {
             opening: node.lparen.range(),
             content_start: content_start_range,
@@ -604,15 +602,13 @@ impl NspInparenArgs {
     }
     pub fn from_function_call(node: &FunctionCallContent)
                               -> Option<NspInparenArgs> {
-        let content_start_range;
-        let content_end_range;
-        if node.arguments.is_empty() {
-            content_start_range = node.rparen.range();
-            content_end_range = node.lparen.range();
-        } else {
-            content_start_range = node.arguments.first().unwrap().range();
-            content_end_range = node.arguments.last().unwrap().range();
-        }
+        let (content_start_range, content_end_range) =
+            if node.arguments.is_empty() {
+                (node.rparen.range(), node.lparen.range())
+            } else {
+                (node.arguments.first().unwrap().range(),
+                 node.arguments.last().unwrap().range())
+            };
         Some(NspInparenArgs {
             opening: node.lparen.range(),
             content_start: content_start_range,

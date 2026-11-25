@@ -28,7 +28,8 @@ on:
         type: string
 env:
     CARGO_TERM_COLOR: always
-    rust_version: 1.93.0
+    rust_version: 1.100.0
+    CARGO_BUILD_WARNINGS: deny
 jobs:
   build:
     runs-on: ${{ inputs.os }}
@@ -42,6 +43,11 @@ jobs:
           rustc --version
       - name: Prepare log dir
         run: mkdir -p ${{ inputs.log-dir }}
+      - name: Check Lockfile
+        shell: bash
+        if: ${{ success() || failure() }}
+        run: |
+         cargo check --all-features --all-targets --locked 2>&1 | tee -a ${{ inputs.log-dir }}/lockfile-log
       - name: Build
         shell: bash
         run: |
@@ -80,7 +86,7 @@ jobs:
           set -o pipefail
           rustup component add clippy
           cargo clippy --version
-          cargo clippy --all-targets -- --deny warnings 2>&1 | tee -a ${{ inputs.log-dir }}/clippy.log
+          cargo clippy --all-targets --all-features -- --deny warnings 2>&1 | tee -a ${{ inputs.log-dir }}/clippy.log
       - name: Check Version
         shell: bash
         if: ${{ success() }}

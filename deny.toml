@@ -92,7 +92,6 @@ allow = [
     "MIT",
     "Apache-2.0",
     "Zlib",
-    "Unicode-DFS-2016",
     "Unicode-3.0",
     "CC0-1.0",
 ]
@@ -201,7 +200,6 @@ deny = [
 
 # Certain crates/versions that will be skipped when doing duplicate detection.
 skip = [
-    "windows-sys",
     #"ansi_term@0.11.0",
     #{ crate = "ansi_term@0.11.0", reason = "you can specify a reason why it can't be updated/removed" },
 ]

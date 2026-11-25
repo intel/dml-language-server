@@ -343,7 +343,7 @@ fn extra_implementations_of_method_symbols<'t>(semantic_lookup: &SemanticLookup<
     for (_device_analysis, symbols) in &semantic_lookup.stored_symbols {
         for symbol in symbols {
             full_method_symbol_set.extend(
-                symbol_implementations_of_symbol(symbol, _device_analysis).into_iter());
+                symbol_implementations_of_symbol(symbol, _device_analysis));
         }
     }
     full_method_symbol_set

@@ -1533,11 +1533,9 @@ fn create_object_instance(loc: Option<ZeroSpan>,
     // TODO: handle array_info properly
     match kind {
         CompObjectKind::Device | CompObjectKind::Implement |
-        CompObjectKind::Interface =>
-            if !array_info.is_empty() {
-                error!("Invalid internal state: {:?} has array information \
-                        despite being a flat kind", identity);
-            },
+        CompObjectKind::Interface if !array_info.is_empty() =>
+            error!("Invalid internal state: {:?} has array information \
+                    despite being a flat kind", identity),
         _ => (),
     }
     debug!("Making obj {:?} with decl ranges {:?}",
