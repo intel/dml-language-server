@@ -345,6 +345,12 @@ impl RequestAction for DocumentSymbolRequest {
             make_canon_path!(parsed)?
         };
 
+        ctx.wait_for_state(
+            AnalysisProgressKind::Isolated,
+            AnalysisWaitKind::Existence,
+            AnalysisCoverageSpec::Paths(vec![canon_path.clone()]))
+            .ok();
+
         ctx.analysis.lock().unwrap()
         // TODO: Info about missing isolated analysis?
             .get_isolated_analysis(&canon_path)

@@ -30,6 +30,7 @@
 - Fixed the lookup of various symbols in nested scopes, including in method, switch, `#if`, and `after` scopes
 - Reserved keywords are now correctly allowed as identifiers for several declarations
 - The DLS will no longer report `error` objects in dead code
+- Made the DocumentSymbol request wait for available isolated analysis, removing some cases where clients could cache an empty result
 
 ## 0.9.22
 - Fixed an issue in server logging where the large allocations could be made by debug prints even at lower debug levels
