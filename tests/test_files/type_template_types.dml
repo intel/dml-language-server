@@ -1,0 +1,26 @@
+//  © 2026 Intel Corporation
+//  SPDX-License-Identifier: Apache-2.0 and MIT
+
+dml 1.4;
+device type_template_types;
+
+// @loc[10]=template_as_type_def
+// @goto-ref[10]->template_as_type_instantiation,template_as_type_type_ref1,template_as_type_type_ref2
+// @goto-impl[10]->template_as_type_instantiation
+template template_as_type {}
+
+// @loc[7]=template_user_def
+// @loc[24]=template_as_type_instantiation
+// @goto-def-decl[24]->template_as_type_def
+// @goto-ref[7]->template_user_cast_ref
+group template_user is template_as_type {}
+
+// @loc[9]=template_as_type_type_ref1
+// @loc[51]=template_user_cast_ref
+// @loc[66]=template_as_type_type_ref2
+// @goto-def-decl[9]->template_as_type_def
+// @goto-type-def[26]->template_as_type_def
+// @goto-def-decl[51]->template_user_def
+// @goto-def-decl[66]->template_as_type_def
+// @loc[26]=template_user_ref_decl @goto-def-decl[26]->template_user_ref_decl
+session template_as_type template_user_ref = cast(template_user, template_as_type);

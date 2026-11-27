@@ -1,0 +1,102 @@
+dml 1.4;
+device diag_parameters;
+
+// Parameter resolution errors, mirroring DMLC's ENPARAM, EINVOVER, EAMBINH
+// and the parameter cases of ENAMECOLL
+
+// @diag-error: No assignment to parameter 'x' | related->untyped_decl: Declared here
+group missing_value {
+    param x; // @loc[5]=untyped_decl
+}
+
+template typed_param {
+    param p : int; // @loc[5]=typed_decl
+}
+
+// @diag-error: No assignment to parameter 'p' | related->typed_decl: Declared here
+group missing_typed is typed_param {
+}
+
+group typed_assigned is typed_param {
+    param p = 4;
+}
+
+template fixed_value {
+    param fixed = 5; // @loc[5]=fixed_def
+}
+
+group overrides_fixed {
+    is fixed_value;
+    // @diag-error: Definition overrides non-default parameter | related->fixed_def: Non-default declaration here
+    param fixed default 3;
+}
+
+group double_assignment {
+    // @diag-error: Conflicting assignments to parameter 'foo' | related->second_foo: Conflicting assignment here
+    param foo = 1;
+    param foo = 1; // @loc[5]=second_foo
+}
+
+group double_default {
+    // @diag-error: Conflicting assignments to parameter 'baz' | related->second_baz: Conflicting assignment here
+    param baz default 1;
+    param baz default 2; // @loc[5]=second_baz
+}
+
+template defaulted {
+    param d default 1;
+}
+
+group overrides_default is defaulted {
+    param d = 2;
+}
+
+template tp1 {
+    param tp : int; // @loc[11]=tp1_decl
+}
+
+template tp2 {
+    param tp : int; // @loc[11]=tp2_decl
+}
+
+// @diag-error: Conflicting definitions of 'tp' in tp3 | related->tp1_decl: in tp1, related->tp2_decl: in tp2
+template tp3 is (tp1, tp2) {
+    param tp = 3;
+}
+
+group uses_tp3 is tp3 {
+}
+
+template structural_clash {
+    // @diag-error: Conflicting assignments to parameter 'sp' | related->inner_sp: Conflicting assignment here
+    param sp default 1;
+    group sg {
+        param sp default 2; // @loc[9]=inner_sp
+    }
+}
+
+group clash_outer is structural_clash {
+    group sg is structural_clash;
+}
+
+// An 'in each' declaration overrides the extended template, but not the
+// surrounding template, so these two defaults are ambiguous
+template sub {
+}
+
+template in_each_default {
+    in each sub {
+        // @diag-error: Conflicting assignments to parameter 'ie' | related->port_ie: Conflicting assignment here
+        param ie default 1;
+    }
+}
+
+template port_default {
+    port pd {
+        is sub;
+        param ie default 2; // @loc[9]=port_ie
+    }
+}
+
+is in_each_default;
+is port_default;

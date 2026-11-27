@@ -950,7 +950,9 @@ impl Scope for CompositeObject {
         self.statements.scopes()
     }
     fn defined_symbols(&self) -> Vec<&dyn StructureSymbol> {
-        let mut symbols = self.dims.to_symbols();
+        let mut symbols: Vec<&dyn StructureSymbol> = self.dims.iter()
+            .filter(|dim|dim.indexvar.val != "_")
+            .map(|dim|dim as &dyn StructureSymbol).collect();
         symbols.append(&mut self.statements.symbols());
         symbols
     }
@@ -1000,8 +1002,7 @@ pub struct Method {
     pub returns: Vec<DMLType>,
     pub modifier: MethodModifier,
     pub independent: bool,
-    // TODO: we could track startup here, but is there any
-    // reason to?
+    pub startup: bool,
     pub memoized: bool,
     pub default: bool,
     pub throws: bool,
@@ -1090,6 +1091,7 @@ impl ToStructure<structure::MethodContent> for Method {
         let throws = content.throws.is_some();
         let default = content.default.is_some();
         let independent = content.independent.is_some();
+        let startup = content.startup.is_some();
         let memoized = content.memoized.is_some();
         let modifier = if let Some(tok) = &content.modifier {
             // This token shouldnt actually be able to be missing
@@ -1108,7 +1110,7 @@ impl ToStructure<structure::MethodContent> for Method {
         content.statements.collect_references(&mut references, file);
         Some(Method {
             object, arguments, returns,
-            independent, memoized,
+            independent, startup, memoized,
             modifier, default, throws, body,
             references,
         })
@@ -1190,6 +1192,22 @@ pub struct Initializer {
 impl DeclarationSpan for Initializer {
     fn span(&self) -> &ZeroSpan {
         &self.span
+    }
+}
+
+impl Initializer {
+    pub fn expression(&self) -> Option<&Expression> {
+        match &self.kind {
+            InitializerKind::One(expression) => Some(expression),
+            _ => None,
+        }
+    }
+
+    pub fn list(&self) -> Option<&[Box<Initializer>]> {
+        match &self.kind {
+            InitializerKind::List(initializers) => Some(initializers),
+            _ => None,
+        }
     }
 }
 
@@ -1436,7 +1454,16 @@ pub fn to_variable_structure<'a>(decls: &structure::VarDecl,
                     expr.as_ref(), ExpressionKind::FunctionCall(_));
             }
         }
-        if !is_single_fun && vars.len() != values.len(){
+        // Count from the AST, so that unconvertible items do not cascade
+        let declared = match decls {
+            structure::VarDecl::One(_) => 1,
+            structure::VarDecl::Many(_, decls, _) => decls.iter().count(),
+        };
+        let initialized = init.with_content(|content|match content {
+            misc::InitializerContent::Single(_) => 1,
+            misc::InitializerContent::Tuple(_, list, _) => list.len(),
+        }, declared);
+        if !is_single_fun && declared != initialized {
             report.push(LocalDMLError {
                 range: init.range(),
                 description: "Wrong number of \
@@ -1536,6 +1563,12 @@ impl DeclarationSpan for Typedef {
 impl DMLNamed for Typedef {
     fn name(&self) -> &DMLString {
         self.object.name()
+    }
+}
+
+impl StructureSymbol for Typedef {
+    fn kind(&self) -> DMLSymbolKind {
+        DMLSymbolKind::Typedef
     }
 }
 

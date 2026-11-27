@@ -1,0 +1,74 @@
+dml 1.4;
+device lookup_misc;
+
+typedef int int_alias; // @loc[13]=int_alias_def
+
+// Lookups of less common declarations and expression forms
+
+constant C = 4; // @loc[10]=constant_def
+loggroup lg_a; // @loc[10]=loggroup_def @goto-ref[10]->lg_a_use
+
+typedef layout "big-endian" {
+    uint16 la; // @loc[12]=layout_field_def
+} lay_t; // @loc[3]=lay_t_def
+
+typedef bitfields 8 {
+    uint4 bf @ [3:0]; // @loc[11]=bitfield_def
+// @loc[3]=bf_t_def
+} bf_t;
+
+// @loc[15]=s_lay_decl @goto-def-decl[15]->s_lay_decl @goto-type-def[15]->lay_t_def
+session lay_t s_lay;
+// @loc[14]=s_bf_decl @goto-def-decl[14]->s_bf_decl @goto-type-def[14]->bf_t_def
+session bf_t s_bf;
+
+template tq { // @loc[10]=tq_def
+    method tq_m() default {} // @loc[12]=tq_m_def
+    param tq_p : int; // @loc[11]=tq_p_def
+    shared method tq_s() {} // @loc[19]=tq_s_def
+}
+
+// @loc[12]=tq_ref_decl @goto-def-decl[12]->tq_ref_decl @goto-type-def[12]->tq_def
+session tq tq_ref;
+
+hook() h; // @loc[8]=hook_def
+
+method target() {} // @loc[8]=target_def
+
+export target as "target_export"; // @goto-def-decl[8]->target_def
+
+group arr[i < C]; // @goto-def-decl[15]->constant_def
+
+group g is tq {
+    param tq_p = 1; // @loc[11]=g_tq_p_def
+    method tq_m() {
+        templates.tq.tq_m(); // @goto-def-decl[19]->tq_def @goto-def-decl[22]->tq_m_def
+    }
+
+    method uses() {
+        // @loc[25]=c_decl @goto-def-decl[25]->c_decl @goto-type-def[25]->int_alias_def
+        local int_alias c = C; // @goto-def-decl[29]->constant_def
+        // @loc[25]=la_decl @goto-def-decl[25]->la_decl @goto-type-def[25]->int_alias_def
+        local int_alias la = s_lay.la + s_bf.bf; // @goto-def-decl[36]->layout_field_def @goto-def-decl[46]->bitfield_def
+        // @loc[22]=lg_a_use
+        log info, 1, lg_a: "x"; // @goto-def-decl[22]->loggroup_def
+        after h: target(); // @goto-def-decl[15]->hook_def @goto-def-decl[18]->target_def
+        #foreach v in ([1, 2]) { // @loc[18]=foreach_v_def
+            // @loc[29]=y_decl @goto-def-decl[29]->y_decl @goto-type-def[29]->int_alias_def
+            local int_alias y = v; // @goto-def-decl[33]->foreach_v_def
+        }
+        foreach o in (each tq in (this)) { // @loc[17]=foreach_o_def @goto-def-decl[28]->tq_def
+            // @loc[29]=z_decl @goto-def-decl[29]->z_decl @goto-type-def[29]->int_alias_def
+            local int_alias z = o.tq_p; // @goto-def-decl[33]->foreach_o_def @goto-def[35]->g_tq_p_def @goto-decl[35]->tq_p_def
+            o.tq_s(); // @goto-def-decl[15]->tq_s_def
+        }
+        // @loc[17]=select_s_def @goto-def-decl[17]->select_s_def @goto-type-def[17]->tq_def
+        #select s in (each tq in (this)) where (true) {
+            s.tq_s(); // @goto-def-decl[13]->select_s_def @goto-def-decl[15]->tq_s_def
+        } #else {
+        }
+        tq_ref.tq_s(); // @goto-def-decl[16]->tq_s_def
+        // @loc[25]=sz_decl @goto-def-decl[25]->sz_decl @goto-type-def[25]->int_alias_def
+        local int_alias sz = sizeoftype(lay_t); // @goto-def-decl[41]->lay_t_def
+    }
+}

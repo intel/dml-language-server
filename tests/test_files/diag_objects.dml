@@ -1,0 +1,360 @@
+dml 1.4; // @loc[1]=device_start
+device diag_objects;
+
+// Object-level declaration errors, mirroring DMLC's ENAMECOLL, EAINCOMP and
+// EERRSTMT tests
+
+// @diag-error: Name collision in declaration on 'c0' | related->c0_connect: also declared here
+param c0 = 5;
+connect c0; // @loc[9]=c0_connect
+
+// @diag-error: Name collision in declaration on 'c_hook' | related->c_hook_group: also declared here
+hook() c_hook;
+group c_hook; // @loc[7]=c_hook_group
+
+// A hook cannot be declared twice, not even with the same type
+// @diag-error: Name collision in declaration on 'c_hook2' | related->c_hook2_second: also declared here
+hook(int) c_hook2;
+hook(int) c_hook2; // @loc[11]=c_hook2_second
+
+// @diag-error: Name collision in declaration on 'c1' | related->c1_method: also declared here
+param c1 = 5;
+method c1() {} // @loc[8]=c1_method
+
+// @diag-error: Name collision in declaration on 'c2' | related->c2_session: also declared here
+param c2 = 1;
+session int c2; // @loc[13]=c2_session
+
+// @diag-error: Inconsistent object type for c3 | related->c3_group: mismatching type here
+connect c3;
+group c3; // @loc[7]=c3_group
+
+// @diag-error: Name collision in declaration on 'c4' | related->c4_method: also declared here
+connect c4;
+method c4() {} // @loc[8]=c4_method
+
+// @diag-error: Name collision on 'c5' | related->c5_session: Previously defined here
+method c5() {}
+session int c5; // @loc[13]=c5_session
+
+// @diag-error: Name collision in declaration on 'c6' | related->c6_session: also declared here
+connect c6;
+session int c6; // @loc[13]=c6_session
+
+session int c8; // @loc[13]=c8_first
+// @diag-error: Name collision on 'c8' | related->c8_first: Previously defined here
+session int c8;
+
+method bar() default {} // @loc[8]=bar_first
+// @diag-error: Name collision on 'bar' | related->bar_first: Previously defined here
+method bar() default {}
+
+// @diag-error: Name collision in declaration on 'x' | related->x_bank: also declared here
+extern int x;
+bank x; // @loc[6]=x_bank
+
+bank b {
+    // @diag-error: Inconsistent object type for r | related->r_group: mismatching type here
+    register r[i < 4] size 1 @ i;
+    group r[i < 4]; // @loc[11]=r_group
+}
+
+// Repeated declarations of the same kind merge
+group same_kind_twice {
+}
+group same_kind_twice {
+}
+
+// @diag-error: Inconsistent object type for kind_change | related->kind_change_group: mismatching type here
+bank kind_change {
+}
+group kind_change { // @loc[7]=kind_change_group
+}
+
+// @diag-error: Mismatching number of dimensions in object declaration | related->dims_change_array: mismatching dimensionality here
+group dims_change {
+}
+group dims_change[i < 2] { // @loc[18]=dims_change_array
+}
+
+// @diag-error: Name collision on index variable 'i' | related->ga_first_index: Previously defined here
+group ga[i < 4][i < 4]; // @loc[10]=ga_first_index
+
+// Discarded index variables neither collide nor mismatch named ones
+group discard_dims[_ < 2][_ < 3];
+group discard_named[_ < 2] {
+    param p = j; // @goto-def[15]->discard_named_j
+}
+group discard_named[j < 2]; // @loc[21]=discard_named_j
+
+template clashing_shared_methods {
+    shared method m() default {} // @loc[19]=shared_m_first
+    // @diag-error: Name collision on 'm' | related->shared_m_first: Previously defined here
+    shared method m() default {}
+    param i : int; // @loc[11]=typed_i_first
+    // @diag-error: Name collision on 'i' | related->typed_i_first: Previously defined here
+    param i : int;
+    // @diag-error: Name collision on 'mp' | related->mp_param: Previously defined here
+    shared method mp() default {}
+    param mp : int; // @loc[11]=mp_param
+    session int ses; // @loc[17]=ses_first
+    // @diag-error: Name collision on 'ses' | related->ses_first: Previously defined here
+    session int ses;
+    param pm : int; // @loc[11]=pm_param
+    // @diag-error: Name collision on 'pm' | related->pm_param: Previously defined here
+    shared method pm() default {}
+}
+
+// A method cannot override a parameter, and a parameter cannot override
+// anything
+template abstract_param {
+    param p0 : int; // @loc[11]=abstract_p0
+}
+
+template shared_method_override is abstract_param {
+    // @diag-error: Name collision on 'p0' | related->abstract_p0: Previously defined here
+    shared method p0();
+}
+
+template method_override is abstract_param {
+    // @diag-error: Name collision in declaration on 'p0' | related->abstract_p0: also declared here, related->po_p0: also declared here
+    method p0() {}
+}
+
+template typed_param_override is abstract_param {
+    // @diag-error: Name collision on 'p0' | related->abstract_p0: Previously defined here
+    param p0 : int;
+}
+
+group po is method_override {
+    param p0 = 1; // @loc[11]=po_p0
+}
+
+template abstract_method {
+    // @diag-error: Name collision in declaration on 'am' | related->untyped_am: also declared here
+    shared method am(); // @loc[19]=abstract_am
+    // @diag-error: Name collision in declaration on 'dm' | related->untyped_dm: also declared here
+    shared method dm() default {} // @loc[19]=default_dm
+    shared method dm2() default {} // @loc[19]=default_dm2
+    session int ses2; // @loc[17]=abstract_ses2
+}
+
+template param_override is abstract_method {
+    // @diag-error: Name collision on 'am' | related->abstract_am: Previously defined here
+    param am : int;
+    // @diag-error: Name collision on 'dm' | related->default_dm: Previously defined here
+    param dm : int;
+    // @diag-error: Name collision on 'dm2' | related->default_dm2: Previously defined here
+    session int dm2;
+    // @diag-error: Name collision on 'ses2' | related->abstract_ses2: Previously defined here
+    session int ses2;
+}
+
+template param_untyped_override is abstract_method {
+    param am = 5; // @loc[11]=untyped_am
+    param dm = 6; // @loc[11]=untyped_dm
+}
+
+group pu is param_untyped_override;
+
+template structural_clash {
+    // @diag-error: Conflicting assignments to parameter 'sp' | related->nested_sp: Conflicting assignment here
+    param sp default 1;
+    group sg {
+        param sp default 2; // @loc[9]=nested_sp
+    }
+}
+group sc is structural_clash {
+    group sg is structural_clash;
+}
+
+template sm {
+    // @diag-error: Name collision in declaration on 'm' | related->tb_register_m: also declared here
+    shared method m() default {}
+}
+
+bank tb is sm {
+    register m size 1 @ 0; // @loc[14]=tb_register_m
+}
+
+template p_clash {
+    // Overriding both assignments does not hide the clash
+    // @diag-error: Conflicting assignments to parameter 'p' | related->p_clash_second: Conflicting assignment here
+    param p default 1;
+    param p default 2; // @loc[5]=p_clash_second
+}
+group p_clash is p_clash { param p = 3; }
+
+port p0 {
+    // @diag-error: Conflicting assignments to parameter 'foo' | related->foo_second: Conflicting assignment here
+    param foo = 1;
+    param foo = 1; // @loc[5]=foo_second
+}
+
+port p2 {
+    // @diag-error: Conflicting assignments to parameter 'baz' | related->baz_second: Conflicting assignment here
+    param baz default 1;
+    param baz default 1; // @loc[5]=baz_second
+}
+
+// The device object is logged as 'dev', so no top-level object may be
+// @diag-error: Name collision on 'dev' | related->device_start: The device itself is logged as 'dev'
+group dev {
+}
+
+bank b2 {
+    register r1 size 1 @ 0 {} // @loc[14]=r1_register
+    register r2 size 1 @ 4 {
+        // @diag-error: Name collision on 'r1' | related->r1_register: Previously defined here
+        param name = "r1";
+    }
+    register r3 size 1 @ 8 {
+        param name = "r_collision"; // @loc[22]=r_collision_first
+    }
+    register r4 size 1 @ 12 {
+        // @diag-error: Name collision on 'r_collision' | related->r_collision_first: Previously defined here
+        param name = "r_collision";
+    }
+}
+
+template c7 { } // @loc[10]=c7_first
+// @diag-error: Duplicate template name; 'c7' | related->c7_first: Previously defined here
+template c7 { }
+
+template c9 {} // @loc[10]=c9_template
+// @diag-error: Typedef name 'c9' collides with a template name | related->c9_template: Template defined here
+typedef int c9;
+
+// An extern typedef and an extern of the same name do not collide
+extern typedef int t0;
+extern int t0;
+
+typedef int t1; // @loc[13]=t1_first
+// @diag-error: Duplicate typedef name; 't1' | related->t1_first: Previously defined here
+typedef int t1;
+
+loggroup lg; // @loc[10]=lg_first @goto-def-decl[10]->lg_first
+// @diag-error: Duplicate loggroup name; 'lg' | related->lg_first: Previously defined here
+// @loc[10]=lg_second @goto-def-decl[10]->lg_second,!lg_first
+loggroup lg;
+
+// Loggroups in mutually exclusive top-level '#if' branches do not collide
+#if (true) {
+    loggroup lg_cond; // @loc[14]=lg_cond_true
+} #else {
+    loggroup lg_cond; // @loc[14]=lg_cond_false
+}
+#if (true) {
+    // @diag-error: Duplicate loggroup name; 'lg' | related->lg_first: Previously defined here
+    loggroup lg;
+}
+
+method log_cond() {
+    log info, 1, lg_cond: "x"; // @goto-def[18]->lg_cond_true,lg_cond_false
+}
+
+method m1() { }
+method m2() { }
+
+export m1 as "m_dup"; // @loc[14]=m_dup_first
+// @diag-error: Duplicate export name; 'm_dup' | related->m_dup_first: Previously defined here
+export m2 as "m_dup";
+
+// Plain 'if' does not exclude an error statement, only '#if' does
+method errors() {
+    if (false) {
+        // @diag-error: forced compilation error in source code
+        error;
+    }
+    if (true) {
+    } else {
+        // @diag-error: forced compilation error in source code
+        error;
+    }
+}
+
+// '#if' branches are only checked when the condition is known
+param unknown_condition default true;
+method hashif_errors() {
+    #if (true) {
+        // @diag-error: taken branch
+        error "taken branch";
+    } #else {
+        error "untaken else";
+    }
+    #if (!dml_1_4) {
+        error "untaken if";
+    } #else {
+        // @diag-error: taken else
+        error "taken else";
+    }
+    #if (unknown_condition) {
+        error "unknown condition";
+    }
+    switch (1) {
+    case 1:
+        #if (true && !false) {
+            // @diag-error: taken switch branch
+            error "taken switch branch";
+        } #else {
+            error "untaken switch branch";
+        }
+    }
+}
+
+// Overridden bodies are dead unless reached through 'default()'
+template must_override {
+    method dead() default {
+        error "Must be overridden";
+    }
+    method reached() default {
+        // @diag-error: reached through default
+        error "reached through default";
+    }
+    method dead_behind_reached() default {
+        error "behind an override that is itself dead";
+    }
+    method reached_qualified() default {
+        // @diag-error: reached through a template-qualified call
+        error "reached through a template-qualified call";
+    }
+    method default_in_dead_branch() default {
+        error "default() only in an excluded branch";
+    }
+    method default_in_unknown_branch() default {
+        // @diag-error: default() in a branch that may be taken
+        error "default() in a branch that may be taken";
+    }
+}
+template middle is must_override {
+    method dead_behind_reached() default {
+        default();
+    }
+}
+group overrides is middle {
+    method dead() {}
+    method reached() {
+        default();
+    }
+    method dead_behind_reached() {}
+    method reached_qualified() {
+        templates.must_override.reached_qualified();
+    }
+    method default_in_dead_branch() {
+        #if (false) {
+            default();
+        }
+    }
+    method default_in_unknown_branch() {
+        #if (unknown_condition) {
+            default();
+        }
+    }
+}
+
+// @diag-error: unconditional error object
+error "unconditional error object";
+
+#if (false) {
+    error "guarded";
+}

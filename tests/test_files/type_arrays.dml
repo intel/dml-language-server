@@ -1,0 +1,21 @@
+//  © 2026 Intel Corporation
+//  SPDX-License-Identifier: Apache-2.0 and MIT
+
+dml 1.4;
+device type_arrays;
+
+typedef int int_alias; // @loc[13]=int_alias_def
+
+bank diagnostics {
+    method arrays() {
+        // @loc[25]=valid_array_decl @goto-def-decl[25]->valid_array_decl @goto-type-def[25]->int_alias_def
+        local int_alias valid_array[3] = {0, 1, 2};
+        // @diag-error: initialize element 1 of local array 'invalid_array' | related->invalid_array_decl: declared as 'int_alias[3]' here
+        // @diag-error: initialize element 2 of local array 'invalid_array' | related->invalid_array_decl: declared as 'int_alias[3]' here
+        // @goto-def-decl[25]->invalid_array_decl @goto-type-def[25]->int_alias_def
+        local int_alias invalid_array[3] = {0, false, "array"}; // @loc[25]=invalid_array_decl
+        // @diag-error: Local array 'short_array' has length 3 | related->short_array_decl: Local array 'short_array' declared here
+        // @goto-def-decl[25]->short_array_decl @goto-type-def[25]->int_alias_def
+        local int_alias short_array[3] = {0, 1}; // @loc[25]=short_array_decl
+    }
+}

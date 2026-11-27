@@ -1,0 +1,47 @@
+//  © 2026 Intel Corporation
+//  SPDX-License-Identifier: Apache-2.0 and MIT
+
+dml 1.4;
+device type_interfaces;
+
+extern typedef struct {
+    // @loc[12]=some_interface_method_def
+    // @goto-impl[12]->some_interface_method_impl
+    void (*interface_method)(conf_object_t *obj);
+// @loc[3]=some_interface_t_def
+// @goto-ref[3]->some_interface_t_ref
+// @goto-impl[3]->some_interface_t_ref
+} some_interface_t;
+
+// @loc[11]=some_interface_t_ref
+// @goto-def-decl[11]->some_impl_def
+// @goto-type-def[11]->some_interface_t_def
+implement some { // @loc[11]=some_impl_def
+    // @loc[12]=some_interface_method_impl
+    // @goto-decl[12]->some_interface_method_def
+    // @goto-def[12]->some_interface_method_impl
+    method interface_method() {}
+}
+
+extern typedef struct {
+    // @loc[12]=other_method_def
+    void (*other_method)(conf_object_t *obj);
+// @loc[3]=other_interface_t_def
+// @goto-ref[3]->thing_other_decl
+} other_interface_t;
+
+connect thing { // @loc[9]=thing_decl
+    // @loc[15]=thing_other_decl
+    // @goto-def-decl[15]->thing_other_decl
+    // @goto-type-def[15]->other_interface_t_def
+    interface other {
+    }
+}
+
+method use_interface() {
+    // @goto-def-decl[5]->thing_decl
+    // @goto-def-decl[11]->thing_other_decl
+    // @goto-type-def[11]->other_interface_t_def
+    // @goto-def-decl[17]->other_method_def
+    thing.other.other_method();
+}

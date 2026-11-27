@@ -27,7 +27,7 @@ bank container_bank {
 }
 
 // @loc[10]=multi_use_tmpl
-template multi_use_template { // @goto-impl[10]->bank_multi_inst,group_multi_inst,reg_multi_inst @goto-ref[10]->bank_multi_inst,group_multi_inst,reg_multi_inst,!multi_use_template_as_type_1,!multi_use_template_as_type_2
+template multi_use_template { // @goto-impl[10]->bank_multi_inst,group_multi_inst,reg_multi_inst @goto-ref[10]->bank_multi_inst,group_multi_inst,reg_multi_inst,multi_use_template_as_type_1,multi_use_template_as_type_2
     param common default 42;
 }
 
@@ -45,11 +45,11 @@ bank container_for_register {
     }
 }
 
-// Make sure goto-impl on template does not find template as type reference
+// Make sure goto-impl on template does not find template type references
 method m() {
-    // TODO: Type references currently do not work
     // @loc[11]=multi_use_template_as_type_1 @loc[52]=multi_use_template_as_type_2
-    local multi_use_template m = cast(group_multi, multi_use_template); // @goto-def-decl[11]->!multi_use_tmpl @goto-def-decl[52]->!multi_use_tmpl 
+    // @loc[30]=m_decl @goto-def-decl[30]->m_decl @goto-type-def[30]->multi_use_tmpl
+    local multi_use_template m = cast(group_multi, multi_use_template); // @goto-def-decl[11]->multi_use_tmpl @goto-def-decl[52]->multi_use_tmpl
 }
 
 // Test 3: Multi-template in each - requires ALL templates

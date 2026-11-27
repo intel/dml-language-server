@@ -543,6 +543,15 @@ pub enum IntegerLiteral {
     Unsigned(Value<u64>),
 }
 
+impl IntegerLiteral {
+    pub fn value(&self) -> i128 {
+        match self {
+            IntegerLiteral::Signed(value) => value.val.into(),
+            IntegerLiteral::Unsigned(value) => value.val.into(),
+        }
+    }
+}
+
 impl DeclarationSpan for IntegerLiteral {
     fn span(&self) -> &ZeroSpan {
         match self {

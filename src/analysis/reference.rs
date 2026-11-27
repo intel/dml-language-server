@@ -2,14 +2,27 @@
 //  SPDX-License-Identifier: Apache-2.0 and MIT
 use crate::analysis::{DeclarationSpan, LocationSpan, DMLNamed, ZeroSpan};
 use crate::analysis::parsing::tree::{LeafToken, TreeElement};
-use crate::analysis::structure::expressions::{DMLString};
+use crate::analysis::structure::expressions::{DMLString, MemberOp};
 use crate::analysis::FileSpec;
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub enum NodeRef {
     Simple(DMLString),
-    //// Ignore index here
-    Sub(Box<NodeRef>, DMLString, ZeroSpan),
+    Sub(Box<NodeRef>, MemberOp, DMLString, ZeroSpan),
+    Index(Box<NodeRef>),
+}
+
+impl NodeRef {
+    // The innermost non-indexed reference, and how many times it is indexed
+    pub fn strip_indices(&self) -> (&NodeRef, u32) {
+        match self {
+            NodeRef::Index(inner) => {
+                let (base, indices) = inner.strip_indices();
+                (base, indices + 1)
+            },
+            _ => (self, 0),
+        }
+    }
 }
 
 impl std::fmt::Display for NodeRef {
@@ -17,10 +30,11 @@ impl std::fmt::Display for NodeRef {
            -> Result<(), std::fmt::Error> {
         match self {
             NodeRef::Simple(name) => name.val.fmt(f),
-            NodeRef::Sub(sub, name, _) => write!(f,
-                                                 "{}.{}",
-                                                 sub,
-                                                 name.val),
+            NodeRef::Sub(sub, op, name, _) => write!(
+                f, "{}{}{}", sub,
+                if *op == MemberOp::Arrow { "->" } else { "." },
+                name.val),
+            NodeRef::Index(inner) => write!(f, "{}[]", inner),
         }
     }
 }
@@ -29,7 +43,8 @@ impl DMLNamed for NodeRef {
     fn name(&self) -> &DMLString {
         match self {
             Self::Simple(simple) => simple,
-            Self::Sub(_, sub, _) => sub,
+            Self::Sub(_, _, sub, _) => sub,
+            Self::Index(inner) => inner.name(),
         }
     }
 }
@@ -37,7 +52,8 @@ impl DeclarationSpan for NodeRef {
     fn span(&self) -> &ZeroSpan {
         match self {
             Self::Simple(simple) => &simple.span,
-            Self::Sub(_, _, span) => span,
+            Self::Sub(_, _, _, span) => span,
+            Self::Index(inner) => inner.span(),
         }
     }
 }
@@ -125,6 +141,8 @@ pub struct CodeReference {
 pub enum Reference {
     CodeReference(CodeReference),
     FileReference(DMLString),
+    // Member accessed on an expression that is not itself a reference
+    UntrackedMember(DMLString),
 }
 
 impl Reference {
@@ -138,6 +156,7 @@ impl LocationSpan for Reference {
         match self {
             Reference::CodeReference(code_ref) => code_ref.loc_span(),
             Reference::FileReference(import) => &import.span,
+            Reference::UntrackedMember(member) => &member.span,
         }
     }
 }
@@ -146,6 +165,7 @@ impl DeclarationSpan for Reference {
         match self {
             Reference::CodeReference(code_ref) => code_ref.span(),
             Reference::FileReference(import) => &import.span,
+            Reference::UntrackedMember(member) => &member.span,
         }
     }
 }

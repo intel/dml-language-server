@@ -4,6 +4,9 @@ dml 1.4;
 
 device test_device;
 
+typedef int int_alias; // @loc[13]=int_alias_def
+typedef uint64 uint64_alias; // @loc[16]=uint64_alias_def
+
 // Rudimentary testing coverage
 
 // @loc[10]=base_template_def
@@ -43,9 +46,10 @@ bank test_bank { // @goto-ref[6]->!test_register_parent_ref, test_bank_ref
 
         // @loc[16]=test_register_read
         method read() -> (uint64) { // @goto-ref[16]->test_register_read_ref
-            // @loc[26]=value_decl
-            // @loc[34]=use_reg_shadowed_param_1
-            local uint64 value = shadowed_param; // @goto-ref[26]->value_ref_1,value_ref_2,value_ref_3 @goto-def-decl[34]->reg_shadowed_param_def
+            // @loc[32]=value_decl
+            // @loc[40]=use_reg_shadowed_param_1
+            // @goto-def-decl[32]->value_decl @goto-type-def[32]->uint64_alias_def
+            local uint64_alias value = shadowed_param; // @goto-ref[32]->value_ref_1,value_ref_2,value_ref_3 @goto-def-decl[40]->reg_shadowed_param_def
             // @loc[13]=value_ref_1
             // @loc[21]=test_register_this_ref
             // @loc[26]=use_reg_shadowed_param_2
@@ -59,8 +63,9 @@ bank test_bank { // @goto-ref[6]->!test_register_parent_ref, test_bank_ref
         }
     }
 
-    // @loc[21]=bank_m_value_def
-    method m(uint64 value) -> (uint64) { // @goto-ref[21]->bank_m_value_ref
+    // @loc[27]=bank_m_value_def
+    // @goto-def-decl[27]->bank_m_value_def @goto-type-def[27]->uint64_alias_def
+    method m(uint64_alias value) -> (uint64) { // @goto-ref[27]->bank_m_value_ref
         // @loc[16]=bank_m_value_ref
         // @loc[24]=use_bank_shadowed_param_2
         return value + shadowed_param; // @goto-def-decl[16]->bank_m_value_def @goto-def-decl[24]->bank_shadowed_param_def
@@ -79,8 +84,9 @@ bank test_bank { // @goto-ref[6]->!test_register_parent_ref, test_bank_ref
 // Method for testing method references and calls
 // @loc[8]=device_method_def
 method device_method() { // @goto-ref[8]->device_method_ref1,device_method_ref2
-    // @loc[15]=x_decl
-    local int x = 10;
+    // @loc[21]=x_decl
+    // @goto-def-decl[21]->x_decl @goto-type-def[21]->int_alias_def
+    local int_alias x = 10;
     x = x + 1; // @goto-def-decl[5]->x_decl @goto-def-decl[9]->x_decl
 }
 
@@ -95,11 +101,13 @@ group test_group { // @goto-ref[7]->test_group_ref
 }
 
 // Session and saved variables for testing
-// @loc[13]=session_var_def
-session int session_var; // @goto-ref[13]->session_var_ref1,session_var_ref2
+// @loc[19]=session_var_def
+// @goto-def-decl[19]->session_var_def @goto-type-def[19]->int_alias_def
+session int_alias session_var; // @goto-ref[19]->session_var_ref1,session_var_ref2
 
-// @loc[11]=saved_var_def
-saved int saved_var; // @goto-ref[11]->saved_var_ref
+// @loc[17]=saved_var_def
+// @goto-def-decl[17]->saved_var_def @goto-type-def[17]->int_alias_def
+saved int_alias saved_var; // @goto-ref[17]->saved_var_ref
 
 // Hooks for testing hook references
 // @loc[15]=test_hook_def
@@ -142,16 +150,19 @@ method phantom_calls() { // @goto-ref[8]->
 }
 
 // extern methods and values
+extern typedef struct {} attr_value_t; // @loc[26]=attr_value_t_def
 // @loc[14]=extern_foo_decl
 extern int (*foo)(bool); // @goto-ref[14]->extern_foo_call
 // @loc[21]=extern_bar_decl
 extern attr_value_t bar; // @goto-ref[21]->extern_bar_ref
 
 method refs_to_externs() {
-    // @loc[28]=extern_foo_call
-    // @goto-def-decl[28]->extern_foo_decl
-    local int foo_called = foo(false);
+    // @loc[34]=extern_foo_call
+    // @goto-def-decl[34]->extern_foo_decl
+    // @loc[21]=foo_called_decl @goto-def-decl[21]->foo_called_decl @goto-type-def[21]->int_alias_def
+    local int_alias foo_called = foo(false);
     // @loc[36]=extern_bar_ref
     // @goto-def-decl[36]->extern_bar_decl
+    // @loc[25]=bar_ref_decl @goto-def-decl[25]->bar_ref_decl @goto-type-def[25]->attr_value_t_def
     local attr_value_t* bar_ref = &bar;
 }
